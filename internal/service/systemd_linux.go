@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // DefinitionPath is the systemd unit file.
@@ -39,13 +40,36 @@ func systemctl(t Target, args ...string) (string, error) {
 	return run("systemctl", args...)
 }
 
-// quote escapes one ExecStart argument.
+// quote escapes one ExecStart argument. Install rejects control
+// characters (Spec.Check); should one get here anyway it's written as a C
+// escape, never raw, so it can't start a new line of the unit.
 func quote(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\"'\\$%;") {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return strings.ContainsRune(" \t\"'\\$%;", r) || unicode.IsControl(r)
+	}) < 0 {
 		return s
 	}
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `$$`, `%`, `%%`)
-	return `"` + r.Replace(s) + `"`
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\' || r == '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '$':
+			b.WriteString("$$")
+		case r == '%':
+			b.WriteString("%%")
+		case unicode.IsControl(r) && r < 0x80:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.IsControl(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // Definition is the unit file Install writes for s.
@@ -74,7 +98,10 @@ WantedBy=%s
 
 // Install writes the unit, enables it at boot/login and (re)starts it.
 func Install(s Spec) error {
-	if err := writeOwned(s.Target, DefinitionPath(s.Target), Definition(s)); err != nil {
+	if err := s.Check(); err != nil {
+		return err
+	}
+	if err := writeDefinition(s.Target, DefinitionPath(s.Target), Definition(s)); err != nil {
 		return err
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", Unit}, {"restart", Unit}} {
@@ -97,6 +124,9 @@ func Stop(t Target) error {
 
 // Remove stops the service and deletes its files.
 func Remove(t Target) error {
+	if t.Scope == User && os.Geteuid() == 0 {
+		return errUserFilesAsRoot
+	}
 	if err := Stop(t); err != nil {
 		return err
 	}
