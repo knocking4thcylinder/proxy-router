@@ -23,8 +23,8 @@ func menuLabel(s string) string { return s }
 
 // elevated runs argv as root through AppleScript, which asks for the
 // password in the standard macOS dialog.
-func elevated(argv, env []string) *exec.Cmd {
-	words := env
+func elevated(argv []string) *exec.Cmd {
+	var words []string
 	for _, a := range argv {
 		words = append(words, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
 	}

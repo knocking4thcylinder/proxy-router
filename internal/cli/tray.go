@@ -449,9 +449,9 @@ func (t *tray) selectServer(group, name string) {
 	t.poke()
 }
 
-// run runs proxy-router with args in the background (as root when asked,
-// with the system's password dialog), showing what's happening in the
-// menu.
+// run runs proxy-router with args in the background, showing what's
+// happening in the menu. root says it may ask for the password (in the
+// system's dialog); dismissing that isn't an error.
 func (t *tray) run(what string, root bool, args ...string) {
 	t.mu.Lock()
 	if t.busy != "" {
@@ -468,13 +468,15 @@ func (t *tray) run(what string, root bool, args ...string) {
 			t.mu.Unlock()
 			t.poke()
 		}()
+		// Commands run as the tray's user. Those that need root for part
+		// of their work ask for the password themselves, in the
+		// desktop's dialog, and only run that part as root.
 		argv := append([]string{t.exe, "--dir", t.dir}, args...)
-		var cmd *exec.Cmd
-		if root {
-			cmd = elevated(argv, t.elevationEnv())
-		} else {
-			cmd = exec.Command(argv[0], argv[1:]...)
+		switch args[0] {
+		case "start", "stop", "restart":
+			argv = append(argv, "--password-dialog")
 		}
+		cmd := exec.Command(argv[0], argv[1:]...)
 		var out bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &out
 		err := cmd.Run()
@@ -494,17 +496,6 @@ func (t *tray) run(what string, root bool, args ...string) {
 			notify("proxy-router", firstLine(out.String()))
 		}
 	}()
-}
-
-// elevationEnv makes a root process see the tray's user the way it would
-// under sudo, which is how proxy-router finds the user's files and
-// services.
-func (t *tray) elevationEnv() []string {
-	return []string{
-		"SUDO_UID=" + t.userT.User.Uid,
-		"SUDO_GID=" + t.userT.User.Gid,
-		"SUDO_USER=" + t.userT.User.Username,
-	}
 }
 
 func setTrayIcon(name string) {

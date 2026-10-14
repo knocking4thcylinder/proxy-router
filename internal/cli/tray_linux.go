@@ -38,9 +38,11 @@ func trayAvailable() error {
 func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
 
 // elevated runs argv as root with pkexec, which asks for the password in
-// the desktop's polkit dialog.
-func elevated(argv, env []string) *exec.Cmd {
-	return exec.Command("pkexec", append(append([]string{"env"}, env...), argv...)...)
+// the desktop's polkit dialog. argv[0] runs directly, not through env, so
+// the dialog names it, and a polkit action for it (packaging/linux) can
+// apply.
+func elevated(argv []string) *exec.Cmd {
+	return exec.Command("pkexec", argv...)
 }
 
 // authCanceled reports whether the password dialog was dismissed.
