@@ -11,6 +11,10 @@ import (
 type Route struct {
 	Iface   string
 	Gateway bool // has a real next-hop gateway (not a point-to-point link)
+	// Addr is the next hop as printed by netstat (BSD only).
+	Addr string
+	// Scoped routes (macOS "I" flag) only apply to sockets bound to Iface.
+	Scoped bool
 }
 
 // Detection is the result of inspecting default routes.
@@ -66,10 +70,24 @@ func Physical(exclude string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if r, ok := uplink(routes, exclude); ok {
+		return r.Iface, nil
+	}
 	if p := physical(routes, exclude); p != "" {
 		return p, nil
 	}
 	return "", fmt.Errorf("no physical network interface with a default route")
+}
+
+// uplink returns the physical interface holding the system-wide (unscoped)
+// default route, and that route's gateway.
+func uplink(routes []Route, exclude string) (Route, bool) {
+	for _, r := range routes {
+		if !r.Scoped && r.Gateway && r.Iface != exclude && !isTunnel(r.Iface) && !isVirtual(r.Iface) {
+			return r, true
+		}
+	}
+	return Route{}, false
 }
 
 // parseNetstat reads default routes from BSD `netstat -rn` output.
@@ -86,6 +104,8 @@ func parseNetstat(out string) []Route {
 			routes = append(routes, Route{
 				Iface:   iface,
 				Gateway: strings.Contains(flags, "G") && !strings.HasPrefix(gateway, "link#"),
+				Addr:    gateway,
+				Scoped:  strings.Contains(flags, "I"),
 			})
 		case "0/1", "128.0/1":
 			// VPNs that use split routes (WireGuard, OpenVPN, our own TUN)

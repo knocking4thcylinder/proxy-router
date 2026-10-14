@@ -80,6 +80,12 @@ type Config struct {
 	// private ranges reachable.
 	SystemRoute []string `yaml:"system_route"`
 
+	// Resolve destination names here (DNS-over-HTTPS through the tunnel)
+	// and send servers IPs, instead of letting each server resolve them.
+	// Servers' own resolvers can return broken answers: with the default
+	// subscription, YouTube failed through every server until this was on.
+	ResolveLocally bool `yaml:"resolve_locally"`
+
 	// Happ's advanced settings.
 	Fragment    Fragment `yaml:"fragment"`
 	Noises      Noises   `yaml:"noises"`
@@ -107,6 +113,7 @@ func defaults() *Config {
 	c.Fragment = Fragment{Packets: "tlshello", Length: Range{50, 100}, Delay: Range{10, 20}, MaxSplit: Range{3, 6}}
 	c.Mux = Mux{Concurrency: 8, XUDPConcurrency: 16, XUDPProxyUDP443: "reject"}
 	c.PreferredIP = "ipv4"
+	c.ResolveLocally = true
 	c.TUN.MTU = 1500
 	return c
 }
@@ -192,13 +199,36 @@ func sudoUser() *user.User {
 	return u
 }
 
-// GiveBack hands a file created as root back to the sudo user, so running
-// `sudo proxy-router run --tun` doesn't leave root-owned files behind.
+// owner is who files written as root should belong to when there's no sudo
+// user: the owner of the config directory (the background service runs as
+// root with --dir pointing at the user's directory).
+var owner struct {
+	set      bool
+	uid, gid int
+}
+
+// SetOwnerFromDir makes GiveBack hand files to dir's owner when running as
+// root outside sudo.
+func SetOwnerFromDir(dir string) {
+	if os.Geteuid() != 0 {
+		return
+	}
+	if st, ok := statOwner(dir); ok && st.uid != 0 {
+		owner.set, owner.uid, owner.gid = true, st.uid, st.gid
+	}
+}
+
+// GiveBack hands a file created as root back to the user, so running as
+// root (sudo, or the TUN service) doesn't leave root-owned files behind.
 func GiveBack(path string) {
 	if u := sudoUser(); u != nil {
 		uid, _ := strconv.Atoi(u.Uid)
 		gid, _ := strconv.Atoi(u.Gid)
 		_ = os.Lchown(path, uid, gid)
+		return
+	}
+	if owner.set && os.Geteuid() == 0 {
+		_ = os.Lchown(path, owner.uid, owner.gid)
 	}
 }
 

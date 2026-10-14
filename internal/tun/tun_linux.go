@@ -10,6 +10,7 @@ func routes(ipv6 bool) [][]string {
 	return r
 }
 
+// Up points the split default routes at the interface.
 func Up(name string, ipv6 bool) error {
 	if err := run("ip", "link", "set", "dev", name, "up"); err != nil {
 		return err
@@ -23,8 +24,13 @@ func Up(name string, ipv6 bool) error {
 	return nil
 }
 
+// Down removes the routes.
 func Down(name string, ipv6 bool) {
 	for _, r := range routes(ipv6) {
-		_ = run("ip", r[0], "route", "del", r[1], "dev", name)
+		_ = run("ip", r[0], "route", "del", r[1])
 	}
 }
+
+// Sync has nothing to do on Linux: SO_BINDTODEVICE works without extra
+// routes.
+func Sync(name string, ipv6 bool) error { return nil }

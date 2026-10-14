@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,8 +46,7 @@ func Start(cfg map[string]any) (*core.Instance, error) {
 }
 
 // Validate checks that Xray accepts the config (including geo lookups)
-// without starting it. With a TUN inbound, creating the instance would
-// create the interface (and need root), so only the config is checked.
+// without starting it.
 func Validate(cfg map[string]any) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -55,24 +56,11 @@ func Validate(cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}
-	if hasTUN(cfg) {
-		return nil
-	}
 	inst, err := core.New(pb)
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}
 	return inst.Close()
-}
-
-func hasTUN(cfg map[string]any) bool {
-	ins, _ := cfg["inbounds"].([]map[string]any)
-	for _, in := range ins {
-		if in["protocol"] == "tun" {
-			return true
-		}
-	}
-	return false
 }
 
 // PingOptions configures Ping.
@@ -86,6 +74,11 @@ type PingOptions struct {
 	Interface string
 	// Config whose Happ-style tweaks (fragment, mux, ...) apply to tests.
 	Config *config.Config
+	// Resolve, when set, pins server addresses like Plan.Resolve.
+	Resolve Resolver
+	// ExitURL, when set, is fetched through each server after the latency
+	// test; its body (e.g. a country code) is reported as Exit.
+	ExitURL string
 }
 
 // PingResult is the outcome of a latency test.
@@ -93,6 +86,10 @@ type PingResult struct {
 	Entry   config.Entry
 	Latency time.Duration
 	Err     error
+	// Exit is what ExitURL returned through the server, e.g. "DE".
+	Exit string
+	// For pools: how many members answered, out of how many.
+	Alive, Members int
 }
 
 // Ping measures a full HTTP request through each server ("real delay":
@@ -120,20 +117,49 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		return endpoints[key]
 	}
 
-	var wg sync.WaitGroup
+	// Pools are tested member by member; each job is one server.
+	type job struct {
+		result int
+		server *share.Server
+	}
+	var jobs []job
 	for i, e := range entries {
+		results[i] = PingResult{Entry: e}
+		if members := e.Server.Members(); members != nil {
+			results[i].Members = len(members)
+			for _, m := range members {
+				jobs = append(jobs, job{i, m})
+			}
+			continue
+		}
+		jobs = append(jobs, job{i, e.Server})
+	}
+
+	var wg sync.WaitGroup
+	for _, j := range jobs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if o.PerEndpoint > 0 {
-				ep := endpointSem(e.Server.Address)
+				ep := endpointSem(j.server.Address)
 				ep <- struct{}{}
 				defer func() { <-ep }()
 			}
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			d, err := pingOne(ctx, e.Server, o)
-			results[i] = PingResult{Entry: e, Latency: d, Err: err}
+			d, exit, err := pingOne(ctx, j.server, o)
+
+			mu.Lock()
+			defer mu.Unlock()
+			r := &results[j.result]
+			if err == nil {
+				r.Alive++
+				if r.Err != nil || r.Latency == 0 || d < r.Latency {
+					r.Latency, r.Exit, r.Err = d, exit, nil
+				}
+			} else if r.Latency == 0 {
+				r.Err = err
+			}
 		}()
 	}
 	wg.Wait()
@@ -144,22 +170,39 @@ type discardLog struct{}
 
 func (discardLog) Handle(xlog.Message) {}
 
-func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, error) {
+func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, error) {
 	url, timeout := o.URL, o.Timeout
 	obs, err := s.Outbounds("proxy")
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if o.Config != nil {
 		obs, _ = ApplyTweaks(obs, o.Config)
 	}
+	if o.Resolve != nil {
+		PinAddresses(obs, o.Resolve)
+	}
 	obs = BindInterface(obs, o.Interface)
-	inst, err := Start(map[string]any{
+	xc := map[string]any{
 		"log":       map[string]any{"loglevel": "none", "access": "none"},
 		"outbounds": obs,
-	})
+	}
+	if o.Config != nil && o.Config.ResolveLocally {
+		hosts := hostnames(obs)
+		if u, err := neturl.Parse(url); err == nil {
+			hosts = append(hosts, u.Hostname())
+		}
+		xc["dns"] = o.Config.LocalDNS(hosts)
+		// The server's name and the test host resolve outside the tunnel.
+		xc["outbounds"] = append(obs, BindInterface([]map[string]any{{"tag": "direct", "protocol": "freedom"}}, o.Interface)...)
+		xc["routing"] = map[string]any{"rules": []any{
+			map[string]any{"inboundTag": []string{config.DirectDNSTag}, "outboundTag": "direct"},
+			map[string]any{"network": "tcp,udp", "outboundTag": "proxy"},
+		}}
+	}
+	inst, err := Start(xc)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer inst.Close()
 
@@ -179,19 +222,34 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 500 {
-		return 0, fmt.Errorf("HTTP %s", resp.Status)
+		return 0, "", fmt.Errorf("HTTP %s", resp.Status)
 	}
-	return time.Since(start), nil
+	latency := time.Since(start)
+
+	exit := ""
+	if o.ExitURL != "" {
+		exit = "?"
+		if req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.ExitURL, nil); err == nil {
+			if resp, err := client.Do(req); err == nil {
+				b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+				resp.Body.Close()
+				if v := strings.TrimSpace(string(b)); resp.StatusCode == http.StatusOK && v != "" && len(v) < 40 {
+					exit = v
+				}
+			}
+		}
+	}
+	return latency, exit, nil
 }
 
 // DownloadAsset fetches url into dir/name atomically.

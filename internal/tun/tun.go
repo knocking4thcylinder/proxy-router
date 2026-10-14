@@ -39,6 +39,21 @@ func WaitForInterface(name string, timeout time.Duration) error {
 	}
 }
 
+// WaitGone waits until a closed interface is really gone, so a new one
+// with the same name can be created ("device or resource busy" otherwise).
+func WaitGone(name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := net.InterfaceByName(name); err != nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("TUN interface %s is still there after %v", name, timeout)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {

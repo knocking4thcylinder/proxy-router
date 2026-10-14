@@ -111,6 +111,67 @@ func (c *Config) PreferredIPStrategy() string {
 	return ""
 }
 
+// TargetStrategy is how proxy outbounds resolve destinations: "" leaves it
+// to the server, otherwise Xray resolves locally first.
+func (c *Config) TargetStrategy() string {
+	if !c.ResolveLocally {
+		return ""
+	}
+	if s := c.PreferredIPStrategy(); s != "" {
+		return s
+	}
+	return "UseIP"
+}
+
+// DirectDNSTag marks Xray's DNS queries that must not use the tunnel; the
+// builder routes them to the "direct" outbound.
+const DirectDNSTag = "dns-direct"
+
+// LocalDNS is the Xray "dns" object used when resolving locally: DoH, so
+// answers can't be tampered with on the way and the ISP doesn't see them.
+// Those queries go through the proxy like any other traffic.
+//
+// Names the tunnel itself depends on (direct: the servers' hostnames and the
+// health-check host) are resolved outside the tunnel instead, tagged
+// DirectDNSTag: resolving them through the tunnel would deadlock. That's
+// still DoH, because plain DNS is commonly intercepted (1.1.1.1:53 answered
+// NXDOMAIN for youtube.com on a Russian ISP in testing).
+func (c *Config) LocalDNS(direct []string) map[string]any {
+	servers := []any{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"}
+	if len(direct) > 0 {
+		var domains []string
+		for _, h := range direct {
+			domains = append(domains, "full:"+h)
+		}
+		var plain []any
+		for _, addr := range []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"} {
+			plain = append(plain, map[string]any{
+				"address": addr, "domains": domains, "skipFallback": true, "tag": DirectDNSTag,
+			})
+		}
+		servers = append(plain, servers...)
+	}
+	// Names under system_route (Tailscale's ts.net) only exist in the
+	// system resolver.
+	var local []string
+	for _, e := range c.SystemRoute {
+		if strings.HasPrefix(e, "domain:") || strings.HasPrefix(e, "full:") {
+			local = append(local, e)
+		}
+	}
+	if len(local) > 0 {
+		servers = append([]any{map[string]any{"address": "localhost", "domains": local, "skipFallback": true}}, servers...)
+	}
+	dns := map[string]any{"servers": servers}
+	switch c.PreferredIP {
+	case "ipv4":
+		dns["queryStrategy"] = "UseIPv4"
+	case "ipv6":
+		dns["queryStrategy"] = "UseIPv6"
+	}
+	return dns
+}
+
 // NoisePacket converts a noise packet to the JSON value Xray expects.
 func (n Noise) JSONPacket() (any, error) {
 	if n.Packet == "" {

@@ -36,3 +36,15 @@ func TestPickSplitRouteVPN(t *testing.T) {
 		t.Fatalf("got %+v", d)
 	}
 }
+
+func TestUplinkSkipsScopedRoutes(t *testing.T) {
+	out := `default            192.168.31.1       UGScIg                en1
+default            192.168.1.1        UGScg                 en0
+0/1                utun99             UScg               utun99
+default            fe80::1%en0        UGcg                  en0
+`
+	r, ok := uplink(parseNetstat(out), "utun99")
+	if !ok || r.Iface != "en0" || r.Addr != "192.168.1.1" {
+		t.Fatalf("got %+v %v", r, ok)
+	}
+}

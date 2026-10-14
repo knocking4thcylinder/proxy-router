@@ -86,6 +86,12 @@ func ApplyTweaks(obs []map[string]any, cfg *config.Config) ([]map[string]any, []
 		}
 	}
 
+	if ts := cfg.TargetStrategy(); ts != "" {
+		if _, set := ob["targetStrategy"]; !set {
+			ob["targetStrategy"] = ts
+		}
+	}
+
 	if ds := cfg.PreferredIPStrategy(); ds != "" {
 		so := child(ss, "sockopt")
 		if _, set := so["domainStrategy"]; !set {
@@ -128,8 +134,12 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// systemRouteRule splits system_route entries into IP and domain matchers.
-func systemRouteRules(entries []string) []map[string]any {
+// systemRouteRules splits system_route entries into IP and domain matchers.
+//
+// In TUN mode, traffic for these destinations that arrives *through the
+// TUN* is rejected: the OS sent it there because it has no better route,
+// so handing it back to the OS would loop straight into the TUN again.
+func systemRouteRules(entries []string, tun bool) []map[string]any {
 	var ips, domains []string
 	for _, e := range entries {
 		e = strings.TrimSpace(e)
@@ -144,12 +154,18 @@ func systemRouteRules(entries []string) []map[string]any {
 		}
 	}
 	var rules []map[string]any
-	if len(ips) > 0 {
-		rules = append(rules, map[string]any{"ip": ips, "outboundTag": "system", "ruleTag": "system_route"})
+	add := func(key string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		if tun {
+			rules = append(rules, map[string]any{key: values, "inboundTag": []string{"tun"},
+				"outboundTag": "block", "ruleTag": "system_route_via_tun"})
+		}
+		rules = append(rules, map[string]any{key: values, "outboundTag": "system", "ruleTag": "system_route"})
 	}
-	if len(domains) > 0 {
-		rules = append(rules, map[string]any{"domain": domains, "outboundTag": "system", "ruleTag": "system_route"})
-	}
+	add("ip", ips)
+	add("domain", domains)
 	return rules
 }
 

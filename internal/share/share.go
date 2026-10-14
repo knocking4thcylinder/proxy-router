@@ -24,12 +24,67 @@ type Server struct {
 	Outbound json.RawMessage `json:"outbound"`
 	// Helper outbounds the main one dials through (from JSON configs).
 	Chain []json.RawMessage `json:"chain,omitempty"`
+	// Pool is set for entries that balance across several servers, like a
+	// provider's "Auto". Outbound is then the first member.
+	Pool *Pool `json:"pool,omitempty"`
 	// Warnings collected while converting the link (unsupported options etc).
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// Outbounds returns the server's Xray outbounds: the main one tagged tag,
-// followed by its helper outbounds with tags made unique by prefixing tag.
+// Pool is a group of outbounds Xray balances between.
+type Pool struct {
+	// Members are outbounds with their original tags.
+	Members []json.RawMessage `json:"members"`
+	// Selector holds tag prefixes choosing the members.
+	Selector []string `json:"selector"`
+	// Strategy is the Xray balancer strategy object.
+	Strategy json.RawMessage `json:"strategy,omitempty"`
+	// Probe is the provider's health check (burstObservatory pingConfig).
+	Probe json.RawMessage `json:"probe,omitempty"`
+}
+
+// ChainTag is the tag of a helper outbound. Helpers live outside tag's
+// prefix so a pool's selector (a prefix match) can never pick one.
+func ChainTag(tag, helper string) string { return "chain:" + tag + "~" + helper }
+
+// MemberTag is the tag of a pool member.
+func MemberTag(tag, member string) string { return tag + "~" + member }
+
+// Primaries is how many of Outbounds' results are servers (the rest are
+// chain helpers): 1, or the member count for a pool.
+func (s *Server) Primaries() int {
+	if s.Pool != nil {
+		return len(s.Pool.Members)
+	}
+	return 1
+}
+
+// Members returns a pool's members as standalone servers (with the pool's
+// chain helpers), or nil for an ordinary server.
+func (s *Server) Members() []*Server {
+	if s.Pool == nil {
+		return nil
+	}
+	var out []*Server
+	for i, raw := range s.Pool.Members {
+		var ob map[string]any
+		if json.Unmarshal(raw, &ob) != nil {
+			continue
+		}
+		m := &Server{
+			Name:     fmt.Sprintf("%s #%d", s.Name, i+1),
+			Outbound: raw,
+			Chain:    s.Chain,
+		}
+		m.Protocol, _ = ob["protocol"].(string)
+		m.Address, m.Port = endpoint(ob)
+		out = append(out, m)
+	}
+	return out
+}
+
+// Outbounds returns the server's Xray outbounds: the server tagged tag (or,
+// for a pool, its members tagged MemberTag), followed by chain helpers.
 func (s *Server) Outbounds(tag string) ([]map[string]any, error) {
 	decode := func(raw json.RawMessage) (map[string]any, error) {
 		var ob map[string]any
@@ -38,14 +93,28 @@ func (s *Server) Outbounds(tag string) ([]map[string]any, error) {
 		}
 		return ob, nil
 	}
-	main, err := decode(s.Outbound)
-	if err != nil {
-		return nil, err
+	rename := func(t string) string { return ChainTag(tag, t) }
+	var out []map[string]any
+	if s.Pool != nil {
+		for _, raw := range s.Pool.Members {
+			ob, err := decode(raw)
+			if err != nil {
+				return nil, err
+			}
+			t, _ := ob["tag"].(string)
+			ob["tag"] = MemberTag(tag, t)
+			renameDependencies(ob, rename)
+			out = append(out, ob)
+		}
+	} else {
+		main, err := decode(s.Outbound)
+		if err != nil {
+			return nil, err
+		}
+		main["tag"] = tag
+		renameDependencies(main, rename)
+		out = append(out, main)
 	}
-	rename := func(t string) string { return tag + "~" + t }
-	main["tag"] = tag
-	renameDependencies(main, rename)
-	out := []map[string]any{main}
 	for _, raw := range s.Chain {
 		ob, err := decode(raw)
 		if err != nil {

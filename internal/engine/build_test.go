@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,11 +90,15 @@ rules:
 		t.Errorf("outbound tags = %v", tags)
 	}
 	r := got.Routing.Rules
-	// 2 system_route rules (Tailscale) first, then the user's rules with
-	// domain+ip split, then the catch-all.
-	if len(r) != 8 {
-		t.Fatalf("want 8 xray rules, got %d: %v", len(r), r)
+	// Xray's own server-name lookups first, then 2 system_route rules
+	// (Tailscale), the user's rules with domain+ip split, the catch-all.
+	if len(r) != 9 {
+		t.Fatalf("want 9 xray rules, got %d: %v", len(r), r)
 	}
+	if r[0]["outboundTag"] != "direct" || fmt.Sprint(r[0]["inboundTag"]) != "[dns-direct]" {
+		t.Errorf("server-name DNS must go direct: %v", r[0])
+	}
+	r = r[1:]
 	if r[0]["outboundTag"] != "system" || r[1]["outboundTag"] != "system" {
 		t.Errorf("system_route rules must come first: %v %v", r[0], r[1])
 	}

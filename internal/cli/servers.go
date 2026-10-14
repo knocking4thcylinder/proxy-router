@@ -159,6 +159,9 @@ func filterGroup(entries []config.Entry, group string) []config.Entry {
 
 // describe summarises protocol/transport/security, e.g. "vless+xhttp+reality".
 func describe(s *share.Server) string {
+	if s.Pool != nil {
+		return fmt.Sprintf("pool of %d", len(s.Pool.Members))
+	}
 	parts := []string{s.Protocol}
 	var ob struct {
 		StreamSettings struct {
@@ -253,6 +256,7 @@ func pingCmd() *cobra.Command {
 	var (
 		group    string
 		parallel int
+		exit     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ping [server...]",
@@ -280,7 +284,11 @@ func pingCmd() *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
-			results := engine.Ping(cmd.Context(), entries, e.pingOptions(parallel, iface))
+			opts := e.pingOptions(parallel, iface)
+			if exit {
+				opts.ExitURL = "https://ipinfo.io/country"
+			}
+			results := engine.Ping(cmd.Context(), entries, opts)
 			slices.SortStableFunc(results, func(a, b engine.PingResult) int {
 				switch {
 				case a.Err != nil && b.Err != nil:
@@ -294,7 +302,11 @@ func pingCmd() *cobra.Command {
 			})
 			cur, hasCur := e.state.Current()
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "\t#\tNAME\tGROUP\tLATENCY")
+			header := "\t#\tNAME\tGROUP\tLATENCY"
+			if exit {
+				header += "\tEXIT"
+			}
+			fmt.Fprintln(tw, header)
 			for _, r := range results {
 				mark := ""
 				if hasCur && r.Entry.Index == cur.Index {
@@ -304,13 +316,21 @@ func pingCmd() *cobra.Command {
 				if r.Err != nil {
 					lat = "failed: " + shortErr(r.Err)
 				}
-				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", mark, r.Entry.Index, r.Entry.Server.Name, r.Entry.Group, lat)
+				if r.Members > 0 {
+					lat = fmt.Sprintf("%s (%d/%d alive)", lat, r.Alive, r.Members)
+				}
+				line := fmt.Sprintf("%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, r.Entry.Server.Name, r.Entry.Group, lat)
+				if exit {
+					line += "\t" + r.Exit
+				}
+				fmt.Fprintln(tw, line)
 			}
 			return tw.Flush()
 		},
 	}
 	cmd.Flags().StringVarP(&group, "group", "g", "", "only test this subscription")
 	cmd.Flags().IntVarP(&parallel, "parallel", "j", 16, "servers to test at once")
+	cmd.Flags().BoolVar(&exit, "exit", false, "also show the country traffic really exits in (via ipinfo.io)")
 	return cmd
 }
 
@@ -322,7 +342,15 @@ func (e *env) pingOptions(parallel int, iface string) engine.PingOptions {
 		PerEndpoint: e.cfg.Ping.PerEndpoint,
 		Interface:   iface,
 		Config:      e.cfg,
+		Resolve:     e.resolverIf(iface),
 	}
+}
+
+func (e *env) resolverIf(iface string) engine.Resolver {
+	if iface == "" && !e.cfg.ResolveLocally {
+		return nil
+	}
+	return e.resolver()
 }
 
 func shortErr(err error) string {

@@ -132,6 +132,30 @@ func (s *State) Select(e Entry) {
 	s.Selected = &Selection{Group: e.Group, Name: e.Server.Name}
 }
 
+// FindAll resolves a query to every matching server: "*" (all), an index,
+// group/name, or every server whose name contains the text.
+func (s *State) FindAll(query string) []Entry {
+	query = strings.TrimSpace(strings.TrimPrefix(query, "#"))
+	entries := s.Entries()
+	if query == "*" {
+		return entries
+	}
+	if n, err := strconv.Atoi(query); err == nil {
+		if n >= 1 && n <= len(entries) {
+			return []Entry{entries[n-1]}
+		}
+		return nil
+	}
+	var out []Entry
+	q := strings.ToLower(query)
+	for _, e := range entries {
+		if e.Group+"/"+e.Server.Name == query || strings.Contains(strings.ToLower(e.Server.Name), q) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Find resolves a user query to one server. Accepted forms: list index
 // ("3"), "group/name", exact name, or a unique case-insensitive substring.
 func (s *State) Find(query string) (Entry, error) {

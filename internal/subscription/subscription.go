@@ -46,7 +46,10 @@ type Result struct {
 	Errors []error
 }
 
-const DefaultUserAgent = "proxy-router/1.0"
+// DefaultUserAgent is Happ's: panels pick the format by User-Agent and give
+// Happ full Xray JSON configs, including balanced "Auto" entries that plain
+// link lists leave out.
+const DefaultUserAgent = "Happ/3.24.1"
 
 // Fetch downloads and decodes a subscription.
 func Fetch(ctx context.Context, req Request) (*Result, error) {

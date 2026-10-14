@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,8 +16,29 @@ type Rules struct {
 	// How domains are resolved for IP rules: AsIs, IPIfNonMatch, IPOnDemand.
 	DomainStrategy string `yaml:"domain_strategy"`
 	Rules          []Rule `yaml:"rules"`
+	// Named groups of servers Xray balances between; use as pool:<name>.
+	Pools map[string]PoolSpec `yaml:"pools"`
+	// Health check deciding which pool members are usable.
+	PoolProbe PoolProbe `yaml:"pool_probe"`
 	// Optional Xray "dns" object, passed through unchanged.
 	DNS map[string]any `yaml:"dns"`
+}
+
+// PoolSpec defines a pool in the rules file.
+type PoolSpec struct {
+	// Server queries: an index, group/name, or text matched against names
+	// ("Швеция" picks every Swedish server). "*" means all servers.
+	Servers StringList `yaml:"servers"`
+	// leastPing (fastest working server), leastLoad, random or roundRobin.
+	Strategy string `yaml:"strategy"`
+}
+
+// PoolProbe is the health check for all pools. Xray allows one per config.
+type PoolProbe struct {
+	// URL fetched through each member. Use the site you care about, e.g.
+	// https://www.youtube.com/ to only use servers where YouTube works.
+	URL      string   `yaml:"url"`
+	Interval Duration `yaml:"interval"`
 }
 
 // Rule matches traffic and sends it to an outbound. Domain and IP lists are
@@ -84,6 +106,34 @@ func LoadRules(path string) (*Rules, error) {
 }
 
 func (r *Rules) validate() error {
+	for name, p := range r.Pools {
+		if name == "" || strings.ContainsAny(name, "~: ") {
+			return fmt.Errorf("pools: bad pool name %q", name)
+		}
+		if len(p.Servers) == 0 {
+			return fmt.Errorf("pools.%s: servers is empty", name)
+		}
+		switch p.Strategy {
+		case "", "leastPing", "leastLoad", "random", "roundRobin":
+		default:
+			return fmt.Errorf("pools.%s: strategy must be leastPing, leastLoad, random or roundRobin", name)
+		}
+	}
+	if u := r.PoolProbe.URL; u != "" && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return fmt.Errorf("pool_probe.url must be an http(s) URL")
+	}
+	if iv := r.PoolProbe.Interval.D(); iv != 0 && iv < 10*time.Second {
+		return fmt.Errorf("pool_probe.interval must be at least 10s")
+	}
+	checkOutbound := func(o string) error {
+		if name, ok := strings.CutPrefix(o, "pool:"); ok {
+			if _, exists := r.Pools[name]; !exists {
+				return fmt.Errorf("unknown pool %q (define it under pools:)", name)
+			}
+			return nil
+		}
+		return checkOutbound(o)
+	}
 	if err := checkOutbound(r.Default); err != nil {
 		return fmt.Errorf("default: %w", err)
 	}
@@ -130,9 +180,9 @@ func checkOutbound(o string) error {
 	case strings.HasPrefix(o, "server:") && strings.TrimSpace(o[len("server:"):]) != "":
 		return nil
 	case o == "":
-		return fmt.Errorf("outbound is required (proxy, direct, block or server:<name>)")
+		return fmt.Errorf("outbound is required (proxy, direct, block, server:<name> or pool:<name>)")
 	}
-	return fmt.Errorf("unknown outbound %q (use proxy, direct, block or server:<name>)", o)
+	return fmt.Errorf("unknown outbound %q (use proxy, direct, block, server:<name> or pool:<name>)", o)
 }
 
 // NeedsGeo reports whether the rules reference geoip.dat / geosite.dat.

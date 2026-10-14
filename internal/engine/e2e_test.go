@@ -521,7 +521,7 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("unexpected server %+v", s)
 		}
 		obs, _ := s.Outbounds("proxy")
-		if dp := obs[0]["streamSettings"].(map[string]any)["sockopt"].(map[string]any)["dialerProxy"]; dp != "proxy~fragment" || obs[1]["tag"] != "proxy~fragment" {
+		if dp := obs[0]["streamSettings"].(map[string]any)["sockopt"].(map[string]any)["dialerProxy"]; dp != "chain:proxy~fragment" || obs[1]["tag"] != "chain:proxy~fragment" {
 			t.Fatalf("chain not renamed: %v / %v", dp, obs[1]["tag"])
 		}
 		if got := fetchVia(t, s, target.URL); got != "hello from target" {

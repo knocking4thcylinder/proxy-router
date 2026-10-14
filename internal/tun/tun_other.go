@@ -14,3 +14,5 @@ func FreeName() (string, error) {
 func Up(name string, ipv6 bool) error { return fmt.Errorf("unsupported") }
 
 func Down(name string, ipv6 bool) {}
+
+func Sync(name string, ipv6 bool) error { return nil }

@@ -46,6 +46,9 @@ func ParseXrayJSON(data []byte) ([]*Server, []error) {
 }
 
 func serverFromConfig(cfg map[string]any) (*Server, error) {
+	if s, err := poolFromConfig(cfg); s != nil || err != nil {
+		return s, err
+	}
 	rawOutbounds, _ := cfg["outbounds"].([]any)
 	byTag := map[string]map[string]any{}
 	var main map[string]any
@@ -117,6 +120,157 @@ func serverFromConfig(cfg map[string]any) (*Server, error) {
 	}
 	s.Warnings = warnings
 	return s, nil
+}
+
+// poolFromConfig recognises configs whose user traffic goes to a balancer
+// (e.g. "Auto"). It returns nil, nil for ordinary configs.
+func poolFromConfig(cfg map[string]any) (*Server, error) {
+	routing, _ := cfg["routing"].(map[string]any)
+	balancers, _ := routing["balancers"].([]any)
+	if len(balancers) == 0 {
+		return nil, nil
+	}
+	// The balancer that handles the user's traffic: a rule with a
+	// balancerTag for the socks/http inbounds (or for everything).
+	var target string
+	rules, _ := routing["rules"].([]any)
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		bt, _ := rule["balancerTag"].(string)
+		if bt == "" {
+			continue
+		}
+		inbounds, _ := rule["inboundTag"].([]any)
+		forUser := len(inbounds) == 0
+		for _, in := range inbounds {
+			if in == "socks" || in == "http" {
+				forUser = true
+			}
+		}
+		if forUser {
+			target = bt
+			break
+		}
+	}
+	if target == "" {
+		return nil, nil
+	}
+	var balancer map[string]any
+	for _, b := range balancers {
+		if m, _ := b.(map[string]any); m != nil && m["tag"] == target {
+			balancer = m
+		}
+	}
+	if balancer == nil {
+		return nil, fmt.Errorf("routing uses unknown balancer %q", target)
+	}
+	var selector []string
+	for _, s := range asList(balancer["selector"]) {
+		if str, ok := s.(string); ok && str != "" {
+			selector = append(selector, str)
+		}
+	}
+
+	rawOutbounds, _ := cfg["outbounds"].([]any)
+	byTag := map[string]map[string]any{}
+	var members []map[string]any
+	for _, o := range rawOutbounds {
+		ob, _ := o.(map[string]any)
+		tag, _ := ob["tag"].(string)
+		if ob == nil || tag == "" {
+			continue
+		}
+		byTag[tag] = ob
+		proto, _ := ob["protocol"].(string)
+		if helperProtocols[proto] {
+			continue
+		}
+		for _, sel := range selector {
+			if strings.HasPrefix(tag, sel) {
+				members = append(members, ob)
+				break
+			}
+		}
+	}
+	if len(members) == 0 {
+		return nil, fmt.Errorf("balancer %q has no servers", target)
+	}
+
+	// Helpers any member dials through.
+	var chain []map[string]any
+	seen := map[string]bool{}
+	for _, m := range members {
+		t, _ := m["tag"].(string)
+		seen[t] = true
+	}
+	var queue []string
+	for _, m := range members {
+		queue = append(queue, dependencies(m)...)
+	}
+	for len(queue) > 0 {
+		tag := queue[0]
+		queue = queue[1:]
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		dep, ok := byTag[tag]
+		if !ok {
+			return nil, fmt.Errorf("outbound references unknown tag %q", tag)
+		}
+		chain = append(chain, dep)
+		queue = append(queue, dependencies(dep)...)
+	}
+
+	s := &Server{Pool: &Pool{Selector: selector}}
+	for _, ob := range append(append([]map[string]any{}, members...), chain...) {
+		s.Warnings = append(s.Warnings, sanitizeOutbound(ob)...)
+	}
+	for _, m := range members {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		s.Pool.Members = append(s.Pool.Members, raw)
+	}
+	for _, dep := range chain {
+		raw, err := json.Marshal(dep)
+		if err != nil {
+			return nil, err
+		}
+		s.Chain = append(s.Chain, raw)
+	}
+	if st, ok := balancer["strategy"]; ok {
+		s.Pool.Strategy, _ = json.Marshal(st)
+	}
+	if bo, ok := cfg["burstObservatory"].(map[string]any); ok && bo["pingConfig"] != nil {
+		s.Pool.Probe, _ = json.Marshal(bo["pingConfig"])
+	}
+	s.Outbound = s.Pool.Members[0]
+	s.Protocol, _ = members[0]["protocol"].(string)
+	s.Address, s.Port = endpoint(members[0])
+	s.Name, _ = cfg["remarks"].(string)
+	if s.Name == "" {
+		s.Name = fmt.Sprintf("pool of %d", len(members))
+	}
+	if fb, _ := balancer["fallbackTag"].(string); fb != "" {
+		proto, _ := byTag[fb]["protocol"].(string)
+		if byTag[fb] == nil || helperProtocols[proto] {
+			s.Warnings = append(s.Warnings, fmt.Sprintf(
+				"provider falls back to %q (unproxied) when servers look down; using the first server instead", fb))
+		}
+	}
+	return s, nil
+}
+
+func asList(v any) []any {
+	switch x := v.(type) {
+	case []any:
+		return x
+	case string:
+		return []any{x}
+	}
+	return nil
 }
 
 // dependencies returns tags an outbound routes its own traffic through.

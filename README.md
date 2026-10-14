@@ -42,12 +42,45 @@ proxy-router sub add 'https://panel.example.com/api/sub/TOKEN'
 proxy-router list                # servers, * = selected
 proxy-router ping                # real latency through every server
 proxy-router use --fastest       # or: use 3 / use "Germany" / use "My VPN/🇩🇪 Germany"
-proxy-router run                 # SOCKS5 on :10808, HTTP on :10809
-proxy-router run --system-proxy  # also point macOS proxy settings at it
+proxy-router start               # background service: SOCKS5 on :10808, HTTP on :10809
+proxy-router start --tun         # or capture all traffic (asks for sudo)
+proxy-router status
 ```
 
 Then point apps at `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809`,
-e.g. `export https_proxy=http://127.0.0.1:10809`.
+e.g. `export https_proxy=http://127.0.0.1:10809` (not needed with `--tun`).
+
+## Background service
+
+`proxy-router start` installs proxy-router as a service and starts it; it
+then starts by itself, and is restarted if it crashes. The `proxy-router`
+command you type only controls it.
+
+| Mode | Runs as | Starts | macOS | Linux |
+| --- | --- | --- | --- | --- |
+| proxy (default) | you | at login | LaunchAgent | systemd user unit |
+| TUN (`--tun`) | root | at boot | LaunchDaemon | systemd system unit |
+
+- **Mode:** `--tun` / `--no-tun`, else the mode of the installed service,
+  else `tun.enabled` in `config.yaml`. TUN mode needs root, so `start` (and
+  `stop`, `restart`) run themselves with sudo when needed. Switching modes
+  replaces the old service.
+- **Changes apply live:** `use`, `sub update`, and edits to `config.yaml` or
+  the rules file. The service watches its files the same way `run` does.
+- **After rebuilding proxy-router**, run `proxy-router restart`. The service
+  runs its own copy of the binary (in `~/Library/Application Support/proxy-router/`,
+  `/Library/Application Support/proxy-router/`, `~/.local/share/proxy-router/`
+  or `/var/lib/proxy-router/`), so a rebuild doesn't affect it until then.
+  `status` notes when the copy is out of date.
+- **At boot or login, TUN mode waits** for a network connection, and for
+  another VPN to disconnect, instead of failing. `status` shows what it's
+  waiting for.
+- **Logs** go to `~/.config/proxy-router/proxy-router.log`
+  (`proxy-router logs -f`; `start -v` / `-vv` for more detail). The log is
+  cleared when it reaches 10 MB.
+
+`run` still runs proxy-router in the foreground, for debugging. It refuses
+to start while the service is running.
 
 ## Commands
 
@@ -61,8 +94,14 @@ e.g. `export https_proxy=http://127.0.0.1:10809`.
 | `remove <server>` | remove a manually added server |
 | `list [-g group]` | list servers |
 | `use <server>` / `use --fastest [-g group]` | select the server for `proxy` |
-| `ping [server...] [-g group]` | latency test (full HTTP request through the proxy) |
-| `run [-r rules.yaml] [-s server] [--system-proxy] [--tun] [-v]` | start the proxy (`--tun` needs sudo) |
+| `ping [server...] [-g group] [--exit]` | latency test (full HTTP request through the proxy); `--exit` shows the country traffic really leaves from |
+| `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
+| `stop` | stop the service; it won't start automatically until `start` |
+| `restart` | restart it (picks up a rebuilt binary) |
+| `status` | is it running, which mode, server, listen addresses |
+| `logs [-f] [-n lines]` | the service's log |
+| `uninstall` | remove the service (config and servers are kept) |
+| `run [-r rules.yaml] [-s server] [--system-proxy] [--tun [--force]] [-v\|-vv]` | run in the foreground instead (`--tun` needs sudo) |
 | `config [-r rules.yaml] [-q] [--tun]` | validate, and print the generated Xray config |
 | `geo update` | download fresh `geoip.dat` / `geosite.dat` |
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
@@ -70,7 +109,7 @@ e.g. `export https_proxy=http://127.0.0.1:10809`.
 `<server>` can be the number from `list`, the exact name, `group/name`, or
 any unique part of the name.
 
-While `run` is active it picks up changes by itself:
+While the service (or `run`) is active it picks up changes by itself:
 - editing the rules file or `config.yaml` applies within ~2 seconds
 - `proxy-router use …` from another terminal switches the server
 - subscriptions are re-fetched every `update_interval`
@@ -134,6 +173,50 @@ Everything is in `~/.config/proxy-router/` (override with `--dir` or
 - `routing.yaml`: routing rules
 - `state.json`: subscriptions, cached servers, selected server (managed by the CLI, mode 0600)
 - `assets/`: geo files
+- `proxy-router.log`: the background service's log
+- `status.json`: what the running proxy-router is doing (for `status`)
+
+## Pools (Auto)
+
+A pool is a group of servers Xray balances between, skipping ones that stop
+working.
+
+**Provider pools.** Subscriptions are fetched with Happ's User-Agent, so
+panels send the same full configs Happ gets. That includes entries like
+"Авто"/"Турбо", which balance across several servers. They show up in
+`list` as `pool of N`; select them like any server, and `ping` tests every
+member (`170ms (5/5 alive)`). Providers often make these fall back to
+`direct` (unproxied, from your real IP) whenever their servers look down,
+including for the first minute after starting, before the first health
+check. proxy-router falls back to the first member server instead and
+never leaks.
+
+**Your own pools,** in the rules file:
+
+```yaml
+pools:
+  youtube:
+    servers: "*"              # or [Швеция, "ALL VPN/🇩🇪 Germany", 12]
+    strategy: leastPing       # leastPing, leastLoad, random, roundRobin
+pool_probe:                   # one health check for all pools (an Xray limit)
+  url: https://www.youtube.com/   # only use servers where this loads
+  interval: 30s
+
+rules:
+  - outbound: pool:youtube
+    domain: [geosite:youtube]
+```
+
+## Resolving names locally
+
+With `resolve_locally: true` (the default), proxy-router resolves the
+names of the sites you visit itself, using DNS-over-HTTPS through the
+tunnel, and sends servers IP addresses. Servers' own resolvers can return
+broken answers. With one real subscription, YouTube failed through every
+one of 108 servers when they resolved it, and worked through all of them
+once it was resolved locally. A `dns:` section in the rules file replaces
+the default DoH servers. In TUN mode apps already connect to IP addresses,
+so this mostly matters for the SOCKS/HTTP proxy.
 
 ## Happ's advanced settings
 
@@ -182,7 +265,8 @@ silently accepts things like a reversed range and then does nothing.
 ## TUN mode
 
 ```sh
-sudo proxy-router run --tun      # or tun.enabled: true
+proxy-router start --tun         # background service (asks for sudo)
+sudo proxy-router run --tun      # or in the foreground
 ```
 
 This captures all system traffic, so apps don't need proxy settings.
@@ -194,16 +278,52 @@ proxy-router's own connections are pinned to the physical interface, so
 they can't loop back into the TUN. The routes are removed on exit (and
 disappear with the interface anyway).
 
-DNS isn't captured: apps keep using the system resolver, which keeps
-Tailscale's MagicDNS working. Files written while running under sudo stay
-owned by you. `proxy-router config --tun` shows the TUN config without
-needing root.
+On Linux, tailscaled's own encrypted traffic to its peers also follows these
+routes, so it goes through the proxy. Tailnet addresses still work, but
+peer-to-peer connections may fall back to relays.
+
+How it works:
+
+- **Two Xray instances.** A small front instance owns the TUN device and
+  forwards everything over loopback SOCKS to the main instance, which has
+  the servers, rules and DNS. Config changes only restart the main
+  instance; the device and routes stay up. (Xray doesn't release a TUN
+  device when an instance closes, so restarting it would fail with "device
+  or resource busy".) If the main instance can't be restored after a
+  failed reload, `run` exits rather than staying up with nothing behind it.
+- **DNS is answered by proxy-router.** Queries apps send through the TUN
+  (to whatever resolver the system uses) are answered from Xray's cached
+  resolver: DNS-over-HTTPS through the tunnel. Tailscale names (`*.ts.net`)
+  go to the system resolver.
+- **Server names never depend on the tunnel.** Server hostnames are
+  resolved before the TUN starts and written into the config as IPs. If that
+  fails, Xray resolves them with DoH sent *outside* the tunnel, pinned to
+  the physical interface. The same goes for the pool health-check host.
+  Resolving them through the tunnel would deadlock, which showed up as
+  "can't connect to anything".
+- **proxy-router's own connections bypass the TUN** by binding to the
+  physical interface (`en0`, `eth0`...). On macOS that binding only works
+  through a default route scoped to the interface, which macOS doesn't
+  create for the primary interface, so `run --tun` adds one (and removes it
+  on exit). Without it every connection to the servers fails with "network
+  is unreachable".
+- **One VPN at a time.** `run --tun` refuses to start while another VPN
+  (Happ, Hiddify, a WireGuard tunnel...) owns the default route, because
+  two VPNs capturing all traffic break each other's routing and DNS.
+  Disconnect it first (closing its window isn't enough; `scutil --nc list`
+  shows what's connected on macOS) or pass `--force`.
+
+Files written while running under sudo stay owned by you.
+`proxy-router config --tun` shows the TUN config without needing root.
 
 ## Tailscale
 
 `system_route` (in `config.yaml`) lists destinations that always use the
 system's own routing: never proxied, never pinned to an interface, never
-captured by the TUN. By default that's Tailscale's `100.64.0.0/10`,
+captured by the TUN. (In TUN mode, traffic for these that still arrives
+through the TUN is rejected: it means the OS has no other route for it,
+and handing it back would loop.) By default that's Tailscale's
+`100.64.0.0/10`,
 `fd7a:115c:a1e0::/48` and `*.ts.net`, so tailnet hosts stay reachable
 through proxy-router's SOCKS/HTTP proxy and in TUN mode. Add other VPNs'
 private ranges there too.
@@ -229,9 +349,9 @@ when a port is taken and by which process.
 - Xray removed `allowInsecure`. Links that set it are imported with
   certificate verification on, and you get a warning. Use `pcs=`
   (pinned cert SHA-256) or `vcn=` links instead.
-- Some panels pick the subscription format by User-Agent. If a subscription
-  comes back empty, try `--user-agent Happ/3.0`. Panels with device limits
-  need `--hwid`.
+- Subscriptions are fetched as Happ (`Happ/3.24.1`) by default. Change it
+  with `user_agent` in `config.yaml` or `sub add --user-agent`. Panels with
+  device limits need `--hwid`.
 - Encrypted `happ://crypt…` links can't be imported. Use the plain
   subscription URL.
 - `--system-proxy` is macOS only for now. It restores the previous settings
@@ -239,5 +359,8 @@ when a port is taken and by which process.
 - `ping` tests at most `ping.per_endpoint` (default 2) servers per IP at
   once. Subscriptions often put dozens of "servers" behind one entry
   point, and testing them all at once makes that entry drop connections.
+- Server names don't always say where traffic exits. `ping --exit` shows
+  the real country. Some providers fall back to a Russian exit when their
+  foreign link is down, and then sites blocked in Russia fail.
 - Quitting Happ's window doesn't stop its VPN. Disconnect it in Happ, or
   check with `scutil --nc list`.

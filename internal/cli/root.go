@@ -32,7 +32,11 @@ Supported: VLESS (Reality, XTLS Vision, XHTTP, ...), VMess, Trojan,
 Shadowsocks (incl. 2022), SOCKS, HTTP(S), Hysteria2 and WireGuard, plus any
 Xray outbound delivered through a JSON subscription.
 
-Traffic is routed with rules from a YAML file (routing.yaml by default).`,
+Traffic is routed with rules from a YAML file (routing.yaml by default).
+
+"proxy-router start" runs it in the background and at every login (boot,
+in TUN mode); "stop", "restart", "status" and "logs" control it. "run"
+runs it in the foreground instead.`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -41,6 +45,7 @@ Traffic is routed with rules from a YAML file (routing.yaml by default).`,
 	root.AddCommand(
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
+		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
 	)
 	return root.Execute()
 }
@@ -51,14 +56,20 @@ type env struct {
 	state *config.State
 }
 
-func load() (*env, error) {
-	dir := flagDir
-	if dir == "" {
-		var err error
-		if dir, err = config.Dir(); err != nil {
-			return nil, err
-		}
+// configDir is --dir, or the default config directory.
+func configDir() (string, error) {
+	if flagDir != "" {
+		return filepath.Abs(flagDir)
 	}
+	return config.Dir()
+}
+
+func load() (*env, error) {
+	dir, err := configDir()
+	if err != nil {
+		return nil, err
+	}
+	config.SetOwnerFromDir(dir)
 	if err := ensureFiles(dir, false); err != nil {
 		return nil, err
 	}
@@ -105,12 +116,9 @@ func initCmd() *cobra.Command {
 		Short: "Create config.yaml and routing.yaml with commented defaults",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir := flagDir
-			if dir == "" {
-				var err error
-				if dir, err = config.Dir(); err != nil {
-					return err
-				}
+			dir, err := configDir()
+			if err != nil {
+				return err
 			}
 			if err := ensureFiles(dir, force); err != nil {
 				return err
@@ -142,6 +150,19 @@ func (e *env) outboundInterface() (iface, note string) {
 	default:
 		return v, ""
 	}
+}
+
+// resolveTTL is how long pinned server addresses are trusted.
+const resolveTTL = 10 * time.Minute
+
+var processResolver engine.Resolver
+
+// resolver returns one caching resolver per process, so reloads reuse it.
+func (e *env) resolver() engine.Resolver {
+	if processResolver == nil {
+		processResolver = engine.CachingResolver(e.cfg.PreferredIP, resolveTTL)
+	}
+	return processResolver
 }
 
 func ago(t time.Time) string {

@@ -26,8 +26,9 @@ access_log: false
 # runs. 0 disables automatic updates.
 update_interval: 12h
 
-# User-Agent for subscription requests. Some panels pick the format by it.
-# user_agent: Happ/3.0
+# User-Agent for subscription requests. Panels pick the format by it; the
+# default is Happ's, which gets full Xray configs including "Auto" pools.
+# user_agent: Happ/3.24.1
 
 # Sources for geoip:/geosite: rules ("proxy-router geo update").
 # For Russia-specific lists (geosite:ru-blocked, geoip:ru-blocked), use:
@@ -51,6 +52,14 @@ system_route:
   - 100.64.0.0/10          # Tailscale IPv4
   - fd7a:115c:a1e0::/48    # Tailscale IPv6
   - domain:ts.net          # Tailscale MagicDNS names
+
+# Resolve destination names here (DNS-over-HTTPS through the tunnel) and send
+# servers IP addresses, instead of each server resolving them itself. Servers'
+# resolvers can return broken answers (YouTube failed through every server
+# of one provider until this was on). Ignored for apps in TUN mode, which
+# already connect to IPs. A dns: section in the rules file replaces the DoH
+# servers used.
+resolve_locally: true
 
 # ---- Happ's advanced settings ----
 
@@ -118,9 +127,19 @@ const defaultRoutingYAML = `# proxy-router routing rules.
 #   protocol: http, tls, quic, bittorrent   (detected by sniffing)
 #   source:   client IPs/CIDRs (useful when listening on the LAN)
 #   process:  local process names or paths, e.g. curl, /Applications/Telegram.app/
-#   inbound:  socks, http
+#   inbound:  socks, http, tun
 # "domain" and "ip" in one rule mean "either one matches"; every other
 # condition must also match.
+#
+# Pools balance across several servers and skip dead ones:
+#   pools:
+#     sweden:
+#       servers: [Швеция, "My VPN/🇸🇪 Stockholm", 12]   # name text, group/name, index; "*" = all
+#       strategy: leastPing        # leastPing, leastLoad, random, roundRobin
+#   pool_probe:                    # health check for every pool
+#     url: https://www.youtube.com/    # only use servers where this loads
+#     interval: 30s
+# and send traffic there with outbound: pool:sweden.
 #
 # geosite:/geoip: lists are downloaded automatically on first use.
 # Tailscale ranges are handled before these rules by system_route in
@@ -159,6 +178,10 @@ rules:
   # - name: openai through a US server
   #   outbound: server:USA
   #   domain: [domain:openai.com, domain:chatgpt.com]
+
+  # - name: YouTube via whichever server can load it right now
+  #   outbound: pool:youtube       # define pools.youtube with servers: "*"
+  #   domain: [geosite:youtube]
 
   # - name: no torrents through the proxy
   #   outbound: direct
