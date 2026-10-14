@@ -19,7 +19,18 @@ import (
 
 // Dir returns the directory holding all proxy-router files.
 // $PROXY_ROUTER_HOME overrides the default (~/.config/proxy-router).
+//
+// As root it's always ~/.config/proxy-router of the user root works for
+// (TargetUser): the environment may have come from that user (sudo -E,
+// sudoers env_keep), so it isn't trusted. Pass --dir for anything else.
 func Dir() (string, error) {
+	if os.Geteuid() == 0 {
+		u, err := rootUser()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(u.HomeDir, ".config", "proxy-router"), nil
+	}
 	if d := os.Getenv("PROXY_ROUTER_HOME"); d != "" {
 		return d, nil
 	}
@@ -36,10 +47,6 @@ func Dir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
-	}
-	// Under sudo (TUN mode) keep using the invoking user's files.
-	if u := sudoUser(); u != nil {
-		home = u.HomeDir
 	}
 	return filepath.Join(home, ".config", "proxy-router"), nil
 }
@@ -187,15 +194,10 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 
 func (d Duration) D() time.Duration { return time.Duration(d) }
 
-// sudoUser returns the user who ran sudo, when running as root via sudo.
+// sudoUser returns the user a process running as root works for (sudo,
+// pkexec, or --uid; see TargetUser), or nil.
 func sudoUser() *user.User {
-	if os.Geteuid() != 0 || os.Getenv("SUDO_UID") == "" {
-		return nil
-	}
-	u, err := user.LookupId(os.Getenv("SUDO_UID"))
-	if err != nil {
-		return nil
-	}
+	u, _ := TargetUser()
 	return u
 }
 

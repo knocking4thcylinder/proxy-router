@@ -54,7 +54,7 @@ func version() string {
 	return "dev-" + rev + dirty
 }
 
-var flagDir string
+var flagDir, flagUID string
 
 // Execute runs the CLI.
 func Execute() error {
@@ -76,8 +76,17 @@ runs it in the foreground instead.`,
 		Version:       version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			config.SetTargetUID(flagUID)
+			_, err := config.TargetUser()
+			return err
+		},
 	}
 	root.PersistentFlags().StringVar(&flagDir, "dir", "", "config directory (default ~/.config/proxy-router, or $PROXY_ROUTER_HOME)")
+	// Set when proxy-router runs itself as root, and in the TUN service's
+	// unit: whose files and services root works with.
+	root.PersistentFlags().StringVar(&flagUID, "uid", "", "as root: the user to work for (default: the one sudo or pkexec reports)")
+	_ = root.PersistentFlags().MarkHidden("uid")
 	root.AddCommand(
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
@@ -93,12 +102,18 @@ type env struct {
 	state *config.State
 }
 
-// configDir is --dir, or the default config directory.
+// configDir is --dir, or the default config directory. As root it has to
+// pass config.CheckDir.
 func configDir() (string, error) {
+	get := config.Dir
 	if flagDir != "" {
-		return filepath.Abs(flagDir)
+		get = func() (string, error) { return filepath.Abs(flagDir) }
 	}
-	return config.Dir()
+	dir, err := get()
+	if err != nil {
+		return "", err
+	}
+	return config.CheckDir(dir)
 }
 
 func load() (*env, error) {
