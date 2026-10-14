@@ -1,0 +1,82 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/config"
+)
+
+const trayUsesTemplate = false
+
+// menuLabel escapes underscores, which DBus menus take as mnemonics.
+func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
+
+// elevated runs argv as root with pkexec, which asks for the password in
+// the desktop's polkit dialog.
+func elevated(argv, env []string) *exec.Cmd {
+	return exec.Command("pkexec", append(append([]string{"env"}, env...), argv...)...)
+}
+
+// authCanceled reports whether the password dialog was dismissed.
+func authCanceled(err error, _ string) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 126
+}
+
+func openPath(path string) {
+	if err := exec.Command("xdg-open", path).Start(); err != nil {
+		notify("Couldn't open "+path, err.Error())
+	}
+}
+
+func notify(title, body string) {
+	if err := exec.Command("notify-send", "-a", "proxy-router", title, body).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", title, body)
+	}
+}
+
+func trayAutostartPath() string {
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(dir, "autostart", "proxy-router-tray.desktop")
+}
+
+func trayAutostartEnabled() bool {
+	_, err := os.Stat(trayAutostartPath())
+	return err == nil
+}
+
+func setTrayAutostart(on bool, exe, dir string) error {
+	path := trayAutostartPath()
+	if !on {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	// Desktop entry Exec quoting: double quotes, with \ " ` $ escaped.
+	q := func(s string) string {
+		r := strings.NewReplacer(`\`, `\\\\`, `"`, `\\"`, "`", "\\\\`", `$`, `\\$`)
+		return `"` + r.Replace(s) + `"`
+	}
+	entry := fmt.Sprintf(`[Desktop Entry]
+Type=Application
+Name=proxy-router
+Comment=Tray icon for proxy-router
+Exec=%s --dir %s tray
+Terminal=false
+X-GNOME-Autostart-enabled=true
+`, q(exe), q(dir))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return config.WriteFileAtomic(path, []byte(entry), 0o644)
+}

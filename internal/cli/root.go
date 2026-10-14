@@ -82,6 +82,7 @@ runs it in the foreground instead.`,
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
 		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
+		trayCmd(),
 	)
 	return root.Execute()
 }

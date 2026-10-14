@@ -1,0 +1,110 @@
+//go:build cgo
+
+package cli
+
+import (
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/service"
+)
+
+const trayUsesTemplate = true
+
+func menuLabel(s string) string { return s }
+
+// elevated runs argv as root through AppleScript, which asks for the
+// password in the standard macOS dialog.
+func elevated(argv, env []string) *exec.Cmd {
+	words := env
+	for _, a := range argv {
+		words = append(words, "'"+strings.ReplaceAll(a, "'", `'\''`)+"'")
+	}
+	script := fmt.Sprintf("do shell script %s with administrator privileges", appleString(strings.Join(words, " ")))
+	return exec.Command("osascript", "-e", script)
+}
+
+func appleString(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// authCanceled reports whether the password dialog was dismissed.
+func authCanceled(_ error, out string) bool { return strings.Contains(out, "(-128)") }
+
+func openPath(path string) {
+	args := []string{path}
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() && filepath.Ext(path) != ".log" {
+		args = []string{"-t", path} // .yaml has no default app
+	}
+	if err := exec.Command("open", args...).Start(); err != nil {
+		notify("Couldn't open "+path, err.Error())
+	}
+}
+
+func notify(title, body string) {
+	script := fmt.Sprintf("display notification %s with title %s", appleString(body), appleString(title))
+	if err := exec.Command("osascript", "-e", script).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", title, body)
+	}
+}
+
+const trayLabel = service.Label + ".tray"
+
+func trayAutostartPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "LaunchAgents", trayLabel+".plist")
+}
+
+func trayAutostartEnabled() bool {
+	_, err := os.Stat(trayAutostartPath())
+	return err == nil
+}
+
+// setTrayAutostart writes or removes a LaunchAgent; launchd loads it at the
+// next login (loading it now would start a second tray).
+func setTrayAutostart(on bool, exe, dir string) error {
+	path := trayAutostartPath()
+	if !on {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	esc := func(v string) string {
+		var b bytes.Buffer
+		_ = xml.EscapeText(&b, []byte(v))
+		return b.String()
+	}
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>%s</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>%s</string>
+		<string>--dir</string>
+		<string>%s</string>
+		<string>tray</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>
+`, esc(trayLabel), esc(exe), esc(dir))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return config.WriteFileAtomic(path, []byte(plist), 0o644)
+}

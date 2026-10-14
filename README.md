@@ -82,6 +82,37 @@ command you type only controls it.
 `run` still runs proxy-router in the foreground, for debugging. It refuses
 to start while the service is running.
 
+## Tray icon
+
+```sh
+proxy-router tray
+```
+
+puts an icon in the system tray (the menu bar on macOS). It's orange while
+connected, faded while starting or waiting for the network, and grey when
+disconnected. Its menu:
+
+- **Connect / Disconnect**: `start` / `stop` the background service
+- **TUN Mode (All Traffic)**: switch modes (restarts the service if it's
+  running). TUN mode asks for your password in the system's dialog
+  (polkit on Linux, the standard macOS prompt) instead of sudo.
+- **Servers**: pick a server (grouped by subscription), use the fastest,
+  update subscriptions
+- **Edit Routing Rules**, **Show Log**, **Open Config Folder**
+- **Start Tray at Login**: adds a login item (`~/.config/autostart` on
+  Linux, a LaunchAgent on macOS) that runs this `proxy-router` binary, so
+  keep it somewhere stable (e.g. `~/go/bin`)
+
+Quitting the tray leaves the service running.
+
+- **Linux:** works on KDE Plasma (including the Steam Deck's desktop mode),
+  XFCE, Cinnamon and others with StatusNotifierItem support; GNOME needs
+  the *AppIndicator and KStatusNotifierItem Support* extension. No extra
+  libraries are needed.
+- **macOS:** the menu bar icon needs cgo, so build on the Mac with Xcode's
+  command line tools installed (`xcode-select --install`); a build without
+  cgo still works, minus `tray`.
+
 ## Commands
 
 | Command | |
@@ -101,6 +132,7 @@ to start while the service is running.
 | `status` | is it running, which mode, server, listen addresses |
 | `logs [-f] [-n lines]` | the service's log |
 | `uninstall` | remove the service (config and servers are kept) |
+| `tray` | tray / menu bar icon to connect, switch mode and pick servers |
 | `run [-r rules.yaml] [-s server] [--system-proxy] [--tun [--force]] [-v\|-vv]` | run in the foreground instead (`--tun` needs sudo) |
 | `config [-r rules.yaml] [-q] [--tun]` | validate, and print the generated Xray config |
 | `geo update` | download fresh `geoip.dat` / `geosite.dat` |
