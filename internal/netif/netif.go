@@ -1,5 +1,9 @@
 // Package netif detects when another VPN's tunnel owns the default route,
 // so proxy-router can send its own connections around it.
+//
+// A VPN can own it with a default route of its own, or with split routes
+// (0.0.0.0/1 + 128.0.0.0/1, ::/1 + 8000::/1) that beat the default route
+// without replacing it. Both count, for IPv4 and IPv6.
 package netif
 
 import (
@@ -27,7 +31,7 @@ type Detection struct {
 
 // isTunnel reports interface names used by VPN/TUN software.
 func isTunnel(name string) bool {
-	for _, p := range []string{"utun", "tun", "tap", "wg", "ipsec", "ppp", "gif", "stf"} {
+	for _, p := range []string{"utun", "tun", "prtun", "tap", "wg", "ipsec", "ppp", "gif", "stf"} {
 		if strings.HasPrefix(name, p) {
 			return true
 		}
@@ -107,7 +111,7 @@ func parseNetstat(out string) []Route {
 				Addr:    gateway,
 				Scoped:  strings.Contains(flags, "I"),
 			})
-		case "0/1", "128.0/1":
+		case "0/1", "128.0/1", "::/1", "8000::/1":
 			// VPNs that use split routes (WireGuard, OpenVPN, our own TUN)
 			// override the default route without replacing it.
 			if isTunnel(iface) {
@@ -127,5 +131,31 @@ func Detect() (Detection, error) {
 	if err != nil {
 		return Detection{}, err
 	}
-	return pick(routes), nil
+	d := pick(routes)
+	if d.Tunnel == "" {
+		// A VPN that only takes IPv6 over still captures traffic.
+		if r6, _ := familyRoutes("inet6"); len(r6) > 0 && isTunnel(r6[0].Iface) {
+			d = Detection{Tunnel: r6[0].Iface, Physical: physical(routes, "")}
+		}
+	}
+	return d, nil
+}
+
+// defaultRoutes lists IPv4 default route candidates, active first.
+func defaultRoutes() ([]Route, error) {
+	return familyRoutes("inet")
+}
+
+// Uplink returns the physical interface with the system-wide default route
+// for family ("inet" or "inet6") and its gateway, skipping exclude.
+func Uplink(family, exclude string) (iface, gateway string, err error) {
+	routes, err := familyRoutes(family)
+	if err != nil {
+		return "", "", err
+	}
+	r, ok := uplink(routes, exclude)
+	if !ok {
+		return "", "", fmt.Errorf("no %s default route", family)
+	}
+	return r.Iface, r.Addr, nil
 }
