@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	fyne.io/systray v1.12.2
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/sys v0.42.0
@@ -15,7 +16,6 @@ require (
 	github.com/apernet/quic-go v0.59.1-0.20260217092621-db4786c77a22 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

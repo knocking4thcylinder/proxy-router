@@ -88,9 +88,13 @@ to start while the service is running.
 proxy-router tray
 ```
 
-puts an icon in the system tray (the menu bar on macOS). It's orange while
-connected, faded while starting or waiting for the network, and grey when
-disconnected. Its menu:
+puts an icon in the system tray (the menu bar on macOS) and gives you the
+terminal back; the icon stays after you close the terminal. Its output
+goes to `~/.config/proxy-router/tray.log` (`--foreground` keeps it attached
+instead, for debugging).
+
+The icon is orange while connected, faded while starting or waiting for the
+network, and grey when disconnected. Its menu:
 
 - **Connect / Disconnect**: `start` / `stop` the background service
 - **TUN Mode (All Traffic)**: switch modes (restarts the service if it's

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"fyne.io/systray"
@@ -29,7 +30,8 @@ import (
 var trayIcons embed.FS
 
 func trayCmd() *cobra.Command {
-	return &cobra.Command{
+	var foreground bool
+	cmd := &cobra.Command{
 		Use:   "tray",
 		Short: "Show a tray icon (menu bar icon on macOS) to control proxy-router",
 		Long: `Show an icon in the system tray (the menu bar on macOS) that shows whether
@@ -38,7 +40,10 @@ between proxy and TUN mode, pick a server and update subscriptions.
 
 It controls the background service, like "start" and "stop" do; TUN mode
 asks for your password in a system dialog. "Start tray at login" in its
-menu makes the icon come back after a reboot.`,
+menu makes the icon come back after a reboot.
+
+The tray runs in the background and returns right away; quit it from its
+menu. --foreground keeps it attached to the terminal instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if os.Geteuid() == 0 {
@@ -48,10 +53,14 @@ menu makes the icon come back after a reboot.`,
 			if err != nil {
 				return err
 			}
-			if err := ensureFiles(dir, false); err != nil {
-				return err
+			if !foreground {
+				// At login the tray host may not be up yet; the
+				// login item uses --foreground.
+				if err := trayAvailable(); err != nil {
+					return err
+				}
 			}
-			if err := lockTray(dir); err != nil {
+			if err := ensureFiles(dir, false); err != nil {
 				return err
 			}
 			exe, err := os.Executable()
@@ -60,6 +69,12 @@ menu makes the icon come back after a reboot.`,
 			}
 			if exe, err = filepath.EvalSymlinks(exe); err != nil {
 				return err
+			}
+			if err := lockTray(dir); err != nil {
+				return err
+			}
+			if !foreground {
+				return detachTray(exe, dir)
 			}
 			userT, sysT, err := targets()
 			if err != nil {
@@ -70,6 +85,37 @@ menu makes the icon come back after a reboot.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal")
+	return cmd
+}
+
+// detachTray starts "tray --foreground" in its own session, so it outlives
+// the terminal, and returns once it's clearly up. Its output goes to
+// tray.log. The caller holds the tray lock, which is handed over.
+func detachTray(exe, dir string) error {
+	logName := filepath.Join(dir, "tray.log")
+	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	cmd := exec.Command(exe, "--dir", dir, "tray", "--foreground")
+	cmd.Stdout, cmd.Stderr = logf, logf
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	trayLock.Close() // released just before the child takes it
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	select {
+	case <-exited:
+		out, _ := os.ReadFile(logName)
+		return fmt.Errorf("the tray exited right away:\n%s", lastLines(string(out), 5))
+	case <-time.After(time.Second):
+	}
+	fmt.Printf("tray started (pid %d); quit it from its menu\n", cmd.Process.Pid)
+	return nil
 }
 
 // trayLock keeps a second tray from starting; it's held until the process

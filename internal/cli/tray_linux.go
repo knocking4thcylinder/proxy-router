@@ -8,10 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/godbus/dbus/v5"
+
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 )
 
 const trayUsesTemplate = false
+
+// trayAvailable checks that something shows tray icons: a
+// StatusNotifierWatcher on the session bus. There's none in SteamOS's
+// Gaming Mode, over SSH, or on GNOME without the AppIndicator extension.
+func trayAvailable() error {
+	const hint = "no tray to show the icon in: needs a desktop with tray (StatusNotifierItem) support; GNOME needs the AppIndicator extension"
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		return errors.New(hint)
+	}
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return fmt.Errorf("%s (%v)", hint, err)
+	}
+	var has bool
+	if err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, "org.kde.StatusNotifierWatcher").Store(&has); err != nil || !has {
+		return errors.New(hint)
+	}
+	return nil
+}
 
 // menuLabel escapes underscores, which DBus menus take as mnemonics.
 func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
@@ -71,7 +92,7 @@ func setTrayAutostart(on bool, exe, dir string) error {
 Type=Application
 Name=proxy-router
 Comment=Tray icon for proxy-router
-Exec=%s --dir %s tray
+Exec=%s --dir %s tray --foreground
 Terminal=false
 X-GNOME-Autostart-enabled=true
 `, q(exe), q(dir))

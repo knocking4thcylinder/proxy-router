@@ -17,6 +17,8 @@ import (
 
 const trayUsesTemplate = true
 
+func trayAvailable() error { return nil }
+
 func menuLabel(s string) string { return s }
 
 // elevated runs argv as root through AppleScript, which asks for the
@@ -93,6 +95,7 @@ func setTrayAutostart(on bool, exe, dir string) error {
 		<string>--dir</string>
 		<string>%s</string>
 		<string>tray</string>
+		<string>--foreground</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
