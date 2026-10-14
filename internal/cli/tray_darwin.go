@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
 )
 
@@ -19,7 +20,11 @@ const trayUsesTemplate = true
 
 func trayAvailable() error { return nil }
 
-func menuLabel(s string) string { return s }
+// menuLabel strips control and bidi characters from s, keeping its indent.
+func menuLabel(s string) string {
+	text := strings.TrimLeft(s, " ")
+	return s[:len(s)-len(text)] + safetext.Clean(text, 100)
+}
 
 // elevated runs argv as root through AppleScript, which asks for the
 // password in the standard macOS dialog.

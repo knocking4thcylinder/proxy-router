@@ -16,6 +16,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
+	"github.com/knocking4thcylinder/proxy-router/internal/subscription"
 )
 
 func addCmd() *cobra.Command {
@@ -40,8 +41,9 @@ func addCmd() *cobra.Command {
 			if strings.HasPrefix(strings.TrimSpace(text), "{") || strings.HasPrefix(strings.TrimSpace(text), "[") {
 				servers, errs = share.ParseXrayJSON([]byte(text))
 			}
+			subscription.CleanServers(servers)
 			for _, err := range errs {
-				fmt.Fprintf(os.Stderr, "skipped: %v\n", err)
+				fmt.Fprintf(os.Stderr, "skipped: %s\n", clean(err.Error()))
 			}
 			if len(servers) == 0 {
 				return fmt.Errorf("no servers added")
@@ -106,7 +108,7 @@ func removeCmd() *cobra.Command {
 			if err := e.state.Save(); err != nil {
 				return err
 			}
-			fmt.Printf("removed %s\n", entry)
+			fmt.Printf("removed %s\n", clean(entry.String()))
 			return nil
 		},
 	}
@@ -138,10 +140,10 @@ func listCmd() *cobra.Command {
 				if hasCur && en.Index == cur.Index {
 					mark = "*"
 				}
-				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\n", mark, en.Index, en.Server.Name, en.Group, describe(en.Server), address(en.Server))
+				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\n", mark, en.Index, clean(en.Server.Name), clean(en.Group), clean(describe(en.Server)), clean(address(en.Server)))
 				if verbose {
 					for _, w := range en.Server.Warnings {
-						fmt.Fprintf(tw, "\t\t  ! %s\t\t\t\n", w)
+						fmt.Fprintf(tw, "\t\t  ! %s\t\t\t\n", clean(w))
 					}
 				}
 			}
@@ -231,7 +233,7 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 					return fmt.Errorf("no server responded")
 				}
 				entry = results[best].Entry
-				fmt.Printf("fastest: %s (%s)\n", entry, results[best].Latency.Round(time.Millisecond))
+				fmt.Printf("fastest: %s (%s)\n", clean(entry.String()), results[best].Latency.Round(time.Millisecond))
 			case len(args) == 1:
 				if entry, err = e.state.Find(args[0]); err != nil {
 					return err
@@ -243,7 +245,7 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 			if err := e.state.Save(); err != nil {
 				return err
 			}
-			fmt.Printf("using %s\n", entry)
+			fmt.Printf("using %s\n", clean(entry.String()))
 			return nil
 		},
 	}
@@ -319,9 +321,9 @@ func pingCmd() *cobra.Command {
 				if r.Members > 0 {
 					lat = fmt.Sprintf("%s (%d/%d alive)", lat, r.Alive, r.Members)
 				}
-				line := fmt.Sprintf("%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, r.Entry.Server.Name, r.Entry.Group, lat)
+				line := fmt.Sprintf("%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, clean(r.Entry.Server.Name), clean(r.Entry.Group), lat)
 				if exit {
-					line += "\t" + r.Exit
+					line += "\t" + clean(r.Exit)
 				}
 				fmt.Fprintln(tw, line)
 			}
@@ -354,7 +356,7 @@ func (e *env) resolverIf(iface string) engine.Resolver {
 }
 
 func shortErr(err error) string {
-	s := err.Error()
+	s := clean(err.Error())
 	if strings.Contains(s, "Client.Timeout") || strings.Contains(s, "deadline exceeded") {
 		return "timeout"
 	}
