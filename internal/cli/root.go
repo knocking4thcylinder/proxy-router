@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -16,7 +17,42 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
 )
 
-var Version = "dev"
+// Version can be set with -ldflags "-X .../internal/cli.Version=v1.2.3";
+// otherwise it comes from the build info.
+var Version = ""
+
+// version is Version, the module version "go install ...@version" built,
+// or the git commit of a local build.
+func version() string {
+	if Version != "" {
+		return Version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	var rev, dirty string
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if rev == "" {
+		return "dev"
+	}
+	return "dev-" + rev + dirty
+}
 
 var flagDir string
 
@@ -37,7 +73,7 @@ Traffic is routed with rules from a YAML file (routing.yaml by default).
 "proxy-router start" runs it in the background and at every login (boot,
 in TUN mode); "stop", "restart", "status" and "logs" control it. "run"
 runs it in the foreground instead.`,
-		Version:       Version,
+		Version:       version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

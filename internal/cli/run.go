@@ -208,7 +208,7 @@ func run(ctx context.Context, o runOptions) error {
 		if err := redirectOutput(logPath(dir)); err != nil {
 			return err
 		}
-		fmt.Printf("\n=== proxy-router %s service starting, %s ===\n", Version, time.Now().Format(time.RFC3339))
+		fmt.Printf("\n=== proxy-router %s service starting, %s ===\n", version(), time.Now().Format(time.RFC3339))
 	}
 	if st, ok := readRunStatus(dir); ok && st.PID != os.Getpid() {
 		if st.Service {
