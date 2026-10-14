@@ -39,13 +39,23 @@ func appleString(s string) string {
 // authCanceled reports whether the password dialog was dismissed.
 func authCanceled(_ error, out string) bool { return strings.Contains(out, "(-128)") }
 
-func openPath(path string) {
-	args := []string{path}
-	if fi, err := os.Stat(path); err == nil && !fi.IsDir() && filepath.Ext(path) != ".log" {
-		args = []string{"-t", path} // .yaml has no default app
+// openText opens a file in the default text editor, whatever its name
+// says it is: plain "open" would run a .command file or launch an .app
+// bundle the rules path pointed at. Anything that isn't a regular file is
+// only revealed in Finder.
+func openText(path string) {
+	args := []string{"-R", path}
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() {
+		args = []string{"-t", path}
 	}
 	if err := exec.Command("open", args...).Start(); err != nil {
 		notify("Couldn't open "+path, err.Error())
+	}
+}
+
+func openFolder(dir string) {
+	if err := exec.Command("open", dir).Start(); err != nil {
+		notify("Couldn't open "+dir, err.Error())
 	}
 }
 

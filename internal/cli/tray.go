@@ -397,10 +397,10 @@ func (t *tray) build(m trayModel) {
 		if e, err := load(); err == nil {
 			path = e.cfg.RulesPath()
 		}
-		openPath(path)
+		openText(path)
 	})
-	t.onClick(systray.AddMenuItem("Show Log", ""), false, func() { openPath(logPath(t.dir)) })
-	t.onClick(systray.AddMenuItem("Open Config Folder", ""), false, func() { openPath(t.dir) })
+	t.onClick(systray.AddMenuItem("Show Log", ""), false, func() { openText(logPath(t.dir)) })
+	t.onClick(systray.AddMenuItem("Open Config Folder", ""), false, func() { openFolder(t.dir) })
 	systray.AddSeparator()
 	t.onClick(systray.AddMenuItemCheckbox("Start Tray at Login", "", m.autostart), false, func() {
 		if err := setTrayAutostart(!m.autostart, t.exe, t.dir); err != nil {
