@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Lets pkexec run the TUN service's root-owned copy of proxy-router under
+  its own action, so the password dialog says what it's for and polkit
+  rules can refer to it. Install to /usr/share/polkit-1/actions/; see
+  packaging/README.md.
+-->
+<policyconfig>
+  <vendor>proxy-router</vendor>
+  <vendor_url>https://github.com/knocking4thcylinder/proxy-router</vendor_url>
+  <action id="io.github.knocking4thcylinder.proxy-router.service">
+    <description>Control the proxy-router TUN service</description>
+    <message>Authentication is required to control the proxy-router TUN service, which runs as root</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/var/lib/proxy-router/proxy-router</annotate>
+  </action>
+</policyconfig>
