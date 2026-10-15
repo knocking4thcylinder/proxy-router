@@ -45,10 +45,23 @@ type Pool struct {
 
 // ChainTag is the tag of a helper outbound. Helpers live outside tag's
 // prefix so a pool's selector (a prefix match) can never pick one.
-func ChainTag(tag, helper string) string { return "chain:" + tag + "~" + helper }
+func ChainTag(tag, helper string) string { return "chain:" + tag + "~" + EscapeTag(helper) }
 
-// MemberTag is the tag of a pool member.
-func MemberTag(tag, member string) string { return tag + "~" + member }
+// MemberTag is the tag of a pool member, and with a selector, the prefix
+// that picks members.
+func MemberTag(tag, member string) string { return tag + "~" + EscapeTag(member) }
+
+// EscapeTag makes a provider-chosen name safe inside a tag: '~' only ever
+// separates a tag from its members, and a leading '#' is reserved for
+// index-based tags. So one provider's names can't produce another
+// server's tags or match another pool's selector.
+func EscapeTag(s string) string {
+	s = strings.NewReplacer("%", "%25", "~", "%7E").Replace(s)
+	if strings.HasPrefix(s, "#") {
+		s = "%23" + s[1:]
+	}
+	return s
+}
 
 // Primaries is how many of Outbounds' results are servers (the rest are
 // chain helpers): 1, or the member count for a pool.
@@ -85,47 +98,42 @@ func (s *Server) Members() []*Server {
 
 // Outbounds returns the server's Xray outbounds: the server tagged tag (or,
 // for a pool, its members tagged MemberTag), followed by chain helpers.
+// They're sanitized again here, so servers saved by older versions get
+// the same treatment as new imports.
 func (s *Server) Outbounds(tag string) ([]map[string]any, error) {
-	decode := func(raw json.RawMessage) (map[string]any, error) {
+	primaries := []json.RawMessage{s.Outbound}
+	if s.Pool != nil {
+		primaries = s.Pool.Members
+	}
+	var obs []map[string]any
+	for _, raw := range append(append([]json.RawMessage{}, primaries...), s.Chain...) {
 		var ob map[string]any
 		if err := json.Unmarshal(raw, &ob); err != nil {
 			return nil, fmt.Errorf("server %q: bad outbound: %w", s.Name, err)
 		}
-		return ob, nil
+		if ob == nil {
+			return nil, fmt.Errorf("server %q: empty outbound", s.Name)
+		}
+		obs = append(obs, ob)
+	}
+	obs, _, err := sanitizeAll(obs, len(primaries))
+	if err != nil {
+		return nil, fmt.Errorf("server %q: %w", s.Name, err)
 	}
 	rename := func(t string) string { return ChainTag(tag, t) }
-	var out []map[string]any
-	if s.Pool != nil {
-		for _, raw := range s.Pool.Members {
-			ob, err := decode(raw)
-			if err != nil {
-				return nil, err
-			}
-			t, _ := ob["tag"].(string)
-			ob["tag"] = MemberTag(tag, t)
-			renameDependencies(ob, rename)
-			out = append(out, ob)
-		}
-	} else {
-		main, err := decode(s.Outbound)
-		if err != nil {
-			return nil, err
-		}
-		main["tag"] = tag
-		renameDependencies(main, rename)
-		out = append(out, main)
-	}
-	for _, raw := range s.Chain {
-		ob, err := decode(raw)
-		if err != nil {
-			return nil, err
-		}
+	for i, ob := range obs {
 		t, _ := ob["tag"].(string)
-		ob["tag"] = rename(t)
+		switch {
+		case i >= len(primaries):
+			ob["tag"] = rename(t)
+		case s.Pool != nil:
+			ob["tag"] = MemberTag(tag, t)
+		default:
+			ob["tag"] = tag
+		}
 		renameDependencies(ob, rename)
-		out = append(out, ob)
 	}
-	return out, nil
+	return obs, nil
 }
 
 // ParseLink converts one share link into a Server.
@@ -794,10 +802,23 @@ func newServer(name, protocol, address string, port int, settings, stream map[st
 	if stream != nil {
 		ob["streamSettings"] = stream
 	}
+	// Links carry options too, e.g. xhttp "extra". Sanitizing works on
+	// decoded JSON, hence the round trip.
 	raw, err := json.Marshal(ob)
 	if err != nil {
 		return nil, err
 	}
+	if err := json.Unmarshal(raw, &ob); err != nil {
+		return nil, err
+	}
+	obs, more, err := sanitizeAll([]map[string]any{ob}, 1)
+	if err != nil {
+		return nil, err
+	}
+	if raw, err = json.Marshal(obs[0]); err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, more...)
 	return &Server{
 		Name:     name,
 		Protocol: protocol,

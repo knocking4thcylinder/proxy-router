@@ -152,6 +152,7 @@ func Build(p Plan) (map[string]any, []string, error) {
 	// Rules that target a specific server, tagged with the server's name so
 	// the access log reads "[socks -> server:USA]".
 	byIndex := map[int]target{}
+	serverTags := map[string]bool{}
 	for i, r := range rules.Rules {
 		query, ok := strings.CutPrefix(r.Outbound, "server:")
 		if !ok {
@@ -168,10 +169,13 @@ func Build(p Plan) (map[string]any, []string, error) {
 			targets[r.Outbound] = t
 			continue
 		}
-		tag := "server:" + e.Server.Name
-		if slices.ContainsFunc(outbounds, func(o map[string]any) bool { return o["tag"] == tag }) {
+		// Names are escaped so a pool's member selector can't match
+		// another server's tags.
+		tag := "server:" + share.EscapeTag(e.Server.Name)
+		if serverTags[tag] {
 			tag = fmt.Sprintf("server:#%d", e.Index) // duplicate names across groups
 		}
+		serverTags[tag] = true
 		t, err := addServer(e, tag)
 		if err != nil {
 			return nil, nil, err
@@ -395,7 +399,8 @@ func poolProbe(pp config.PoolProbe, provider []map[string]any) map[string]any {
 		"timeout":     "5s",
 	}
 	if len(provider) > 0 {
-		probe = provider[0]
+		// Cleaned again for pools saved by older versions.
+		probe = share.SanitizeProbe(provider[0])
 	}
 	if pp.URL != "" {
 		probe = map[string]any{"destination": pp.URL, "interval": "30s", "sampling": 2, "timeout": "8s"}
@@ -424,11 +429,23 @@ func dedupe(s []string) []string {
 }
 
 // BindInterface makes outbounds open their sockets on iface, so they bypass
-// another VPN's tunnel. Outbounds that dial through another outbound
-// (dialerProxy) or already pick an interface are left alone.
+// another VPN's tunnel (or, in TUN mode, our own). It overrides any
+// interface already set. Connections that dial through another outbound
+// (dialerProxy) are left alone: that outbound gets bound instead. XHTTP's
+// download connection has its own sockopt and is bound too.
 func BindInterface(obs []map[string]any, iface string) []map[string]any {
 	if iface == "" {
 		return obs
+	}
+	bind := func(ss map[string]any) {
+		so, _ := ss["sockopt"].(map[string]any)
+		if so == nil {
+			so = map[string]any{}
+			ss["sockopt"] = so
+		}
+		if d, _ := so["dialerProxy"].(string); d == "" {
+			so["interface"] = iface
+		}
 	}
 	for _, ob := range obs {
 		ss, _ := ob["streamSettings"].(map[string]any)
@@ -436,16 +453,12 @@ func BindInterface(obs []map[string]any, iface string) []map[string]any {
 			ss = map[string]any{}
 			ob["streamSettings"] = ss
 		}
-		so, _ := ss["sockopt"].(map[string]any)
-		if so == nil {
-			so = map[string]any{}
-			ss["sockopt"] = so
-		}
-		if so["dialerProxy"] != nil && so["dialerProxy"] != "" {
-			continue
-		}
-		if cur, _ := so["interface"].(string); cur == "" {
-			so["interface"] = iface
+		bind(ss)
+		for _, key := range []string{"xhttpSettings", "splithttpSettings"} {
+			x, _ := ss[key].(map[string]any)
+			if ds, ok := x["downloadSettings"].(map[string]any); ok {
+				bind(ds)
+			}
 		}
 	}
 	return obs

@@ -27,7 +27,7 @@ func TestPingProgressStreamsAndAggregatesPools(t *testing.T) {
 	}()
 	proxy := func(name string, blocked, fail bool) *share.Server {
 		t.Helper()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addr := connectProxy(t, func(w http.ResponseWriter, r *http.Request) {
 			if blocked {
 				select {
 				case <-release:
@@ -44,10 +44,12 @@ func TestPingProgressStreamsAndAggregatesPools(t *testing.T) {
 			} else {
 				w.WriteHeader(http.StatusNoContent)
 			}
-		}))
-		t.Cleanup(srv.Close)
-		return &share.Server{Name: name, Protocol: "freedom", Outbound: json.RawMessage(fmt.Sprintf(
-			`{"protocol":"freedom","settings":{"redirect":%q}}`, strings.TrimPrefix(srv.URL, "http://")))}
+		})
+		s, err := share.ParseLink("http://" + addr + "#" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
 	fast := proxy("fast", false, false)
 	slow := proxy("slow", true, false)
@@ -109,4 +111,32 @@ func TestPingProgressStreamsAndAggregatesPools(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("batch did not finish after releasing the slow proxy")
 	}
+}
+
+// connectProxy starts an HTTP proxy that answers every request tunnelled
+// through it with serve, whatever the destination, and returns its
+// host:port. (Xray's http outbound always tunnels with CONNECT.)
+func connectProxy(t *testing.T, serve http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
+			return
+		}
+		conn, rw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprint(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
+		req, err := http.ReadRequest(rw.Reader)
+		if err != nil {
+			return
+		}
+		rec := httptest.NewRecorder()
+		serve(rec, req.WithContext(r.Context()))
+		_ = rec.Result().Write(conn)
+	}))
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(srv.URL, "http://")
 }

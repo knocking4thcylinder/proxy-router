@@ -12,6 +12,7 @@ import (
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
+	"github.com/knocking4thcylinder/proxy-router/internal/subscription"
 )
 
 func testState(t *testing.T) *config.State {
@@ -141,6 +142,88 @@ func TestRulesValidation(t *testing.T) {
 		os.WriteFile(p, []byte(bad), 0o644)
 		if _, err := config.LoadRules(p); err == nil {
 			t.Errorf("expected error for:\n%s", bad)
+		}
+	}
+}
+
+func TestBindInterfaceOverridesImported(t *testing.T) {
+	obs := []map[string]any{
+		{"tag": "a", "streamSettings": map[string]any{
+			"sockopt": map[string]any{"interface": "lo"},
+			"xhttpSettings": map[string]any{"downloadSettings": map[string]any{
+				"sockopt": map[string]any{"interface": "lo"},
+			}},
+		}},
+		{"tag": "b", "streamSettings": map[string]any{"sockopt": map[string]any{"dialerProxy": "a"}}},
+	}
+	BindInterface(obs, "eth0")
+	ss := obs[0]["streamSettings"].(map[string]any)
+	if ss["sockopt"].(map[string]any)["interface"] != "eth0" {
+		t.Errorf("sockopt = %v", ss["sockopt"])
+	}
+	ds := ss["xhttpSettings"].(map[string]any)["downloadSettings"].(map[string]any)
+	if ds["sockopt"].(map[string]any)["interface"] != "eth0" {
+		t.Errorf("download sockopt = %v", ds["sockopt"])
+	}
+	if _, ok := obs[1]["streamSettings"].(map[string]any)["sockopt"].(map[string]any)["interface"]; ok {
+		t.Error("outbounds that dial through another one bind via that one")
+	}
+}
+
+// A malformed config that makes Xray's builder panic must come back as an
+// error, not take the service down.
+func TestValidateRecoversPanic(t *testing.T) {
+	xc := map[string]any{
+		"outbounds": []any{map[string]any{
+			"protocol": "freedom",
+			"streamSettings": map[string]any{
+				"security":    "tls",
+				"tlsSettings": map[string]any{"certificates": []any{nil}},
+			},
+		}},
+	}
+	if err := Validate(xc); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, err := Start(xc); err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+// Server names can't make one server's tags look like another pool's
+// members.
+func TestServerTagsEscaped(t *testing.T) {
+	cfg, _ := config.Load(t.TempDir())
+	st, _ := config.LoadState(t.TempDir())
+	pool := subscription.Decode([]byte(providerAuto(1001, 1002))).Servers[0]
+	pool.Name = "Auto"
+	evil, err := share.ParseLink("trojan://pw@evil.example.com:443#Auto~bridge-evil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Subscriptions = []*config.Subscription{
+		{Name: "good", Servers: []*share.Server{pool}},
+		{Name: "evil", Servers: []*share.Server{evil}},
+	}
+	st.Select(st.Entries()[0])
+	xc, _, err := Build(Plan{Config: cfg, State: st, Rules: writeRules(t,
+		"default: proxy\nrules:\n  - domain: [a.com]\n    outbound: server:good/Auto\n  - domain: [b.com]\n    outbound: server:evil/Auto~bridge-evil\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selectors []string
+	for _, b := range xc["routing"].(map[string]any)["balancers"].([]map[string]any) {
+		selectors = append(selectors, b["selector"].([]string)...)
+	}
+	for _, ob := range xc["outbounds"].([]map[string]any) {
+		tag := ob["tag"].(string)
+		if settings, _ := ob["settings"].(map[string]any); settings["address"] != "evil.example.com" {
+			continue
+		}
+		for _, sel := range selectors {
+			if strings.HasPrefix(tag, sel) {
+				t.Errorf("selector %q picks the other provider's %q", sel, tag)
+			}
 		}
 	}
 }

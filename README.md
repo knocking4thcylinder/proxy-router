@@ -174,7 +174,8 @@ Quitting the tray leaves the service running.
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
-any unique part of the name.
+any unique part of the name. After `group/`, only that group's servers
+match, so another subscription can't take over the name.
 
 `ping` prints each result as it finishes, with an animated progress counter
 and elapsed time in a terminal. The final table is sorted fastest first;
@@ -426,6 +427,12 @@ when a port is taken and by which process.
 - Xray removed `allowInsecure`. Links that set it are imported with
   certificate verification on, and you get a warning. Use `pcs=`
   (pinned cert SHA-256) or `vcn=` links instead.
+- Servers from subscriptions are rebuilt from known-safe Xray options
+  only. Local certificate files, socket marks and interfaces, kernel
+  WireGuard, VLESS reverse and server-only options are dropped (`list -v`
+  shows what), and a provider can't make the selected server a direct or
+  blocking outbound. Provider health checks must use https and can't make
+  direct requests.
 - Subscriptions are fetched as Happ (`Happ/3.24.1`) by default. Change it
   with `user_agent` in `config.yaml` or `sub add --user-agent`. Panels with
   device limits need `--hwid`.
