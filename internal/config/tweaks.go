@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -87,13 +88,22 @@ type Mux struct {
 	XUDPProxyUDP443 string `yaml:"xudp_proxy_udp443"` // reject, allow, skip
 }
 
+// validTUNName matches tun.ValidName.
+var validTUNName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
+
 type TUN struct {
 	Enabled bool `yaml:"enabled"`
 	// Interface name. macOS needs utunN; empty picks a free one.
 	Name string `yaml:"name"`
 	MTU  int    `yaml:"mtu"`
-	// Also capture IPv6 so it can't leak around the proxy.
+	// Send IPv6 through the proxy. Off, IPv6 is still captured, and
+	// rejected so apps fall back to IPv4 instead of leaking around the
+	// proxy.
 	IPv6 bool `yaml:"ipv6"`
+	// Block traffic that would leave outside the TUN, including while
+	// proxy-router restarts or after it crashes. "proxy-router stop"
+	// removes it.
+	KillSwitch bool `yaml:"kill_switch"`
 }
 
 // PreferredIPStrategy maps preferred_ip to Xray's domainStrategy.
@@ -254,6 +264,10 @@ func (c *Config) validateTweaks() error {
 	}
 	if c.TUN.MTU != 0 && (c.TUN.MTU < 576 || c.TUN.MTU > 9000) {
 		return fmt.Errorf("tun.mtu must be between 576 and 9000")
+	}
+	if n := c.TUN.Name; n != "" && !validTUNName.MatchString(n) {
+		// It ends up in firewall rules.
+		return fmt.Errorf("tun.name must be up to 15 letters, digits, '.', '-' or '_'")
 	}
 	return nil
 }

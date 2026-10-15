@@ -115,6 +115,7 @@ func defaults() *Config {
 	c.PreferredIP = "ipv4"
 	c.ResolveLocally = true
 	c.TUN.MTU = 1500
+	c.TUN.KillSwitch = true
 	return c
 }
 
