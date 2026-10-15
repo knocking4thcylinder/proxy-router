@@ -79,6 +79,17 @@ type PingOptions struct {
 	// ExitURL, when set, is fetched through each server after the latency
 	// test; its body (e.g. a country code) is reported as Exit.
 	ExitURL string
+	// OnProgress is called after each server (or pool member) finishes.
+	// Calls are serialized; the callback should return promptly.
+	OnProgress func(PingProgress)
+}
+
+// PingProgress contains a snapshot of an entry and overall probe progress.
+type PingProgress struct {
+	Result           PingResult
+	Completed, Total int
+	// EntryDone means all members of this entry have finished testing.
+	EntryDone bool
 }
 
 // PingResult is the outcome of a latency test.
@@ -123,6 +134,7 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		server *share.Server
 	}
 	var jobs []job
+	remaining := make([]int, len(entries))
 	for i, e := range entries {
 		results[i] = PingResult{Entry: e}
 		if members := e.Server.Members(); members != nil {
@@ -130,11 +142,14 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 			for _, m := range members {
 				jobs = append(jobs, job{i, m})
 			}
+			remaining[i] = len(members)
 			continue
 		}
 		jobs = append(jobs, job{i, e.Server})
+		remaining[i] = 1
 	}
 
+	completed := 0
 	var wg sync.WaitGroup
 	for _, j := range jobs {
 		wg.Add(1)
@@ -159,6 +174,14 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 				}
 			} else if r.Latency == 0 {
 				r.Err = err
+			}
+			completed++
+			remaining[j.result]--
+			if o.OnProgress != nil {
+				o.OnProgress(PingProgress{
+					Result: *r, Completed: completed, Total: len(jobs),
+					EntryDone: remaining[j.result] == 0,
+				})
 			}
 		}()
 	}

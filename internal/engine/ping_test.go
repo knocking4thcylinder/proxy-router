@@ -1,0 +1,112 @@
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/share"
+)
+
+// A blocked proxy proves that progress is delivered before the batch returns.
+// A mixed pool also must not count as finished until all its members finish.
+func TestPingProgressStreamsAndAggregatesPools(t *testing.T) {
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	proxy := func(name string, blocked, fail bool) *share.Server {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if blocked {
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			if fail {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			if r.URL.Path == "/country" {
+				fmt.Fprintln(w, "FI")
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		return &share.Server{Name: name, Protocol: "freedom", Outbound: json.RawMessage(fmt.Sprintf(
+			`{"protocol":"freedom","settings":{"redirect":%q}}`, strings.TrimPrefix(srv.URL, "http://")))}
+	}
+	fast := proxy("fast", false, false)
+	slow := proxy("slow", true, false)
+	dead := proxy("dead", false, true)
+	pool := &share.Server{Name: "pool", Pool: &share.Pool{Members: []json.RawMessage{slow.Outbound, dead.Outbound}}}
+	entries := []config.Entry{{Index: 1, Server: fast}, {Index: 2, Server: pool}}
+	updates := make(chan PingProgress, 3)
+	finished := make(chan []PingResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		finished <- Ping(ctx, entries, PingOptions{
+			URL: "http://probe.invalid/ping", ExitURL: "http://probe.invalid/country",
+			Timeout: 3 * time.Second, Parallel: 3,
+			OnProgress: func(p PingProgress) { updates <- p },
+		})
+	}()
+	var progress []PingProgress
+	for len(progress) < 2 {
+		select {
+		case p := <-updates:
+			progress = append(progress, p)
+		case <-ctx.Done():
+			t.Fatal("no progress while a pool member was blocked")
+		}
+	}
+	select {
+	case <-finished:
+		t.Fatal("batch finished before the slow proxy was released")
+	default:
+	}
+	for _, p := range progress {
+		if p.Result.Entry.Index == 1 && (!p.EntryDone || p.Result.Exit != "FI" || p.Result.Err != nil) {
+			t.Fatalf("bad completed single-server result: %+v", p)
+		}
+		if p.Result.Entry.Index == 2 && p.EntryDone {
+			t.Fatal("pool was marked finished with a pending member")
+		}
+	}
+	close(release)
+	select {
+	case results := <-finished:
+		progress = append(progress, <-updates)
+		for i, p := range progress {
+			if p.Completed != i+1 || p.Total != 3 {
+				t.Fatalf("bad probe counters: %+v", p)
+			}
+		}
+		last := progress[2]
+		if !last.EntryDone || last.Result.Entry.Index != 2 || last.Result.Alive != 1 || last.Result.Members != 2 || last.Result.Exit != "FI" || last.Result.Err != nil {
+			t.Fatalf("bad final pool progress: %+v", last)
+		}
+		if len(results) != 2 || results[0].Entry.Index != 1 || results[1].Entry.Index != 2 {
+			t.Fatalf("results lost entry order: %+v", results)
+		}
+		if results[1].Latency != last.Result.Latency || results[1].Alive != 1 {
+			t.Fatalf("progress differs from final pool result: %+v", results[1])
+		}
+	case <-ctx.Done():
+		t.Fatal("batch did not finish after releasing the slow proxy")
+	}
+}

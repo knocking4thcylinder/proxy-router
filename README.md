@@ -129,7 +129,7 @@ Quitting the tray leaves the service running.
 | `remove <server>` | remove a manually added server |
 | `list [-g group]` | list servers |
 | `use <server>` / `use --fastest [-g group]` | select the server for `proxy` |
-| `ping [server...] [-g group] [--exit]` | latency test (full HTTP request through the proxy); `--exit` shows the country traffic really leaves from |
+| `ping [server...] [-g group] [--exit] [-q]` | live latency tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
 | `restart` | restart it (picks up a rebuilt binary) |
@@ -144,6 +144,15 @@ Quitting the tray leaves the service running.
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
 any unique part of the name.
+
+`ping` prints each result as it finishes, with an animated progress counter
+and elapsed time in a terminal. The final table is sorted fastest first;
+`*` marks the selected server. Live progress goes to stderr, so redirecting
+stdout saves just the final table. Use `--quiet` (`-q`) to skip progress.
+With `--exit`, countries appear as `Finland (FI)`; `unknown (lookup failed)`
+means the latency test worked but the separate country lookup did not.
+Pools have a separate `POOL` column showing how many members responded;
+their latency and exit come from the fastest responding member.
 
 While the service (or `run`) is active it picks up changes by itself:
 - editing the rules file or `config.yaml` applies within ~2 seconds

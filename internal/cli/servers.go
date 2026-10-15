@@ -257,6 +257,7 @@ func pingCmd() *cobra.Command {
 		group    string
 		parallel int
 		exit     bool
+		quiet    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ping [server...]",
@@ -288,49 +289,24 @@ func pingCmd() *cobra.Command {
 			if exit {
 				opts.ExitURL = "https://ipinfo.io/country"
 			}
-			results := engine.Ping(cmd.Context(), entries, opts)
-			slices.SortStableFunc(results, func(a, b engine.PingResult) int {
-				switch {
-				case a.Err != nil && b.Err != nil:
-					return a.Entry.Index - b.Entry.Index
-				case a.Err != nil:
-					return 1
-				case b.Err != nil:
-					return -1
-				}
-				return int(a.Latency - b.Latency)
-			})
+			var results []engine.PingResult
+			if quiet {
+				results = engine.Ping(cmd.Context(), entries, opts)
+			} else {
+				results = pingWithProgress(cmd.Context(), entries, opts, cmd.ErrOrStderr(), exit)
+			}
 			cur, hasCur := e.state.Current()
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			header := "\t#\tNAME\tGROUP\tLATENCY"
-			if exit {
-				header += "\tEXIT"
+			current := 0
+			if hasCur {
+				current = cur.Index
 			}
-			fmt.Fprintln(tw, header)
-			for _, r := range results {
-				mark := ""
-				if hasCur && r.Entry.Index == cur.Index {
-					mark = "*"
-				}
-				lat := r.Latency.Round(time.Millisecond).String()
-				if r.Err != nil {
-					lat = "failed: " + shortErr(r.Err)
-				}
-				if r.Members > 0 {
-					lat = fmt.Sprintf("%s (%d/%d alive)", lat, r.Alive, r.Members)
-				}
-				line := fmt.Sprintf("%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, r.Entry.Server.Name, r.Entry.Group, lat)
-				if exit {
-					line += "\t" + r.Exit
-				}
-				fmt.Fprintln(tw, line)
-			}
-			return tw.Flush()
+			return writePingResults(cmd.OutOrStdout(), results, current, exit)
 		},
 	}
 	cmd.Flags().StringVarP(&group, "group", "g", "", "only test this subscription")
 	cmd.Flags().IntVarP(&parallel, "parallel", "j", 16, "servers to test at once")
 	cmd.Flags().BoolVar(&exit, "exit", false, "also show the country traffic really exits in (via ipinfo.io)")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the final sorted results")
 	return cmd
 }
 
