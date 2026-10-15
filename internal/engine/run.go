@@ -303,6 +303,8 @@ func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
 	return n, os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
+// splitHostPort splits a listen address. An empty host means loopback:
+// listening on every interface has to be asked for (0.0.0.0, [::]).
 func splitHostPort(addr string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -313,7 +315,7 @@ func splitHostPort(addr string) (string, int, error) {
 		return "", 0, fmt.Errorf("%q: bad port", addr)
 	}
 	if host == "" {
-		host = "0.0.0.0"
+		host = "127.0.0.1"
 	}
 	return host, port, nil
 }

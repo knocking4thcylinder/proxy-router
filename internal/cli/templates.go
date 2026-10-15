@@ -6,6 +6,14 @@ const defaultConfigYAML = `# proxy-router settings. Subscriptions and the select
 listen:
   socks: 127.0.0.1:10808   # SOCKS5 (TCP + UDP). Empty string disables it.
   http: 127.0.0.1:10809    # HTTP / HTTPS CONNECT proxy. Empty string disables it.
+  # Login for both. Needed to listen beyond this machine (0.0.0.0, a LAN
+  # address); a host-less ":10808" means 127.0.0.1. Note that SOCKS5 UDP is
+  # let through for any program on an IP that has logged in once.
+  user: ""
+  password: ""
+  # Allow listening beyond this machine without a login: an open proxy for
+  # anyone who can reach the port.
+  allow_open: false
 
 # Interface for proxy-router's own connections (to servers and "direct").
 #   auto: if another VPN (Happ in VPN mode, WireGuard, ...) owns the default

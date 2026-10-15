@@ -43,8 +43,9 @@ type runOptions struct {
 	// tunName is chosen once per run so reloads reuse the same interface.
 	tunName string
 	// tunListen is the main instance's loopback SOCKS address the TUN front
-	// forwards to.
+	// forwards to, and tunLogin the per-run login it uses there.
 	tunListen string
+	tunLogin  engine.Account
 }
 
 func runCmd() *cobra.Command {
@@ -109,7 +110,8 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 	} else {
 		iface, _ = e.outboundInterface()
 	}
-	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: iface, TUNListen: o.tunListen}
+	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: iface,
+		TUNListen: o.tunListen, TUNAccount: o.tunLogin}
 	if iface != "" || e.cfg.ResolveLocally {
 		// Resolve server hostnames here: in TUN mode the system resolver may
 		// be routed into the TUN, and with resolve_locally Xray's DNS goes
@@ -222,6 +224,7 @@ func run(ctx context.Context, o runOptions) error {
 	defer removeRunStatus(dir)
 
 	var tunIPv6 bool
+	release := func() {}
 	if o.tun {
 		if err := tun.RequireRoot(); err != nil {
 			return err
@@ -239,9 +242,15 @@ func run(ctx context.Context, o runOptions) error {
 				return err
 			}
 		}
-		if o.tunListen, err = freeLoopback(); err != nil {
+		// Hold the port until the main instance takes it, so no other
+		// program can grab it meanwhile and receive the TUN's traffic.
+		reserved, err := freeLoopback()
+		if err != nil {
 			return err
 		}
+		defer reserved.Close()
+		o.tunListen, o.tunLogin = reserved.Addr().String(), engine.NewAccount()
+		release = func() { reserved.Close() }
 	}
 	e, xc, notes, err := buildCurrentNotes(o)
 	if err != nil {
@@ -271,7 +280,7 @@ func run(ctx context.Context, o runOptions) error {
 	// created last owns them. They have to be the main instance's (its DNS
 	// settings, its chain helpers), so it also re-takes them on each reload.
 	if o.tunName != "" {
-		fc, err := engine.BuildTUNFront(o.tunName, e.cfg.TUN.MTU, o.tunListen)
+		fc, err := engine.BuildTUNFront(o.tunName, e.cfg.TUN.MTU, o.tunListen, o.tunLogin)
 		if err != nil {
 			return err
 		}
@@ -283,6 +292,7 @@ func run(ctx context.Context, o runOptions) error {
 	}
 
 	raw, _ := json.Marshal(xc)
+	release()
 	inst, err := start(xc)
 	if err != nil {
 		return err
@@ -435,18 +445,16 @@ func run(ctx context.Context, o runOptions) error {
 	return fatal
 }
 
-// checkPorts fails early, naming the culprit, if a listen address is taken
-// (Happ, v2rayN and friends default to the same 10808/10809).
-// freeLoopback returns an unused 127.0.0.1 TCP address.
-func freeLoopback() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	defer l.Close()
-	return l.Addr().String(), nil
+// freeLoopback reserves an unused 127.0.0.1 TCP port; close the listener
+// right before binding the port for real. Something could still take it in
+// between (or while a reload restarts the main instance), but then the
+// main instance fails to start and run exits, which stops the TUN.
+func freeLoopback() (net.Listener, error) {
+	return net.Listen("tcp", "127.0.0.1:0")
 }
 
+// checkPorts fails early, naming the culprit, if a listen address is taken
+// (Happ, v2rayN and friends default to the same 10808/10809).
 func checkPorts(cfg *config.Config) error {
 	for key, addr := range map[string]string{"socks": cfg.Listen.Socks, "http": cfg.Listen.HTTP} {
 		if addr == "" {
@@ -573,6 +581,7 @@ func configCmd() *cobra.Command {
 					o.tunName = "prtun0"
 				}
 				o.tunListen = "127.0.0.1:10807" // placeholder; run picks a free port
+				o.tunLogin = engine.NewAccount()
 			}
 			_, xc, notes, err := buildCurrentNotes(o)
 			if err != nil {

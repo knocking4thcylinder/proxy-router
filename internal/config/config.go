@@ -49,6 +49,11 @@ type Config struct {
 	Listen struct {
 		Socks string `yaml:"socks"`
 		HTTP  string `yaml:"http"`
+		// Login required by both, if set. Listening beyond loopback needs
+		// one, or AllowOpen.
+		User      string `yaml:"user"`
+		Password  string `yaml:"password"`
+		AllowOpen bool   `yaml:"allow_open"`
 	} `yaml:"listen"`
 	// Path to the routing rules file, relative to the config directory.
 	Rules string `yaml:"rules"`

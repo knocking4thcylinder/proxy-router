@@ -193,7 +193,7 @@ pool_probe:
 func TestTUNAnswersDNSItself(t *testing.T) {
 	cfg, _ := config.Load(t.TempDir())
 	st := testState(t)
-	xc, _, err := Build(Plan{Config: cfg, Rules: writeRules(t, "default: proxy\n"), State: st, TUNListen: "127.0.0.1:10807"})
+	xc, _, err := Build(Plan{Config: cfg, Rules: writeRules(t, "default: proxy\n"), State: st, TUNListen: "127.0.0.1:10807", TUNAccount: NewAccount()})
 	if err != nil {
 		t.Fatal(err)
 	}
