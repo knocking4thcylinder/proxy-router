@@ -168,3 +168,23 @@ func TestBindInterfaceOverridesImported(t *testing.T) {
 		t.Error("outbounds that dial through another one bind via that one")
 	}
 }
+
+// A malformed config that makes Xray's builder panic must come back as an
+// error, not take the service down.
+func TestValidateRecoversPanic(t *testing.T) {
+	xc := map[string]any{
+		"outbounds": []any{map[string]any{
+			"protocol": "freedom",
+			"streamSettings": map[string]any{
+				"security":    "tls",
+				"tlsSettings": map[string]any{"certificates": []any{nil}},
+			},
+		}},
+	}
+	if err := Validate(xc); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, err := Start(xc); err == nil {
+		t.Fatal("expected an error")
+	}
+}

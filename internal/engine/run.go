@@ -33,21 +33,32 @@ func SetAssetDir(dir string) {
 }
 
 // Start builds and starts an Xray instance from a JSON-able config.
-func Start(cfg map[string]any) (*core.Instance, error) {
+func Start(cfg map[string]any) (inst *core.Instance, err error) {
+	defer recoverXray(&err)
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
 	}
-	inst, err := core.StartInstance("json", data)
+	inst, err = core.StartInstance("json", data)
 	if err != nil {
 		return nil, fmt.Errorf("xray: %w", err)
 	}
 	return inst, nil
 }
 
+// recoverXray turns a panic in Xray's config builder (it has a few on
+// malformed input) into an error, so a bad subscription can't crash-loop
+// the service.
+func recoverXray(err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("xray: invalid config: %v", r)
+	}
+}
+
 // Validate checks that Xray accepts the config (including geo lookups)
 // without starting it.
-func Validate(cfg map[string]any) error {
+func Validate(cfg map[string]any) (err error) {
+	defer recoverXray(&err)
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -99,7 +110,6 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
 	xlog.RegisterHandler(discardLog{})
 	results := make([]PingResult, len(entries))
-	sem := make(chan struct{}, max(o.Parallel, 1))
 
 	// One semaphore per resolved server IP.
 	var mu sync.Mutex
@@ -135,36 +145,49 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		jobs = append(jobs, job{i, e.Server})
 	}
 
+	run := func(j job) {
+		if o.PerEndpoint > 0 {
+			ep := endpointSem(j.server.Address)
+			ep <- struct{}{}
+			defer func() { <-ep }()
+		}
+		d, exit, err := pingOne(ctx, j.server, o)
+
+		mu.Lock()
+		defer mu.Unlock()
+		r := &results[j.result]
+		if err == nil {
+			r.Alive++
+			if r.Err != nil || r.Latency == 0 || d < r.Latency {
+				r.Latency, r.Exit, r.Err = d, exit, nil
+			}
+		} else if r.Latency == 0 {
+			r.Err = err
+		}
+	}
+	// A fixed set of workers: a provider's pool can have any number of
+	// members, and each test starts an Xray instance.
+	queue := make(chan job)
 	var wg sync.WaitGroup
-	for _, j := range jobs {
+	for range min(max(o.Parallel, 1), maxPingParallel, max(len(jobs), 1)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if o.PerEndpoint > 0 {
-				ep := endpointSem(j.server.Address)
-				ep <- struct{}{}
-				defer func() { <-ep }()
-			}
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			d, exit, err := pingOne(ctx, j.server, o)
-
-			mu.Lock()
-			defer mu.Unlock()
-			r := &results[j.result]
-			if err == nil {
-				r.Alive++
-				if r.Err != nil || r.Latency == 0 || d < r.Latency {
-					r.Latency, r.Exit, r.Err = d, exit, nil
-				}
-			} else if r.Latency == 0 {
-				r.Err = err
+			for j := range queue {
+				run(j)
 			}
 		}()
 	}
+	for _, j := range jobs {
+		queue <- j
+	}
+	close(queue)
 	wg.Wait()
 	return results
 }
+
+// maxPingParallel caps how many servers Ping tests at once.
+const maxPingParallel = 64
 
 type discardLog struct{}
 
