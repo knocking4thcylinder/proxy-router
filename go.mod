@@ -6,6 +6,7 @@ require (
 	fyne.io/systray v1.12.2
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	github.com/xtls/xray-core v1.260327.0
 	golang.org/x/sys v0.42.0
 	golang.org/x/text v0.35.0
@@ -30,7 +31,6 @@ require (
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af // indirect
 	github.com/sagernet/sing v0.5.1 // indirect
 	github.com/sagernet/sing-shadowsocks v0.2.7 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vishvananda/netlink v1.3.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f // indirect

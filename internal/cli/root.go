@@ -58,6 +58,10 @@ var flagDir string
 
 // Execute runs the CLI.
 func Execute() error {
+	return newRootCmd(os.Args[1:]).Execute()
+}
+
+func newRootCmd(args []string) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "proxy-router",
 		Short: "A command line proxy client with subscriptions and file-based routing (Xray-core)",
@@ -84,7 +88,12 @@ runs it in the foreground instead.`,
 		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
 		trayCmd(),
 	)
-	return root.Execute()
+	_ = root.RegisterFlagCompletionFunc("dir", completeDirectories)
+	root.SetArgs(args)
+	root.InitDefaultCompletionCmd()
+	configureFishCompletion(root)
+	configureCompletions(root, args)
+	return root
 }
 
 // env bundles loaded config and state for commands.

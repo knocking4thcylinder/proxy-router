@@ -50,6 +50,34 @@ proxy-router status
 Then point apps at `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809`,
 e.g. `export https_proxy=http://127.0.0.1:10809` (not needed with `--tun`).
 
+## Shell completions
+
+Generate completions from the installed binary. They include command flags
+(also after a bare `proxy-router run `), cached server names and indices,
+subscription names, groups, and file/directory paths where appropriate.
+Completions respect `--dir` and `$PROXY_ROUTER_HOME` and read cached state
+without fetching subscriptions or creating config files.
+
+**Fish:**
+
+```fish
+mkdir -p ~/.config/fish/completions
+proxy-router completion fish > ~/.config/fish/completions/proxy-router.fish
+source ~/.config/fish/completions/proxy-router.fish
+```
+
+**Bash:** add `source <(proxy-router completion bash)` to `~/.bashrc`
+(requires bash-completion).
+
+**Zsh:** after `autoload -Uz compinit; compinit` in `~/.zshrc`, add
+`source <(proxy-router completion zsh)`.
+
+**PowerShell:** add `proxy-router completion powershell | Out-String | Invoke-Expression`
+to your PowerShell profile.
+
+Rebuild or reinstall the binary after updating proxy-router. If replacing
+older completions, regenerate the script and reload it or open a new shell.
+
 ## Background service
 
 `proxy-router start` installs proxy-router as a service and starts it; it
@@ -122,12 +150,12 @@ Quitting the tray leaves the service running.
 | Command | |
 | --- | --- |
 | `sub add <url> [-n name] [--user-agent UA] [-H 'K: V'] [--hwid]` | add a subscription |
-| `sub list` | servers, last update, traffic used / total, expiry |
+| `sub list [--show-url]` | servers, last update, traffic used / total, expiry; optionally show full URLs |
 | `sub update [name...]` | re-fetch (all by default) |
 | `sub remove <name>` | |
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
-| `list [-g group]` | list servers |
+| `list [-g group] [-v]` | list servers; `-v` includes warnings |
 | `use <server>` / `use --fastest [-g group]` | select the server for `proxy` |
 | `ping [server...] [-g group] [--exit] [-q]` | live latency tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |

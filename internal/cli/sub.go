@@ -150,7 +150,7 @@ func redact(raw string) string {
 
 func subListCmd() *cobra.Command {
 	var showURL bool
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List subscriptions with traffic and expiry info",
@@ -205,12 +205,15 @@ func subListCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&showURL, "show-url", false, "show full subscription URLs, including tokens")
+	return cmd
 }
 
 func subUpdateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "update [name...]",
-		Short: "Re-fetch subscriptions (all by default)",
+		Use:               "update [name...]",
+		Short:             "Re-fetch subscriptions (all by default)",
+		ValidArgsFunction: completeSubscriptions,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
 			if err != nil {
@@ -267,10 +270,11 @@ func (e *env) updateAll(ctx context.Context, subs []*config.Subscription) int {
 
 func subRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <name>",
-		Aliases: []string{"rm"},
-		Short:   "Remove a subscription and its servers",
-		Args:    cobra.ExactArgs(1),
+		Use:               "remove <name>",
+		Aliases:           []string{"rm"},
+		Short:             "Remove a subscription and its servers",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSubscription,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
 			if err != nil {

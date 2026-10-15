@@ -72,6 +72,10 @@ SIGHUP. Subscriptions are refreshed every update_interval.`,
 	cmd.Flags().BoolVar(&o.force, "force", false, "start TUN mode even though another VPN owns the default route")
 	cmd.Flags().BoolVar(&o.service, "service", false, "run as the background service (used by \"proxy-router start\")")
 	_ = cmd.Flags().MarkHidden("service")
+	cmd.MarkFlagsMutuallyExclusive("tun", "no-tun")
+	_ = cmd.MarkFlagFilename("rules")
+	_ = cmd.RegisterFlagCompletionFunc("rules", completeFiles)
+	_ = cmd.RegisterFlagCompletionFunc("server", completeServers)
 	return cmd
 }
 
@@ -598,5 +602,8 @@ func configCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&o.server, "server", "s", "", "server to use instead of the selected one")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only validate, don't print the config")
 	cmd.Flags().BoolVar(&o.tun, "tun", false, "show the config TUN mode would use")
+	_ = cmd.MarkFlagFilename("rules")
+	_ = cmd.RegisterFlagCompletionFunc("rules", completeFiles)
+	_ = cmd.RegisterFlagCompletionFunc("server", completeServers)
 	return cmd
 }

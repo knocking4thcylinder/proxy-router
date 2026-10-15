@@ -83,10 +83,11 @@ func uniqueName(existing []*share.Server, name string) string {
 
 func removeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "remove <server>",
-		Aliases: []string{"rm"},
-		Short:   "Remove a manually added server (use `sub remove` for subscriptions)",
-		Args:    cobra.ExactArgs(1),
+		Use:               "remove <server>",
+		Aliases:           []string{"rm"},
+		Short:             "Remove a manually added server (use `sub remove` for subscriptions)",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeManualServer,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
 			if err != nil {
@@ -115,7 +116,7 @@ func removeCmd() *cobra.Command {
 func listCmd() *cobra.Command {
 	var group string
 	var verbose bool
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls", "servers"},
 		Short:   "List servers (* marks the selected one)",
@@ -148,6 +149,10 @@ func listCmd() *cobra.Command {
 			return tw.Flush()
 		},
 	}
+	cmd.Flags().StringVarP(&group, "group", "g", "", "only list this subscription (or manual)")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show server warnings")
+	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
+	return cmd
 }
 
 func filterGroup(entries []config.Entry, group string) []config.Entry {
@@ -200,6 +205,7 @@ func useCmd() *cobra.Command {
 
 <server> can be the index from "list", the exact name, "group/name", or a
 unique part of the name. A running "proxy-router run" switches automatically.`,
+		ValidArgsFunction: completeSelectedServer,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
 			if err != nil {
@@ -249,6 +255,7 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 	}
 	cmd.Flags().BoolVar(&fastest, "fastest", false, "ping all servers and pick the fastest")
 	cmd.Flags().StringVarP(&group, "group", "g", "", "with --fastest, only consider this subscription")
+	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
 }
 
@@ -260,8 +267,9 @@ func pingCmd() *cobra.Command {
 		quiet    bool
 	)
 	cmd := &cobra.Command{
-		Use:   "ping [server...]",
-		Short: "Measure real latency (full HTTP request) through servers; all by default",
+		Use:               "ping [server...]",
+		Short:             "Measure real latency (full HTTP request) through servers; all by default",
+		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
 			if err != nil {
@@ -307,6 +315,7 @@ func pingCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&parallel, "parallel", "j", 16, "servers to test at once")
 	cmd.Flags().BoolVar(&exit, "exit", false, "also show the country traffic really exits in (via ipinfo.io)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the final sorted results")
+	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
 }
 
