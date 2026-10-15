@@ -56,6 +56,9 @@ ping:
 # Destinations that always use the system's own routing: never proxied, never
 # pinned to an interface, and never sent into the TUN. Keeps Tailscale (and
 # other VPNs' private ranges) working while proxy-router is on.
+# Names here are looked up with the system resolver in plain DNS (MagicDNS
+# names exist nowhere else) and follow the system route when their address
+# is in one of the IP ranges here; a name alone could be faked by any app.
 system_route:
   - 100.64.0.0/10          # Tailscale IPv4
   - fd7a:115c:a1e0::/48    # Tailscale IPv6
@@ -162,13 +165,18 @@ default: proxy
 
 # AsIs:         match domain rules only on the domain name
 # IPIfNonMatch: if no domain rule matches, resolve it and try IP rules
-# IPOnDemand:   resolve immediately when an IP rule is reached
+#               (connections to an IP keep using that IP)
+# IPOnDemand:   resolve immediately when an IP rule is reached; for
+#               connections to an IP with a sniffed name, the name's
+#               addresses are used instead of the real one
 domain_strategy: IPIfNonMatch
 
 rules:
+  # By address only: a TLS/HTTP name like x.lan is whatever the app sends,
+  # even to a public address. Apps that look local names up themselves
+  # (everything in TUN mode) connect to a local address, which this matches.
   - name: local network
     outbound: direct
-    domain: [full:localhost, domain:local, domain:lan]
     ip:
       - 127.0.0.0/8
       - 10.0.0.0/8

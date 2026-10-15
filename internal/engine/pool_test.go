@@ -103,12 +103,19 @@ func TestBuildPoolNeverFallsBackToDirect(t *testing.T) {
 }
 
 func TestTUNSystemRouteGuard(t *testing.T) {
-	rules := systemRouteRules([]string{"100.64.0.0/10", "domain:ts.net"}, true)
-	if len(rules) != 4 || rules[0]["outboundTag"] != "block" || rules[0]["inboundTag"] == nil || rules[1]["outboundTag"] != "system" {
-		t.Fatalf("rules = %v", rules)
+	// Names go by the IPs they resolve to, so only the IP ranges get rules.
+	rules, notes := systemRouteRules([]string{"100.64.0.0/10", "domain:ts.net"}, true)
+	if len(rules) != 2 || rules[0]["outboundTag"] != "block" || rules[0]["inboundTag"] == nil || rules[1]["outboundTag"] != "system" ||
+		rules[1]["domain"] != nil || len(notes) != 0 {
+		t.Fatalf("rules = %v, notes = %v", rules, notes)
 	}
-	if r := systemRouteRules([]string{"100.64.0.0/10"}, false); len(r) != 1 {
+	if r, _ := systemRouteRules([]string{"100.64.0.0/10"}, false); len(r) != 1 {
 		t.Fatalf("without TUN there's nothing to guard: %v", r)
+	}
+	// Without IP ranges, names are all there is to match, with a note.
+	rules, notes = systemRouteRules([]string{"domain:corp.example"}, false)
+	if len(rules) != 1 || rules[0]["domain"] == nil || len(notes) != 1 {
+		t.Fatalf("names only: rules = %v, notes = %v", rules, notes)
 	}
 }
 
