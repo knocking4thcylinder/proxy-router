@@ -127,6 +127,11 @@ func (c *Config) TargetStrategy() string {
 // builder routes them to the "direct" outbound.
 const DirectDNSTag = "dns-direct"
 
+// DirectDoH are the DNS-over-HTTPS servers for names the tunnel itself
+// depends on, queried outside the tunnel: by Xray (LocalDNS) and by
+// proxy-router when it pins server addresses.
+var DirectDoH = []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"}
+
 // LocalDNS is the Xray "dns" object used when resolving locally: DoH, so
 // answers can't be tampered with on the way and the ISP doesn't see them.
 // Those queries go through the proxy like any other traffic.
@@ -136,15 +141,23 @@ const DirectDNSTag = "dns-direct"
 // DirectDNSTag: resolving them through the tunnel would deadlock. That's
 // still DoH, because plain DNS is commonly intercepted (1.1.1.1:53 answered
 // NXDOMAIN for youtube.com on a Russian ISP in testing).
+//
+// The one exception is system_route names: they go to the system resolver
+// in plain DNS, because names like Tailscale's MagicDNS (*.ts.net) only
+// exist there. Their IPs then pick the system route (see the engine's
+// systemRouteRules).
 func (c *Config) LocalDNS(direct []string) map[string]any {
-	servers := []any{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"}
+	var servers []any
+	for _, addr := range DirectDoH {
+		servers = append(servers, addr)
+	}
 	if len(direct) > 0 {
 		var domains []string
 		for _, h := range direct {
 			domains = append(domains, "full:"+h)
 		}
 		var plain []any
-		for _, addr := range []string{"https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"} {
+		for _, addr := range DirectDoH {
 			plain = append(plain, map[string]any{
 				"address": addr, "domains": domains, "skipFallback": true, "tag": DirectDNSTag,
 			})

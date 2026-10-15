@@ -153,8 +153,17 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	endpoints := map[string]chan struct{}{}
 	endpointSem := func(addr string) chan struct{} {
 		key := addr
-		if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
-			key = ips[0]
+		switch {
+		case isIPOrCIDR(addr):
+		case o.Resolve != nil:
+			// Same lookups as pinning, so server names stay off plain DNS.
+			if ip, err := o.Resolve(addr); err == nil {
+				key = ip
+			}
+		default:
+			if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
+				key = ips[0]
+			}
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -381,6 +390,8 @@ func (a *assetReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// splitHostPort splits a listen address. An empty host means loopback:
+// listening on every interface has to be asked for (0.0.0.0, [::]).
 func splitHostPort(addr string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -391,7 +402,7 @@ func splitHostPort(addr string) (string, int, error) {
 		return "", 0, fmt.Errorf("%q: bad port", addr)
 	}
 	if host == "" {
-		host = "0.0.0.0"
+		host = "127.0.0.1"
 	}
 	return host, port, nil
 }

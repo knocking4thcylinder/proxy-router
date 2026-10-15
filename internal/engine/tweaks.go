@@ -134,26 +134,35 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// systemRouteRules splits system_route entries into IP and domain matchers.
+// systemRouteRules sends system_route destinations to the "system"
+// outbound, by IP.
+//
+// Names (domain:ts.net) don't get a rule of their own while there are IP
+// ranges: sniffed TLS/HTTP names are whatever the app put there, so a
+// connection to any public IP could claim to be x.ts.net and skip the
+// proxy. They're resolved by the system resolver instead (see
+// config.LocalDNS), and the IPs they resolve to match the ranges. Without
+// any ranges they're matched by name as before, with a note.
 //
 // In TUN mode, traffic for these destinations that arrives *through the
 // TUN* is rejected: the OS sent it there because it has no better route,
 // so handing it back to the OS would loop straight into the TUN again.
-func systemRouteRules(entries []string, tun bool) []map[string]any {
+func systemRouteRules(entries []string, tun bool) ([]map[string]any, []string) {
 	var ips, domains []string
 	for _, e := range entries {
 		e = strings.TrimSpace(e)
 		switch {
 		case e == "":
-		case strings.HasPrefix(e, "geoip:"), strings.HasPrefix(e, "!geoip:"):
-			ips = append(ips, e)
-		case isIPOrCIDR(e):
-			ips = append(ips, e)
-		default:
+		case isSystemRouteName(e):
 			domains = append(domains, e)
+		default:
+			ips = append(ips, e)
 		}
 	}
-	var rules []map[string]any
+	var (
+		rules []map[string]any
+		notes []string
+	)
 	add := func(key string, values []string) {
 		if len(values) == 0 {
 			return
@@ -165,8 +174,18 @@ func systemRouteRules(entries []string, tun bool) []map[string]any {
 		rules = append(rules, map[string]any{key: values, "outboundTag": "system", "ruleTag": "system_route"})
 	}
 	add("ip", ips)
-	add("domain", domains)
-	return rules
+	if len(ips) == 0 && len(domains) > 0 {
+		add("domain", domains)
+		notes = append(notes, "system_route has names but no IP ranges, so it matches names apps can fake; "+
+			"add the IP ranges those names resolve to")
+	}
+	return rules, notes
+}
+
+// isSystemRouteName reports whether a system_route entry is a name.
+func isSystemRouteName(e string) bool {
+	e = strings.TrimSpace(e)
+	return e != "" && !strings.HasPrefix(e, "geoip:") && !strings.HasPrefix(e, "!geoip:") && !isIPOrCIDR(e)
 }
 
 func isIPOrCIDR(s string) bool {

@@ -3,9 +3,12 @@
 package engine
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -28,6 +31,9 @@ type Plan struct {
 	// BuildTUNFront); empty means proxy-only. Traffic arriving there is
 	// tagged "tun".
 	TUNListen string
+	// TUNAccount is the per-run login the TUN front uses for TUNListen, so
+	// other local programs can't inject traffic tagged "tun".
+	TUNAccount Account
 	// When set, server hostnames are resolved now and replaced by IPs.
 	Resolve Resolver
 }
@@ -144,29 +150,38 @@ func Build(p Plan) (map[string]any, []string, error) {
 	outbounds = append(outbounds, map[string]any{"tag": "block", "protocol": "blackhole"})
 	// "system" follows the OS routing table: it's how traffic for Tailscale
 	// and other VPNs' own routes reaches them.
-	sysRules := systemRouteRules(cfg.SystemRoute, p.TUNListen != "")
+	sysRules, sysNotes := systemRouteRules(cfg.SystemRoute, p.TUNListen != "")
+	notes = append(notes, sysNotes...)
+	if rules.DomainStrategy == "AsIs" && len(sysRules) > 0 && slices.ContainsFunc(cfg.SystemRoute, isSystemRouteName) {
+		notes = append(notes, "system_route: with domain_strategy AsIs, names are never resolved for routing, so SOCKS/HTTP clients asking for system_route names by name are not sent to the system route")
+	}
 	if len(sysRules) > 0 {
 		outbounds = append(outbounds, freedom("system"))
 	}
 
-	// Rules that target a specific server, tagged with the server's name so
-	// the access log reads "[socks -> server:USA]".
+	// Rules (and the default) that target a specific server, tagged with the
+	// server's name so the access log reads "[socks -> server:USA]".
 	byIndex := map[int]target{}
 	serverTags := map[string]bool{}
+	type use struct{ label, outbound string }
+	uses := []use{{"default", rules.Default}}
 	for i, r := range rules.Rules {
-		query, ok := strings.CutPrefix(r.Outbound, "server:")
+		uses = append(uses, use{r.Label(i), r.Outbound})
+	}
+	for _, u := range uses {
+		query, ok := strings.CutPrefix(u.outbound, "server:")
 		if !ok {
 			continue
 		}
-		if _, done := targets[r.Outbound]; done {
+		if _, done := targets[u.outbound]; done {
 			continue
 		}
 		e, err := p.State.Find(strings.TrimSpace(query))
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", r.Label(i), err)
+			return nil, nil, fmt.Errorf("%s: %w", u.label, err)
 		}
 		if t, ok := byIndex[e.Index]; ok {
-			targets[r.Outbound] = t
+			targets[u.outbound] = t
 			continue
 		}
 		// Names are escaped so a pool's member selector can't match
@@ -180,7 +195,7 @@ func Build(p Plan) (map[string]any, []string, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		targets[r.Outbound], byIndex[e.Index] = t, t
+		targets[u.outbound], byIndex[e.Index] = t, t
 	}
 
 	// Pools from the rules file.
@@ -243,38 +258,65 @@ func Build(p Plan) (map[string]any, []string, error) {
 		})
 	}
 	routingRules = append(routingRules, sysRules...)
-	for _, r := range rules.Rules {
+	for i, r := range rules.Rules {
+		if isOldLocalRule(r) {
+			r.Domain = nil
+			notes = append(notes, fmt.Sprintf("%s: ignoring its domain list (%s), which apps could fake to skip the proxy; "+
+				"local names still go direct by their IPs. Delete that line from the rules file to silence this.",
+				r.Label(i), strings.Join(oldLocalDomains, ", ")))
+		}
 		routingRules = append(routingRules, xrayRules(r, targets[r.Outbound])...)
 	}
-	// Explicit catch-all so the default doesn't depend on outbound order.
+	// Catch-all for the default. With IPIfNonMatch it only matches IPs:
+	// Xray resolves a name only after a first pass over the rules finds no
+	// match, so a rule matching everything would keep IP rules (blocks
+	// included) from ever seeing names. Connections to an IP still end here
+	// on the first pass, so the IPs a sniffed name resolves to never stand
+	// in for the real destination. Names that match nothing even resolved
+	// (or can't be resolved) go to Xray's default, the first outbound,
+	// which defaultFirst makes the default's.
 	catchAll := map[string]any{"network": "tcp,udp"}
+	if rules.DomainStrategy == "IPIfNonMatch" {
+		catchAll = map[string]any{"ip": []string{"0.0.0.0/0", "::/0"}}
+	}
 	targets[rules.Default].set(catchAll)
 	routingRules = append(routingRules, catchAll)
+	outbounds = defaultFirst(outbounds, targets[rules.Default], balancers)
 
 	sniffing := map[string]any{
 		"enabled":      true,
 		"destOverride": []string{"http", "tls", "quic"},
 		"routeOnly":    true,
 	}
-	var inbounds []map[string]any
-	if cfg.Listen.Socks != "" {
-		in, err := inbound("socks", cfg.Listen.Socks, map[string]any{"udp": true}, sniffing)
-		if err != nil {
-			return nil, nil, err
-		}
-		inbounds = append(inbounds, in)
+	if (cfg.Listen.User == "") != (cfg.Listen.Password == "") {
+		return nil, nil, fmt.Errorf("config.yaml: set both listen.user and listen.password, or neither")
 	}
-	if cfg.Listen.HTTP != "" {
-		in, err := inbound("http", cfg.Listen.HTTP, map[string]any{}, sniffing)
+	login := Account{User: cfg.Listen.User, Pass: cfg.Listen.Password}
+	var inbounds []map[string]any
+	for _, l := range []struct{ protocol, addr string }{{"socks", cfg.Listen.Socks}, {"http", cfg.Listen.HTTP}} {
+		if l.addr == "" {
+			continue
+		}
+		in, err := inbound(l.protocol, l.addr, login, sniffing)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("config.yaml: listen.%s: %w", l.protocol, err)
+		}
+		if host := in["listen"].(string); !isLoopback(host) && login.User == "" && !cfg.Listen.AllowOpen {
+			return nil, nil, fmt.Errorf("config.yaml: listen.%s: %s is reachable from other machines; "+
+				"set listen.user and listen.password, or listen.allow_open: true to run an open proxy", l.protocol, l.addr)
 		}
 		inbounds = append(inbounds, in)
 	}
 	if p.TUNListen != "" {
-		in, err := inbound("socks", p.TUNListen, map[string]any{"udp": true}, sniffing)
+		if p.TUNAccount.User == "" {
+			return nil, nil, fmt.Errorf("TUN: no login for the TUN front")
+		}
+		in, err := inbound("socks", p.TUNListen, p.TUNAccount, sniffing)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("TUN: %w", err)
+		}
+		if host := in["listen"].(string); !isLoopback(host) {
+			return nil, nil, fmt.Errorf("TUN: %s is not a loopback address", p.TUNListen)
 		}
 		in["tag"] = "tun"
 		inbounds = append(inbounds, in)
@@ -371,10 +413,13 @@ func probeHost(xc map[string]any) string {
 // instance closes, so recreating it on every config change fails with
 // "device or resource busy". The main instance, with all servers, rules and
 // DNS, restarts freely behind it.
-func BuildTUNFront(name string, mtu int, mainAddr string) (map[string]any, error) {
+func BuildTUNFront(name string, mtu int, mainAddr string, login Account) (map[string]any, error) {
 	host, port, err := splitHostPort(mainAddr)
 	if err != nil {
 		return nil, err
+	}
+	if login.User == "" {
+		return nil, fmt.Errorf("TUN: no login for the main instance")
 	}
 	return map[string]any{
 		"log": map[string]any{"loglevel": "warning", "access": "none"},
@@ -384,7 +429,7 @@ func BuildTUNFront(name string, mtu int, mainAddr string) (map[string]any, error
 		}},
 		"outbounds": []any{map[string]any{
 			"tag": "main", "protocol": "socks",
-			"settings": map[string]any{"address": host, "port": port},
+			"settings": map[string]any{"address": host, "port": port, "user": login.User, "pass": login.Pass},
 		}},
 	}, nil
 }
@@ -509,10 +554,20 @@ func xrayRules(r config.Rule, t target) []map[string]any {
 	return []map[string]any{common}
 }
 
-func inbound(protocol, listen string, settings, sniffing map[string]any) (map[string]any, error) {
+func inbound(protocol, listen string, login Account, sniffing map[string]any) (map[string]any, error) {
 	host, port, err := splitHostPort(listen)
 	if err != nil {
-		return nil, fmt.Errorf("config.yaml: listen.%s: %w", protocol, err)
+		return nil, err
+	}
+	settings := map[string]any{}
+	if protocol == "socks" {
+		settings["udp"] = true
+	}
+	if login.User != "" {
+		settings["accounts"] = []any{map[string]any{"user": login.User, "pass": login.Pass}}
+		if protocol == "socks" {
+			settings["auth"] = "password"
+		}
 	}
 	return map[string]any{
 		"tag":      protocol,
@@ -522,4 +577,57 @@ func inbound(protocol, listen string, settings, sniffing map[string]any) (map[st
 		"settings": settings,
 		"sniffing": sniffing,
 	}, nil
+}
+
+// Account is a login for a SOCKS/HTTP inbound.
+type Account struct {
+	User, Pass string
+}
+
+// NewAccount returns a random login, for links between our own instances.
+func NewAccount() Account {
+	b := make([]byte, 24)
+	_, _ = rand.Read(b) // never fails
+	h := hex.EncodeToString(b)
+	return Account{User: h[:16], Pass: h[16:]}
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
+}
+
+// defaultFirst moves the outbound unmatched traffic should use to the
+// front, where Xray looks for it: the default's own, or a balancer's
+// fallback (its first member), never "direct" by accident.
+func defaultFirst(obs []map[string]any, def target, balancers []map[string]any) []map[string]any {
+	tag := def.tag
+	if def.balancer {
+		for _, b := range balancers {
+			if b["tag"] == def.tag {
+				tag, _ = b["fallbackTag"].(string)
+			}
+		}
+	}
+	i := slices.IndexFunc(obs, func(o map[string]any) bool { return o["tag"] == tag })
+	if i <= 0 {
+		return obs
+	}
+	return slices.Concat(obs[i:i+1], obs[:i], obs[i+1:])
+}
+
+// oldLocalDomains is the domain list of the "local network" rule that
+// earlier versions wrote to routing.yaml. Matching it sent any connection
+// whose sniffed TLS/HTTP name looked local, e.g. x.lan, direct, whatever
+// its real address.
+var oldLocalDomains = []string{"full:localhost", "domain:local", "domain:lan"}
+
+// isOldLocalRule reports whether r is that rule as shipped: a direct rule
+// with exactly that domain list and private IPs, which still match the
+// same hosts by address.
+func isOldLocalRule(r config.Rule) bool {
+	return r.Outbound == "direct" && slices.Equal(r.Domain, oldLocalDomains) && len(r.IP) > 0
 }

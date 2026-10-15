@@ -87,30 +87,34 @@ rules:
 	for _, o := range got.Outbounds {
 		tags = append(tags, o.Tag)
 	}
-	if strings.Join(tags, ",") != "proxy,direct,block,system,server:USA" {
+	// The default first: Xray uses it for what no rule matches.
+	if strings.Join(tags, ",") != "direct,proxy,block,system,server:USA" {
 		t.Errorf("outbound tags = %v", tags)
 	}
 	r := got.Routing.Rules
-	// Xray's own server-name lookups first, then 2 system_route rules
-	// (Tailscale), the user's rules with domain+ip split, the catch-all.
-	if len(r) != 9 {
-		t.Fatalf("want 9 xray rules, got %d: %v", len(r), r)
+	// Xray's own server-name lookups first, then the system_route rule
+	// (Tailscale's IPs), the user's rules with domain+ip split, the
+	// catch-all.
+	if len(r) != 8 {
+		t.Fatalf("want 8 xray rules, got %d: %v", len(r), r)
 	}
 	if r[0]["outboundTag"] != "direct" || fmt.Sprint(r[0]["inboundTag"]) != "[dns-direct]" {
 		t.Errorf("server-name DNS must go direct: %v", r[0])
 	}
 	r = r[1:]
-	if r[0]["outboundTag"] != "system" || r[1]["outboundTag"] != "system" {
-		t.Errorf("system_route rules must come first: %v %v", r[0], r[1])
+	if r[0]["outboundTag"] != "system" || r[0]["ip"] == nil {
+		t.Errorf("system_route rule must come first: %v", r[0])
 	}
-	r = r[2:]
+	r = r[1:]
 	if r[0]["domain"] == nil || r[1]["ip"] == nil || r[0]["ip"] != nil {
 		t.Errorf("domain/ip not split: %v %v", r[0], r[1])
 	}
 	if r[2]["outboundTag"] != "server:USA" || r[2]["port"] != "443" {
 		t.Errorf("server rule = %v", r[2])
 	}
-	if last := r[5]; last["outboundTag"] != "direct" || last["network"] != "tcp,udp" {
+	// With IPIfNonMatch the catch-all only takes IPs, so names get resolved
+	// for IP rules.
+	if last := r[5]; last["outboundTag"] != "direct" || fmt.Sprint(last["ip"]) != "[0.0.0.0/0 ::/0]" || last["network"] != nil {
 		t.Errorf("catch-all = %v", last)
 	}
 }
