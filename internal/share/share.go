@@ -45,10 +45,23 @@ type Pool struct {
 
 // ChainTag is the tag of a helper outbound. Helpers live outside tag's
 // prefix so a pool's selector (a prefix match) can never pick one.
-func ChainTag(tag, helper string) string { return "chain:" + tag + "~" + helper }
+func ChainTag(tag, helper string) string { return "chain:" + tag + "~" + EscapeTag(helper) }
 
-// MemberTag is the tag of a pool member.
-func MemberTag(tag, member string) string { return tag + "~" + member }
+// MemberTag is the tag of a pool member, and with a selector, the prefix
+// that picks members.
+func MemberTag(tag, member string) string { return tag + "~" + EscapeTag(member) }
+
+// EscapeTag makes a provider-chosen name safe inside a tag: '~' only ever
+// separates a tag from its members, and a leading '#' is reserved for
+// index-based tags. So one provider's names can't produce another
+// server's tags or match another pool's selector.
+func EscapeTag(s string) string {
+	s = strings.NewReplacer("%", "%25", "~", "%7E").Replace(s)
+	if strings.HasPrefix(s, "#") {
+		s = "%23" + s[1:]
+	}
+	return s
+}
 
 // Primaries is how many of Outbounds' results are servers (the rest are
 // chain helpers): 1, or the member count for a pool.

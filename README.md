@@ -143,7 +143,8 @@ Quitting the tray leaves the service running.
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
-any unique part of the name.
+any unique part of the name. After `group/`, only that group's servers
+match, so another subscription can't take over the name.
 
 While the service (or `run`) is active it picks up changes by itself:
 - editing the rules file or `config.yaml` applies within ~2 seconds

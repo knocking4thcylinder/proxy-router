@@ -172,3 +172,20 @@ func TestSanitizeProbe(t *testing.T) {
 		t.Errorf("probe = %v", p)
 	}
 }
+
+func TestEscapeTag(t *testing.T) {
+	for in, want := range map[string]string{
+		"USA": "USA", "a~b": "a%7Eb", "50%": "50%25", "#3": "%233", "x #3": "x #3",
+	} {
+		if got := EscapeTag(in); got != want {
+			t.Errorf("EscapeTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// One provider's member can't look like another's.
+	if MemberTag("server:a", "b~c") == MemberTag("server:a~b", "c") {
+		t.Error("member tags collide")
+	}
+	if ChainTag("proxy", "a~b") == ChainTag("proxy~a", "b") {
+		t.Error("chain tags collide")
+	}
+}

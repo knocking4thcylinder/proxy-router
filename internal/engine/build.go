@@ -152,6 +152,7 @@ func Build(p Plan) (map[string]any, []string, error) {
 	// Rules that target a specific server, tagged with the server's name so
 	// the access log reads "[socks -> server:USA]".
 	byIndex := map[int]target{}
+	serverTags := map[string]bool{}
 	for i, r := range rules.Rules {
 		query, ok := strings.CutPrefix(r.Outbound, "server:")
 		if !ok {
@@ -168,10 +169,13 @@ func Build(p Plan) (map[string]any, []string, error) {
 			targets[r.Outbound] = t
 			continue
 		}
-		tag := "server:" + e.Server.Name
-		if slices.ContainsFunc(outbounds, func(o map[string]any) bool { return o["tag"] == tag }) {
+		// Names are escaped so a pool's member selector can't match
+		// another server's tags.
+		tag := "server:" + share.EscapeTag(e.Server.Name)
+		if serverTags[tag] {
 			tag = fmt.Sprintf("server:#%d", e.Index) // duplicate names across groups
 		}
+		serverTags[tag] = true
 		t, err := addServer(e, tag)
 		if err != nil {
 			return nil, nil, err

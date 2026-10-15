@@ -12,6 +12,7 @@ import (
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
+	"github.com/knocking4thcylinder/proxy-router/internal/subscription"
 )
 
 func testState(t *testing.T) *config.State {
@@ -186,5 +187,43 @@ func TestValidateRecoversPanic(t *testing.T) {
 	}
 	if _, err := Start(xc); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+// Server names can't make one server's tags look like another pool's
+// members.
+func TestServerTagsEscaped(t *testing.T) {
+	cfg, _ := config.Load(t.TempDir())
+	st, _ := config.LoadState(t.TempDir())
+	pool := subscription.Decode([]byte(providerAuto(1001, 1002))).Servers[0]
+	pool.Name = "Auto"
+	evil, err := share.ParseLink("trojan://pw@evil.example.com:443#Auto~bridge-evil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Subscriptions = []*config.Subscription{
+		{Name: "good", Servers: []*share.Server{pool}},
+		{Name: "evil", Servers: []*share.Server{evil}},
+	}
+	st.Select(st.Entries()[0])
+	xc, _, err := Build(Plan{Config: cfg, State: st, Rules: writeRules(t,
+		"default: proxy\nrules:\n  - domain: [a.com]\n    outbound: server:good/Auto\n  - domain: [b.com]\n    outbound: server:evil/Auto~bridge-evil\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selectors []string
+	for _, b := range xc["routing"].(map[string]any)["balancers"].([]map[string]any) {
+		selectors = append(selectors, b["selector"].([]string)...)
+	}
+	for _, ob := range xc["outbounds"].([]map[string]any) {
+		tag := ob["tag"].(string)
+		if settings, _ := ob["settings"].(map[string]any); settings["address"] != "evil.example.com" {
+			continue
+		}
+		for _, sel := range selectors {
+			if strings.HasPrefix(tag, sel) {
+				t.Errorf("selector %q picks the other provider's %q", sel, tag)
+			}
+		}
 	}
 }
