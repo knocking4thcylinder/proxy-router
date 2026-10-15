@@ -32,6 +32,9 @@ func nftRuleset(o Options) string {
 	b.WriteString("\tchain output {\n\t\ttype filter hook output priority 0; policy accept;\n")
 	fmt.Fprintf(&b, "\t\toifname \"lo\" accept\n\t\toifname %q accept\n", o.Name)
 	fmt.Fprintf(&b, "\t\tmeta mark %#x accept\n", Mark)
+	// DNS the dns chain redirected: it's rerouted into the TUN, but this
+	// chain still sees the interface it was headed for.
+	fmt.Fprintf(&b, "\t\tip daddr %s ct status dnat accept\n", DNSServer)
 	nftSet(&b, "ip daddr", v4, "accept")
 	nftSet(&b, "ip6 daddr", v6, "accept")
 	b.WriteString("\t\tudp sport 68 udp dport 67 accept\n")
