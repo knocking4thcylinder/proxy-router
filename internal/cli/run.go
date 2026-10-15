@@ -52,23 +52,36 @@ type runOptions struct {
 }
 
 func runCmd() *cobra.Command {
+	return newRunCmd(run, startService)
+}
+
+func newRunCmd(runForeground func(context.Context, runOptions) error, startBackground func(startOptions, bool) error) *cobra.Command {
 	var o runOptions
+	var foreground bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Start the local proxy with the selected server and routing rules",
-		Long: `Start the local SOCKS5/HTTP proxy in the foreground. The terminal stays
-attached while the proxy runs; press Ctrl-C to stop it. To run in the
-background and return to the shell, use "proxy-router start" (or
-"proxy-router start --tun" for TUN mode).
+		Long: `Start the local SOCKS5/HTTP proxy in the background and return to the shell.
+Like "start", this enables the service at login (at boot in TUN mode).
+Use --foreground to keep it attached to this terminal until Ctrl-C.
+Use "proxy-router stop" to stop the background proxy and "proxy-router logs -f"
+to follow its output.
 
 While running, proxy-router reloads automatically when the rules file,
 config.yaml or the selected server ("proxy-router use") changes, and on
 SIGHUP. Subscriptions are refreshed every update_interval.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd.Context(), o)
+			if foreground || o.service {
+				return runForeground(cmd.Context(), o)
+			}
+			return startBackground(startOptions{
+				tun: o.tun, noTUN: o.noTUN, force: o.force, verbose: o.verbose,
+				rules: o.rules, server: o.server, systemProxy: o.systemProxy, noUpdate: o.noUpdate,
+			}, false)
 		},
 	}
+	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal until Ctrl-C")
 	cmd.Flags().StringVarP(&o.rules, "rules", "r", "", "routing rules file (default from config.yaml)")
 	cmd.Flags().StringVarP(&o.server, "server", "s", "", "server to use for this run instead of the selected one")
 	cmd.Flags().BoolVar(&o.systemProxy, "system-proxy", false, "point the system proxy settings at proxy-router while running (macOS)")

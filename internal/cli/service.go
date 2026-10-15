@@ -22,8 +22,10 @@ import (
 )
 
 type startOptions struct {
-	tun, noTUN, force bool
-	verbose           int
+	tun, noTUN, force     bool
+	verbose               int
+	rules, server         string
+	systemProxy, noUpdate bool
 }
 
 func (o *startOptions) flags(cmd *cobra.Command) {
@@ -31,6 +33,10 @@ func (o *startOptions) flags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&o.noTUN, "no-tun", false, "local SOCKS5/HTTP proxy only (user service)")
 	cmd.Flags().BoolVar(&o.force, "force", false, "start TUN mode even though another VPN owns the default route")
 	cmd.Flags().CountVarP(&o.verbose, "verbose", "v", "log every connection; -vv also logs why connections fail")
+	cmd.Flags().StringVarP(&o.rules, "rules", "r", "", "routing rules file (default from config.yaml)")
+	cmd.Flags().StringVarP(&o.server, "server", "s", "", "server to use instead of the selected one")
+	cmd.Flags().BoolVar(&o.systemProxy, "system-proxy", false, "point the system proxy settings at proxy-router (macOS)")
+	cmd.Flags().BoolVar(&o.noUpdate, "no-update", false, "don't refresh subscriptions")
 	cmd.MarkFlagsMutuallyExclusive("tun", "no-tun")
 	passwordDialogFlag(cmd)
 }
@@ -42,11 +48,30 @@ func (o startOptions) args(restart bool) []string {
 	if restart {
 		args[0] = "restart"
 	}
+	args = append(args, o.runArgs()...)
+	return args
+}
+
+// runArgs preserves run options through privilege elevation and service launch.
+func (o startOptions) runArgs() []string {
+	var args []string
 	if o.force {
 		args = append(args, "--force")
 	}
 	if o.verbose > 0 {
 		args = append(args, "-"+strings.Repeat("v", o.verbose))
+	}
+	if o.rules != "" {
+		args = append(args, "--rules", o.rules)
+	}
+	if o.server != "" {
+		args = append(args, "--server", o.server)
+	}
+	if o.systemProxy {
+		args = append(args, "--system-proxy")
+	}
+	if o.noUpdate {
+		args = append(args, "--no-update")
 	}
 	return args
 }
@@ -308,6 +333,14 @@ func autostart(t service.Target) string {
 }
 
 func startService(o startOptions, restart bool) error {
+	// Service managers start from a different working directory.
+	if o.rules != "" {
+		path, err := filepath.Abs(o.rules)
+		if err != nil {
+			return err
+		}
+		o.rules = path
+	}
 	e, err := load()
 	if err != nil {
 		return err
@@ -379,12 +412,7 @@ func startService(o startOptions, restart bool) error {
 	} else {
 		args = append(args, "--no-tun")
 	}
-	if o.force {
-		args = append(args, "--force")
-	}
-	if o.verbose > 0 {
-		args = append(args, "-"+strings.Repeat("v", o.verbose))
-	}
+	args = append(args, o.runArgs()...)
 	spec := service.Spec{Target: want, Binary: service.BinaryPath(want), Args: args}
 	if cur, _ := service.Query(want); cur.Running && !restart && service.UpToDate(spec) {
 		fmt.Println("already running")

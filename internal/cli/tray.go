@@ -150,11 +150,12 @@ type tray struct {
 	userT, sysT service.Target
 	kick        chan struct{} // asks the loop to refresh now
 
-	mu      sync.Mutex
-	busy    string // the running action, shown in place of the status
-	wantTUN *bool  // mode picked while disconnected
-	last    trayModel
-	built   bool
+	mu        sync.Mutex
+	lastError string // last failed action, visible even when notifications are disabled
+	busy      string // the running action, shown in place of the status
+	wantTUN   *bool  // mode picked while disconnected
+	last      trayModel
+	built     bool
 
 	// service.Outdated compares whole binaries; only redo it when the
 	// service's copy changes.
@@ -179,6 +180,7 @@ type trayModel struct {
 	autostart  bool
 	busy       bool
 	configErr  string
+	actionErr  string
 }
 
 type trayGroup struct {
@@ -227,10 +229,10 @@ func (t *tray) refresh() {
 
 func (t *tray) model() trayModel {
 	t.mu.Lock()
-	busy, wantTUN := t.busy, t.wantTUN
+	busy, wantTUN, actionErr := t.busy, t.wantTUN, t.lastError
 	t.mu.Unlock()
 
-	var m trayModel
+	m := trayModel{actionErr: actionErr}
 	us, _ := service.Query(t.userT)
 	ss, _ := service.Query(t.sysT)
 	st, live := readRunStatus(t.dir)
@@ -241,11 +243,11 @@ func (t *tray) model() trayModel {
 
 	e, err := load()
 	switch {
+	case wantTUN != nil && !m.connected && !m.foreground:
+		m.tun = *wantTUN
 	case ss.Installed:
 		m.tun = true
 	case us.Installed:
-	case wantTUN != nil:
-		m.tun = *wantTUN
 	case err == nil:
 		m.tun = e.cfg.TUN.Enabled
 	}
@@ -336,6 +338,9 @@ func (t *tray) build(m trayModel) {
 	info(m.status)
 	for _, d := range m.details {
 		info("    " + d)
+	}
+	if m.actionErr != "" {
+		info("Last action failed: " + firstLine(m.actionErr))
 	}
 	if m.configErr != "" {
 		info("Config error: " + firstLine(m.configErr))
@@ -465,6 +470,7 @@ func (t *tray) run(what string, root bool, args ...string) {
 		t.mu.Unlock()
 		return
 	}
+	t.lastError = ""
 	t.busy = what
 	t.mu.Unlock()
 	t.poke()
@@ -486,7 +492,11 @@ func (t *tray) run(what string, root bool, args ...string) {
 		cmd := exec.Command(argv[0], argv[1:]...)
 		var out bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &out
+		fmt.Fprintf(os.Stderr, "%s: %s\n", what, strings.Join(args, " "))
 		err := cmd.Run()
+		if out.Len() > 0 {
+			fmt.Fprint(os.Stderr, out.String())
+		}
 		if err != nil && root && authCanceled(err, out.String()) {
 			return
 		}
@@ -495,6 +505,10 @@ func (t *tray) run(what string, root bool, args ...string) {
 			if msg == "" {
 				msg = err.Error()
 			}
+			t.mu.Lock()
+			t.lastError = msg
+			t.mu.Unlock()
+			fmt.Fprintf(os.Stderr, "action failed: %s: %v\n", msg, err)
 			notify("proxy-router: "+strings.TrimSuffix(strings.ToLower(what), "…")+" failed", msg)
 			return
 		}
