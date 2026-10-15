@@ -111,7 +111,11 @@ command you type only controls it.
   cleared when it reaches 10 MB.
 
 `run` still runs proxy-router in the foreground, for debugging. It refuses
-to start while the service is running.
+to start while the service is running. It prints a running status and stays
+attached until Ctrl-C, including while subscriptions refresh in the
+background. Refreshes report when they finish. To return to the shell while
+the proxy runs, stop the foreground run and use `proxy-router start --tun`
+(or `proxy-router start` for proxy-only mode).
 
 ## Tray icon
 

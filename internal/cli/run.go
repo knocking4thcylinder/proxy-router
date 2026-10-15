@@ -56,7 +56,10 @@ func runCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Start the local proxy with the selected server and routing rules",
-		Long: `Start the local SOCKS5/HTTP proxy.
+		Long: `Start the local SOCKS5/HTTP proxy in the foreground. The terminal stays
+attached while the proxy runs; press Ctrl-C to stop it. To run in the
+background and return to the shell, use "proxy-router start" (or
+"proxy-router start --tun" for TUN mode).
 
 While running, proxy-router reloads automatically when the rules file,
 config.yaml or the selected server ("proxy-router use") changes, and on
@@ -243,13 +246,14 @@ func refreshStale(ctx context.Context) bool {
 	if len(stale) == 0 {
 		return false
 	}
-	fmt.Fprintf(os.Stderr, "updating %d subscription(s)...\n", len(stale))
-	e.updateAll(ctx, stale)
+	fmt.Fprintf(os.Stderr, "proxy is running; refreshing %d subscription(s) in the background...\n", len(stale))
+	failed := e.updateAll(ctx, stale)
 	if config.Confined() {
 		keepRefreshed(e.state, stale)
 	} else if err := e.state.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
 	}
+	fmt.Fprintf(os.Stderr, "subscription refresh finished: %d updated, %d failed\n", len(stale)-failed, failed)
 	return true
 }
 
@@ -485,8 +489,18 @@ func run(ctx context.Context, o runOptions) error {
 	// the cached servers instead of waiting (with no connectivity in TUN
 	// mode) for a slow or blocked subscription server.
 	refreshed := make(chan bool, 1)
+	refreshCtx, cancelRefresh := context.WithCancel(ctx)
+	defer cancelRefresh()
+	refreshing := false
+	refresh := func() {
+		if refreshing {
+			return
+		}
+		refreshing = true
+		go func() { refreshed <- refreshStale(refreshCtx) }()
+	}
 	if !o.noUpdate {
-		go func() { refreshed <- refreshStale(ctx) }()
+		refresh()
 	}
 
 	// Network settings drift without the files changing (DHCP rewriting
@@ -573,6 +587,7 @@ func run(ctx context.Context, o runOptions) error {
 				reload("files or network changed")
 			}
 		case changed := <-refreshed:
+			refreshing = false
 			if changed {
 				stamps = snapshot()
 				reload("subscriptions updated")
@@ -584,10 +599,7 @@ func run(ctx context.Context, o runOptions) error {
 		case <-reresolve.C:
 			reload("server addresses changed")
 		case <-updates:
-			if refreshStale(ctx) {
-				stamps = snapshot()
-				reload("subscriptions updated")
-			}
+			refresh()
 		}
 	}
 	return fatal
@@ -657,6 +669,14 @@ func printStatus(e *env, o runOptions) {
 	}
 	if st.HTTP != "" {
 		fmt.Printf("http:   %s\n", st.HTTP)
+	}
+	if !o.service {
+		fmt.Println("Proxy is running in the foreground. Press Ctrl-C to stop.")
+		cmd := "proxy-router start"
+		if st.TUN != "" {
+			cmd += " --tun"
+		}
+		fmt.Printf("To free this terminal, stop this run, then use: %s\n", cmd)
 	}
 }
 
