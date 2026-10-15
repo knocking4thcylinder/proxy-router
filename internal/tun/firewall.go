@@ -75,7 +75,12 @@ const pfAnchor = "com.apple/proxy-router"
 func pfRules(o Options) string {
 	v4, v6 := o.exempt()
 	var b strings.Builder
-	fmt.Fprintf(&b, "pass out quick on lo0 all\npass out quick on %s all\n", o.Name)
+	// Loopback traffic traverses PF in both directions. Do not create
+	// TCP states for it: they can interfere with the second traversal,
+	// breaking both the public listeners and the TUN front's local hop.
+	// Keep this interface-scoped; external traffic still hits the rules
+	// below, including the DNS restrictions and final block.
+	fmt.Fprintf(&b, "pass quick on lo0 all no state\npass out quick on %s all\n", o.Name)
 	pfSet(&b, "inet", v4)
 	pfSet(&b, "inet6", v6)
 	b.WriteString("pass out quick inet proto udp from any port 68 to any port 67\n")
