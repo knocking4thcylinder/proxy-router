@@ -30,7 +30,7 @@ import (
 var trayIcons embed.FS
 
 func trayCmd() *cobra.Command {
-	var foreground bool
+	var foreground, allow bool
 	cmd := &cobra.Command{
 		Use:   "tray",
 		Short: "Show a tray icon (menu bar icon on macOS) to control proxy-router",
@@ -39,13 +39,17 @@ proxy-router is connected, and lets you connect and disconnect, switch
 between proxy and TUN mode, pick a server and update subscriptions.
 
 It controls the background service, like "start" and "stop" do; TUN mode
-asks for your password in a system dialog. "Start tray at login" in its
-menu makes the icon come back after a reboot.
+asks for your password in a system dialog (on macOS only once for
+connecting and disconnecting). "Start tray at login" in its menu makes the
+icon come back after a reboot.
 
 The tray runs in the background and returns right away; quit it from its
 menu. --foreground keeps it attached to the terminal instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if allow {
+				return allowSudo()
+			}
 			if os.Geteuid() == 0 {
 				return errors.New("run the tray as your user, not root; it asks for your password when TUN mode needs it")
 			}
@@ -86,6 +90,8 @@ menu. --foreground keeps it attached to the terminal instead.`,
 		},
 	}
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal")
+	cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the macOS password dialog)")
+	_ = cmd.Flags().MarkHidden("allow-sudo")
 	return cmd
 }
 

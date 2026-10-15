@@ -230,10 +230,15 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	argv := append([]string{exe, "--dir", dir, "--uid", strconv.Itoa(os.Getuid())}, args...)
 	var c *exec.Cmd
 	if passwordDialog {
-		if c = elevated(argv); c == nil {
+		// The tray's connect and disconnect on macOS, once the dialog has
+		// written the sudoers rule for them.
+		if c = passwordlessSudo(argv); c != nil {
+			fmt.Fprintf(os.Stderr, "%s; running with sudo, which the sudoers rule allows without a password\n", why)
+		} else if c = elevated(argv); c == nil {
 			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")
+		} else {
+			fmt.Fprintf(os.Stderr, "%s; asking for the password\n", why)
 		}
-		fmt.Fprintf(os.Stderr, "%s; asking for the password\n", why)
 	} else {
 		fmt.Fprintf(os.Stderr, "%s; running with sudo\n", why)
 		c = exec.Command("sudo", argv...)

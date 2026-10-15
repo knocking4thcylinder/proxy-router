@@ -159,6 +159,11 @@ func Remove(t Target) error {
 	if err := os.Remove(DefinitionPath(t)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	if t.Scope == System {
+		if err := os.Remove(SudoersPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	_ = os.RemoveAll(filepath.Dir(BinaryPath(t)))
 	return nil
 }
