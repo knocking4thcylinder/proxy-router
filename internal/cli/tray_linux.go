@@ -13,6 +13,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 )
 
 const trayUsesTemplate = false
@@ -36,8 +37,12 @@ func trayAvailable() error {
 	return nil
 }
 
-// menuLabel escapes underscores, which DBus menus take as mnemonics.
-func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
+// menuLabel strips control and bidi characters from s, keeping its
+// indent, and escapes underscores, which DBus menus take as mnemonics.
+func menuLabel(s string) string {
+	text := strings.TrimLeft(s, " ")
+	return s[:len(s)-len(text)] + strings.ReplaceAll(safetext.Clean(text, 100), "_", "__")
+}
 
 // elevated runs argv as root with pkexec, which asks for the password in
 // the desktop's polkit dialog. argv[0] runs directly, not through env, so

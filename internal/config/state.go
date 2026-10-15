@@ -36,6 +36,7 @@ type Subscription struct {
 	UserAgent string            `json:"user_agent,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
 	SendHWID  bool              `json:"send_hwid,omitempty"`
+	AllowHTTP bool              `json:"allow_http,omitempty"`
 	UpdatedAt time.Time         `json:"updated_at,omitzero"`
 	LastError string            `json:"last_error,omitempty"`
 	Info      subscription.Info `json:"info"`

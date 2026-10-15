@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	_ "github.com/xtls/xray-core/main/distro/all"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
@@ -324,7 +324,7 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 			if resp, err := client.Do(req); err == nil {
 				b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 				resp.Body.Close()
-				if v := strings.TrimSpace(string(b)); resp.StatusCode == http.StatusOK && v != "" && len(v) < 40 {
+				if v := safetext.Clean(string(b), 0); resp.StatusCode == http.StatusOK && v != "" && len(v) < 40 {
 					exit = v
 				}
 			}
