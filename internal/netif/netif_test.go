@@ -48,3 +48,27 @@ default            fe80::1%en0        UGcg                  en0
 		t.Fatalf("got %+v %v", r, ok)
 	}
 }
+
+func TestPickIPv6SplitRoutes(t *testing.T) {
+	out := `default                                 fe80::1%en0                     UGcg                  en0
+::/1                                    utun7                           USc                 utun7
+8000::/1                                utun7                           USc                 utun7
+`
+	if d := pick(parseNetstat(out)); d.Tunnel != "utun7" {
+		t.Fatalf("got %+v", d)
+	}
+}
+
+func TestToolUsesSystemDirs(t *testing.T) {
+	dir := t.TempDir()
+	saved := systemDirs
+	systemDirs = []string{dir}
+	defer func() { systemDirs = saved }()
+	t.Setenv("PATH", "/usr/bin:/bin")
+	if p := Tool("sh"); p != "" {
+		t.Fatalf("found %s outside the system directories", p)
+	}
+	if c := Command("sh"); c.Path != dir+"/sh" {
+		t.Fatalf("path = %s", c.Path)
+	}
+}

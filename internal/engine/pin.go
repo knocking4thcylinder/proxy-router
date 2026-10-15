@@ -138,14 +138,16 @@ func SystemLookup(ctx context.Context, host string) ([]netip.Addr, error) {
 
 // DoHLookup asks the DNS-over-HTTPS servers in turn, connecting from iface
 // ("" = system routing) like the direct outbound, so the queries neither
-// show server names to the network nor depend on the tunnel.
-func DoHLookup(servers []string, iface string) Lookup {
+// show server names to the network nor depend on the tunnel. mark (0 for
+// none) is the SO_MARK the TUN kill switch lets out, as on Xray's own
+// outbounds.
+func DoHLookup(servers []string, iface string, mark int) Lookup {
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dest, err := xnet.ParseDestination("tcp:" + addr)
 		if err != nil {
 			return nil, err
 		}
-		return internet.DialSystem(ctx, dest, &internet.SocketConfig{Interface: iface})
+		return internet.DialSystem(ctx, dest, &internet.SocketConfig{Interface: iface, Mark: int32(mark)})
 	}
 	client := &http.Client{Transport: &http.Transport{
 		DialContext:         dial,

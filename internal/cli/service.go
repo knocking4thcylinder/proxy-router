@@ -447,6 +447,13 @@ func stopService(remove, systemOnly bool) error {
 		}
 		found = true
 		if !remove && !st.Running && !st.Enabled {
+			// Already stopped, but its kill switch may still be on (see
+			// clearTUN below).
+			if t.Scope == service.System && os.Geteuid() != 0 {
+				if err := asRoot("removing TUN mode's kill switch needs root", installedBinary, "stop", "--system"); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		// Root handles the system service and the user their own, as in
@@ -486,7 +493,11 @@ func stopService(remove, systemOnly bool) error {
 				fmt.Printf("(proxy-router run is active in the foreground, pid %d)\n", st.PID)
 			}
 		}
+		if os.Geteuid() != 0 {
+			fmt.Println(`(if TUN mode's kill switch still blocks the network, "sudo proxy-router stop" removes it)`)
+		}
 	}
+	clearTUN()
 	return nil
 }
 

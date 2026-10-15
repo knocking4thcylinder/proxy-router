@@ -252,14 +252,15 @@ var processResolvers = map[string]engine.Resolver{}
 
 // resolver returns one caching resolver per process (and interface and
 // settings), so reloads reuse it. Server names are looked up with DoH
-// outside the tunnel, from iface like the direct outbound; the system
-// resolver, in plain DNS, is only a fallback that can be turned off.
-func (e *env) resolver(iface string) engine.Resolver {
-	key := fmt.Sprintf("%s/%s/%t", iface, e.cfg.PreferredIP, e.cfg.SystemDNSFallback)
+// outside the tunnel, from iface like the direct outbound, with the TUN
+// kill switch's socket mark (0 outside TUN mode); the system resolver, in
+// plain DNS, is only a fallback that can be turned off.
+func (e *env) resolver(iface string, mark int) engine.Resolver {
+	key := fmt.Sprintf("%s/%d/%s/%t", iface, mark, e.cfg.PreferredIP, e.cfg.SystemDNSFallback)
 	if r := processResolvers[key]; r != nil {
 		return r
 	}
-	lookup := engine.DoHLookup(config.DirectDoH, iface)
+	lookup := engine.DoHLookup(config.DirectDoH, iface, mark)
 	if e.cfg.SystemDNSFallback {
 		lookup = engine.OrElse(lookup, engine.SystemLookup)
 	}

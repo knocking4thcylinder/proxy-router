@@ -3,6 +3,7 @@ package tun
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 
@@ -20,41 +21,109 @@ func FreeName() (string, error) {
 	return "", fmt.Errorf("no free utun interface number")
 }
 
-func routes(ipv6 bool) [][2]string {
-	r := [][2]string{{"-inet", "0.0.0.0/1"}, {"-inet", "128.0.0.0/1"}}
-	if ipv6 {
-		r = append(r, [2]string{"-inet6", "::/1"}, [2]string{"-inet6", "8000::/1"})
-	}
-	return r
+// SocketMark is 0: macOS has no socket marks, the kill switch goes by user.
+func SocketMark() int { return 0 }
+
+func netstat(family string) string {
+	out, _ := output("netstat", "-rn", "-f", family)
+	return out
 }
 
-// Up points the split default routes at the interface.
-func Up(name string, ipv6 bool) error {
-	if err := Sync(name, ipv6); err != nil {
-		return err
-	}
-	for _, r := range routes(ipv6) {
-		// A stale route from a crashed run would make "add" fail.
-		_ = run("route", "-q", "-n", "delete", r[0], "-net", r[1])
-		if err := run("route", "-q", "-n", "add", r[0], "-net", r[1], "-interface", name); err != nil {
-			Down(name, ipv6)
-			return err
+// checkRoutes refuses to touch split routes someone else owns: replacing
+// them would break that VPN, and deleting them later would too.
+func checkRoutes(rs []route, name string) error {
+	var conflicts []string
+	tables := map[string]string{}
+	for _, r := range rs {
+		if _, ok := tables[r.family]; !ok {
+			tables[r.family] = netstat(r.family)
 		}
+		if present, ours, desc := splitRoute(tables[r.family], r, name); present && !ours {
+			conflicts = append(conflicts, desc)
+		}
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("another VPN's routes are in the way (%s); disconnect it first: proxy-router doesn't replace routes it doesn't own", strings.Join(conflicts, ", "))
 	}
 	return nil
 }
 
-// Down removes the routes.
-func Down(name string, ipv6 bool) {
-	for _, r := range routes(ipv6) {
-		_ = run("route", "-q", "-n", "delete", r[0], "-net", r[1])
+// Up points the split routes at the interface (IPv6 at a reject route
+// unless o.IPv6), turns on the kill switch, and points system DNS into the
+// TUN. It's safe to run again with changed options. On error, Down undoes
+// what was done.
+func Up(o Options) error {
+	if err := ValidName(o.Name); err != nil {
+		return err
+	}
+	// Kill switch first, so nothing leaks while the rest is set up.
+	if o.KillSwitch {
+		if err := installKillSwitch(o); err != nil {
+			return err
+		}
+	} else if err := clearKillSwitch(); err != nil {
+		warn("can't remove the kill switch: %v", err)
+	}
+	if err := syncScoped(o.Name); err != nil {
+		return err
+	}
+	rs := routes(o.IPv6)
+	if err := checkRoutes(rs, o.Name); err != nil {
+		return err
+	}
+	for _, r := range rs {
+		// Ours from before: a crashed run's reject route, or the other
+		// kind after tun.ipv6 changed. "add" fails while it's there.
+		if present, ours, _ := splitRoute(netstat(r.family), r, o.Name); present && ours {
+			_ = run("route", bsdDeleteArgs(r)...)
+		}
+		if err := run("route", bsdRouteArgs(r, o.Name)...); err != nil {
+			if r.family == "inet6" && !hasIPv6(o.Name) {
+				warn("IPv6 is unavailable, so there's none to capture (%v)", err)
+				continue
+			}
+			return err
+		}
+	}
+	if err := syncDNS(); err != nil {
+		warn("can't point DNS at the TUN: %v", err)
+	}
+	return nil
+}
+
+// Down removes the routes and DNS settings, and the kill switch unless
+// keepKillSwitch: the service keeps it while it restarts.
+func Down(o Options, keepKillSwitch bool) {
+	restoreDNS()
+	for _, r := range routes(o.IPv6) {
+		if present, ours, _ := splitRoute(netstat(r.family), r, o.Name); present && ours {
+			_ = run("route", bsdDeleteArgs(r)...)
+		}
 	}
 	mu.Lock()
-	defer mu.Unlock()
 	for family, s := range added {
 		s.remove(family)
 		delete(added, family)
 	}
+	mu.Unlock()
+	if !keepKillSwitch {
+		if err := clearKillSwitch(); err != nil {
+			warn("can't remove the kill switch: %v", err)
+		}
+	}
+}
+
+// Cleanup removes everything Up leaves behind after the process is gone:
+// the kill switch, the DNS override and the IPv6 reject routes. (Routes
+// into the TUN disappear with the interface.)
+func Cleanup() error {
+	restoreDNS()
+	for _, r := range routes(false) {
+		if present, ours, _ := splitRoute(netstat(r.family), r, ""); present && ours {
+			_ = run("route", bsdDeleteArgs(r)...)
+		}
+	}
+	return clearKillSwitch()
 }
 
 // scopedDefault is a default route that only applies to sockets bound to
@@ -81,17 +150,23 @@ var (
 	added = map[string]scopedDefault{} // family -> route Up added
 )
 
-// Sync makes sure the physical interface has a scoped default route,
-// following network changes (Wi-Fi <-> Ethernet, new gateway). Run it
-// whenever the network may have changed.
-func Sync(name string, ipv6 bool) error {
-	families := []string{"inet"}
-	if ipv6 {
-		families = append(families, "inet6")
+// Sync follows network changes (Wi-Fi <-> Ethernet, new gateway, DHCP
+// rewriting DNS): it keeps a scoped default route on the physical
+// interface and DNS pointed into the TUN. Run it whenever the network may
+// have changed, and now and then.
+func Sync(o Options) error {
+	if err := syncScoped(o.Name); err != nil {
+		return err
 	}
+	return syncDNS()
+}
+
+// syncScoped adds the scoped default routes, for IPv6 too: its split routes
+// are always there, into the TUN or rejected.
+func syncScoped(name string) error {
 	mu.Lock()
 	defer mu.Unlock()
-	for _, family := range families {
+	for _, family := range []string{"inet", "inet6"} {
 		iface, gw, err := netif.Uplink(family, name)
 		if err != nil {
 			if family == "inet6" {
@@ -118,4 +193,73 @@ func Sync(name string, ipv6 bool) error {
 		}
 	}
 	return nil
+}
+
+func scutil(script string) (string, error) {
+	return runTool(script, "scutil")
+}
+
+func primaryService() string {
+	out, _ := scutil("show State:/Network/Global/IPv4\n")
+	d, _ := parseScutil(out)
+	if p := d["PrimaryService"]; len(p) == 1 && serviceID.MatchString(p[0]) {
+		return p[0]
+	}
+	return ""
+}
+
+func readBackup() (dnsBackup, bool) {
+	out, _ := scutil("show " + dnsBackupKey + "\n")
+	return parseBackup(out)
+}
+
+// syncDNS points the primary service's DNS at DNSServer, following changes
+// of the primary service, and saves what it replaces.
+func syncDNS() error {
+	primary := primaryService()
+	b, saved := readBackup()
+	if saved && b.Service != primary {
+		if _, err := scutil(restoreDNSScript(b)); err != nil {
+			return err
+		}
+	}
+	if primary == "" {
+		return nil
+	}
+	out, _ := scutil("show " + setupDNSKey(primary) + "\n")
+	cur, hadKey := parseScutil(out)
+	if slices.Equal(cur["ServerAddresses"], []string{DNSServer}) {
+		return nil
+	}
+	// Save what's there now: it's newer than an older backup if the
+	// settings were re-applied (the user changed them).
+	if _, err := scutil(backupScript(dnsBackup{Service: primary, HadKey: hadKey, Servers: cur["ServerAddresses"]})); err != nil {
+		return err
+	}
+	_, err := scutil(applyDNSScript(primary))
+	return err
+}
+
+func restoreDNS() {
+	if b, ok := readBackup(); ok {
+		if _, err := scutil(restoreDNSScript(b)); err != nil {
+			warn("can't restore DNS settings: %v", err)
+		}
+	}
+}
+
+func installKillSwitch(o Options) error {
+	// pf is off by default; enabling it with only macOS's own rules
+	// changes nothing, so it's left on afterwards.
+	if out, err := output("pfctl", "-s", "info"); err == nil && !strings.Contains(out, "Status: Enabled") {
+		if err := run("pfctl", "-E"); err != nil {
+			return err
+		}
+	}
+	_, err := runTool(pfRules(o), "pfctl", "-a", pfAnchor, "-f", "-")
+	return err
+}
+
+func clearKillSwitch() error {
+	return run("pfctl", "-a", pfAnchor, "-F", "all")
 }

@@ -112,12 +112,17 @@ preferred_ip: ipv4
 
 # Capture all system traffic, like Happ's "Xray TUN". Needs root:
 #   sudo proxy-router run --tun
-# LAN, Tailscale and other more specific routes keep working.
+# LAN, Tailscale and other more specific routes keep working. System DNS is
+# pointed into the TUN.
 tun:
   enabled: false
   name: ""                 # empty picks a free utunN
   mtu: 1500
-  ipv6: false              # also capture IPv6
+  ipv6: false              # proxy IPv6 too; when false it's blocked, never leaked
+  # Block anything that would leave outside the TUN, also while restarting
+  # or after a crash. LAN and system_route stay reachable. If networking is
+  # stuck after a crash, "sudo proxy-router stop" removes it.
+  kill_switch: true
 `
 
 const defaultRoutingYAML = `# proxy-router routing rules.

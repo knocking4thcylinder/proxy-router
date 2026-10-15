@@ -151,7 +151,7 @@ func TestDoHLookup(t *testing.T) {
 	// binds to an interface when given one).
 	plain := httptest.NewServer(srv.Config.Handler)
 	defer plain.Close()
-	if addrs, err := DoHLookup([]string{plain.URL + "/dns-query"}, "")(ctx, "srv.example"); err != nil || len(addrs) != 2 {
+	if addrs, err := DoHLookup([]string{plain.URL + "/dns-query"}, "", 0)(ctx, "srv.example"); err != nil || len(addrs) != 2 {
 		t.Errorf("DoHLookup: %v, %v", addrs, err)
 	}
 

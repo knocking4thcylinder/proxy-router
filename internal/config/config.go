@@ -137,6 +137,7 @@ func defaults() *Config {
 	c.ResolveLocally = true
 	c.SystemDNSFallback = true
 	c.TUN.MTU = 1500
+	c.TUN.KillSwitch = true
 	return c
 }
 

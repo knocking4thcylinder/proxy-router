@@ -11,8 +11,12 @@ func FreeName() (string, error) {
 	return "", fmt.Errorf("TUN mode is not supported on %s yet", runtime.GOOS)
 }
 
-func Up(name string, ipv6 bool) error { return fmt.Errorf("unsupported") }
+func SocketMark() int { return 0 }
 
-func Down(name string, ipv6 bool) {}
+func Up(o Options) error { return fmt.Errorf("unsupported") }
 
-func Sync(name string, ipv6 bool) error { return nil }
+func Down(o Options, keepKillSwitch bool) {}
+
+func Cleanup() error { return nil }
+
+func Sync(o Options) error { return nil }
