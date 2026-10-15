@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -94,7 +93,7 @@ func splitCSV(s string) []string {
 
 // LoadRules reads and validates a rules file.
 func LoadRules(path string) (*Rules, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPath(path, maxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("rules file: %w (create one with `proxy-router init`)", err)
 	}

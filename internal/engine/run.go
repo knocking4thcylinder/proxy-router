@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,7 @@ import (
 
 	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/core"
 
 	// Registers every Xray protocol, transport and the JSON config loader.
@@ -27,9 +29,33 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
-// SetAssetDir tells Xray where geoip.dat / geosite.dat live.
+// SetAssetDir tells Xray where geoip.dat / geosite.dat live. In the TUN
+// service (config.Confined) it also stops Xray from reading any file
+// outside that root-owned directory: certificate files from imported
+// outbounds, or its fallbacks under /usr/share/xray.
 func SetAssetDir(dir string) {
 	os.Setenv("XRAY_LOCATION_ASSET", dir)
+	if config.Confined() {
+		// Once: reloads call this while Xray may be reading, and the
+		// directory doesn't change.
+		confineReads.Do(func() {
+			filesystem.NewFileReader = func(path string) (io.ReadCloser, error) {
+				return openInDir(dir, path)
+			}
+		})
+	}
+}
+
+var confineReads sync.Once
+
+// openInDir opens path if it's inside dir, without following symlinks
+// out of it.
+func openInDir(dir, path string) (*os.File, error) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s: only files in %s can be read here", path, dir)
+	}
+	return os.OpenInRoot(dir, rel)
 }
 
 // Start builds and starts an Xray instance from a JSON-able config.
@@ -252,6 +278,9 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	return latency, exit, nil
 }
 
+// maxAsset caps geo file downloads (geoip.dat is around 20 MB).
+var maxAsset int64 = 256 << 20
+
 // DownloadAsset fetches url into dir/name atomically.
 func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -268,30 +297,42 @@ func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("%s: %s", url, resp.Status)
 	}
+	if resp.ContentLength > maxAsset {
+		return 0, fmt.Errorf("%s: larger than %d MB", url, maxAsset>>20)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
 	config.GiveBack(dir)
-	tmp, err := os.CreateTemp(dir, "."+name+".*")
+	n, err := config.WriteReaderAtomic(filepath.Join(dir, name), &assetReader{r: resp.Body, left: maxAsset}, 0o644)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s: %w", url, err)
 	}
-	defer os.Remove(tmp.Name())
-	n, err := io.Copy(tmp, resp.Body)
-	if err == nil {
-		err = tmp.Chmod(0o644)
+	return n, nil
+}
+
+// assetReader fails a download that is empty or larger than left, so
+// it's never renamed into place.
+type assetReader struct {
+	r    io.Reader
+	left int64
+	read bool
+}
+
+func (a *assetReader) Read(p []byte) (int, error) {
+	if int64(len(p)) > a.left+1 {
+		p = p[:a.left+1]
 	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
+	n, err := a.r.Read(p)
+	a.left -= int64(n)
+	a.read = a.read || n > 0
+	switch {
+	case a.left < 0:
+		return 0, fmt.Errorf("larger than %d MB", maxAsset>>20)
+	case err == io.EOF && !a.read:
+		return 0, errors.New("empty file")
 	}
-	config.GiveBack(tmp.Name())
-	if err != nil {
-		return 0, err
-	}
-	if n == 0 {
-		return 0, fmt.Errorf("%s: empty file", url)
-	}
-	return n, os.Rename(tmp.Name(), filepath.Join(dir, name))
+	return n, err
 }
 
 func splitHostPort(addr string) (string, int, error) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
+	"github.com/knocking4thcylinder/proxy-router/internal/service"
 )
 
 // Version can be set with -ldflags "-X .../internal/cli.Version=v1.2.3";
@@ -106,9 +108,11 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.SetOwnerFromDir(dir)
-	if err := ensureFiles(dir, false); err != nil {
-		return nil, err
+	// The TUN service runs on the user's files but never writes to them.
+	if !config.Confined() {
+		if err := ensureFiles(dir, false); err != nil {
+			return nil, err
+		}
 	}
 	cfg, err := config.Load(dir)
 	if err != nil {
@@ -118,13 +122,16 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
+	if config.Confined() {
+		applyRefreshed(state)
+	}
 	engine.SetAssetDir(cfg.AssetDir())
 	return &env{cfg: cfg, state: state}, nil
 }
 
 // ensureFiles writes default config.yaml / routing.yaml if missing.
 func ensureFiles(dir string, force bool) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	config.GiveBack(dir)
@@ -138,7 +145,7 @@ func ensureFiles(dir string, force bool) error {
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := config.WriteFileAtomic(path, []byte(content), 0o644); err != nil {
+		if err := config.WriteFileAtomic(path, []byte(content), 0o600); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "created %s\n", path)
@@ -166,6 +173,31 @@ func initCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing files with the defaults")
 	return cmd
+}
+
+// confineRoot puts a proxy-router running as root (the TUN service, or
+// "sudo proxy-router run") in config.Confine's read-only mode. uid owns
+// dir: the service gets it from --uid, recorded at install time; under
+// sudo it's the sudo user, otherwise root's own.
+func confineRoot(dir string, uid int) error {
+	if uid < 0 {
+		uid = 0
+		if id := os.Getenv("SUDO_UID"); id != "" {
+			n, err := strconv.Atoi(id)
+			if err != nil {
+				return fmt.Errorf("bad SUDO_UID %q", id)
+			}
+			uid = n
+		}
+	}
+	config.Confine(dir, uid, filepath.Join(systemStateDir(), "assets"))
+	return nil
+}
+
+// systemStateDir is the root-owned directory holding the TUN service's
+// binary and geo files (the unit's StateDirectory on Linux).
+func systemStateDir() string {
+	return filepath.Dir(service.BinaryPath(service.Target{Scope: service.System}))
 }
 
 // outboundInterface resolves bind_interface. With "auto" it returns the

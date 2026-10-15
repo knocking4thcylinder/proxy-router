@@ -2,6 +2,12 @@ package cli
 
 import "errors"
 
-func redirectOutput(path string) error {
-	return errors.New("the background service isn't supported on Windows")
-}
+var errNoService = errors.New("the background service isn't supported on Windows")
+
+func serviceOutput(dir string) error { return errNoService }
+
+func systemLogName() string { return "" }
+
+func tailSystemLog(n int, follow bool) error { return errNoService }
+
+func systemRunDirOK() bool { return false }

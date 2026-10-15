@@ -105,8 +105,15 @@ func logsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "Show the background service's log",
-		Args:  cobra.NoArgs,
+		Long: `Show the background service's log. The TUN service logs to the system
+journal on Linux (reading it may need the systemd-journal or adm group)
+and to /var/log/proxy-router.log on macOS; the proxy-mode service to
+proxy-router.log in the config directory.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if tunInstalled() {
+				return tailSystemLog(lines, follow)
+			}
 			dir, err := configDir()
 			if err != nil {
 				return err
@@ -227,7 +234,8 @@ func startService(o startOptions, restart bool) error {
 
 	args := []string{"--dir", dir, "run", "--service"}
 	if useTUN {
-		args = append(args, "--tun")
+		// The root service reads only files this user owns.
+		args = append(args, "--tun", "--uid", want.User.Uid)
 	} else {
 		args = append(args, "--no-tun")
 	}
@@ -250,11 +258,17 @@ func startService(o startOptions, restart bool) error {
 		return err
 	}
 	fmt.Printf("started in %s mode (%s, %s)\n", modeName(want), want, autostart(want))
-	return waitStarted(dir, begin)
+	return waitStarted(dir, want, begin)
+}
+
+// tunInstalled reports whether the TUN (system) service is installed.
+func tunInstalled() bool {
+	st, _ := service.Query(service.Target{Scope: service.System})
+	return st.Installed
 }
 
 // waitStarted waits for the new service process to report in.
-func waitStarted(dir string, begin time.Time) error {
+func waitStarted(dir string, t service.Target, begin time.Time) error {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if st, ok := readRunStatus(dir); ok && st.Service && !st.Started.Before(begin.Add(-time.Second)) {
@@ -263,8 +277,15 @@ func waitStarted(dir string, begin time.Time) error {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	fmt.Fprintln(os.Stderr, "the service hasn't come up; last log lines:")
-	_ = tailFile(logPath(dir), 15, false)
+	switch {
+	case t.Scope == service.System:
+		fmt.Fprintln(os.Stderr, "the service hasn't come up; last log lines:")
+		_ = tailSystemLog(15, false)
+	case os.Geteuid() != 0:
+		// Root (switching modes under sudo) doesn't read the user's log.
+		fmt.Fprintln(os.Stderr, "the service hasn't come up; last log lines:")
+		_ = tailFile(logPath(dir), 15, false)
+	}
 	return errors.New(`the service didn't start; see "proxy-router logs"`)
 }
 
@@ -353,7 +374,11 @@ func showStatus() error {
 		}
 		printRunStatus(st)
 	}
-	fmt.Printf("log:     %s\n", logPath(dir))
+	if tunInstalled() {
+		fmt.Printf("log:     %s\n", systemLogName())
+	} else {
+		fmt.Printf("log:     %s\n", logPath(dir))
+	}
 	return nil
 }
 
