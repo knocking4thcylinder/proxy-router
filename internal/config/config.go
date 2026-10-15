@@ -135,6 +135,11 @@ func Load(dir string) (*Config, error) {
 	if err := c.validateTweaks(); err != nil {
 		return nil, fmt.Errorf("config.yaml: %w", err)
 	}
+	for _, e := range c.SystemRoute {
+		if err := checkGeoRef(e); err != nil {
+			return nil, fmt.Errorf("config.yaml: system_route: %w", err)
+		}
+	}
 	return c, nil
 }
 
