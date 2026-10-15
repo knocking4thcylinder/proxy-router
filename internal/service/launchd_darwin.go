@@ -27,6 +27,11 @@ func BinaryPath(t Target) string {
 	return filepath.Join(t.User.HomeDir, "Library", "Application Support", "proxy-router", "proxy-router")
 }
 
+// SystemLog is the TUN service's log. /var/log is writable only by root;
+// /Library/Logs is also writable by the admin group, which could swap the
+// file for a symlink that launchd (root) would then follow.
+const SystemLog = "/var/log/proxy-router.log"
+
 func domain(t Target) string {
 	if t.Scope == System {
 		return "system"
@@ -44,6 +49,28 @@ func Definition(s Spec) []byte {
 	var args strings.Builder
 	for _, a := range append([]string{s.Binary}, s.Args...) {
 		fmt.Fprintf(&args, "\t\t<string>%s</string>\n", esc(a))
+	}
+	// The TUN service runs as root: give it a root-owned log, a private
+	// umask and a working directory outside the user's files. launchd has
+	// no sandboxing like systemd's; the process itself stays out of the
+	// user's directory except to read its config.
+	system := ""
+	if s.Scope == System {
+		system = fmt.Sprintf(`	<key>UserName</key>
+	<string>root</string>
+	<key>GroupName</key>
+	<string>wheel</string>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>WorkingDirectory</key>
+	<string>/</string>
+	<key>StandardInPath</key>
+	<string>/dev/null</string>
+	<key>StandardOutPath</key>
+	<string>%s</string>
+	<key>StandardErrorPath</key>
+	<string>%s</string>
+`, esc(SystemLog), esc(SystemLog))
 	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -68,9 +95,9 @@ func Definition(s Spec) []byte {
 	</dict>
 	<key>ThrottleInterval</key>
 	<integer>5</integer>
-</dict>
+%s</dict>
 </plist>
-`, esc(Label), args.String()))
+`, esc(Label), args.String(), system))
 }
 
 // Install writes the plist, enables it at boot/login and (re)starts it.

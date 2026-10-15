@@ -65,3 +65,43 @@ func TestDefinitionLints(t *testing.T) {
 		}
 	}
 }
+
+// TestSystemHardening checks the root TUN service is confined and the
+// user service isn't touched.
+func TestSystemHardening(t *testing.T) {
+	var want []string
+	switch runtime.GOOS {
+	case "linux":
+		want = []string{
+			"NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=read-only", "PrivateTmp=yes",
+			"DevicePolicy=closed", "DeviceAllow=/dev/net/tun rw", "StandardOutput=journal",
+			"StateDirectory=proxy-router", "RuntimeDirectory=proxy-router", "UMask=0077",
+			"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH",
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+			"Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+		}
+	case "darwin":
+		want = []string{"<key>Umask</key>", "<string>/var/log/proxy-router.log</string>"}
+	default:
+		t.Skip("no service support")
+	}
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := string(Definition(Spec{Target: Target{Scope: System, User: u}, Binary: "/bin/true"}))
+	usr := string(Definition(Spec{Target: Target{Scope: User, User: u}, Binary: "/bin/true"}))
+	for _, w := range want {
+		if !strings.Contains(sys, w) {
+			t.Errorf("system definition lacks %q:\n%s", w, sys)
+		}
+		if strings.Contains(usr, w) {
+			t.Errorf("user definition has %q:\n%s", w, usr)
+		}
+	}
+	for _, bad := range []string{"PrivateNetwork", "PrivateDevices"} {
+		if strings.Contains(sys, bad) {
+			t.Errorf("system definition has %s, which would break TUN", bad)
+		}
+	}
+}

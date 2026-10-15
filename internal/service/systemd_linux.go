@@ -54,10 +54,11 @@ func Definition(s Spec) []byte {
 	for _, a := range append([]string{s.Binary}, s.Args...) {
 		cmd = append(cmd, quote(a))
 	}
-	wantedBy, after := "default.target", ""
+	wantedBy, after, hardening := "default.target", "", ""
 	if s.Scope == System {
 		wantedBy = "multi-user.target"
 		after = "Wants=network-online.target\nAfter=network-online.target\n"
+		hardening = systemHardening
 	}
 	return []byte(fmt.Sprintf(`[Unit]
 Description=proxy-router
@@ -66,11 +67,48 @@ Description=proxy-router
 ExecStart=%s
 Restart=on-failure
 RestartSec=3
-
+%s
 [Install]
 WantedBy=%s
-`, after, strings.Join(cmd, " "), wantedBy))
+`, after, strings.Join(cmd, " "), hardening, wantedBy))
 }
+
+// systemHardening confines the root TUN service. It writes only to its
+// StateDirectory (/var/lib/proxy-router: binary, geo files) and
+// RuntimeDirectory (/run/proxy-router: status.json), logs to the journal
+// and reads the user's config read-only. Capabilities: NET_ADMIN for the
+// TUN device, routes and SO_MARK, NET_RAW for SO_BINDTODEVICE,
+// NET_BIND_SERVICE for low listen ports, and DAC_READ_SEARCH to read the
+// user's 0600 files in their 0700 home. No PrivateNetwork or
+// PrivateDevices: it has to manage the host's network and /dev/net/tun.
+const systemHardening = `StandardOutput=journal
+StandardError=journal
+StateDirectory=proxy-router
+StateDirectoryMode=0755
+RuntimeDirectory=proxy-router
+RuntimeDirectoryMode=0755
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+`
 
 // Install writes the unit, enables it at boot/login and (re)starts it.
 func Install(s Spec) error {
