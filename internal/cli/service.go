@@ -254,11 +254,13 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	// the uid they report, and nothing is taken from the environment.
 	argv := append([]string{exe, "--dir", dir, "--uid", strconv.Itoa(os.Getuid())}, args...)
 	var c *exec.Cmd
+	passwordless := false
 	if passwordDialog {
 		// The tray's connect and disconnect on macOS, once the dialog has
 		// written the sudoers rule for them.
 		if c = passwordlessSudo(argv); c != nil {
-			fmt.Fprintf(os.Stderr, "%s; running with sudo, which the sudoers rule allows without a password\n", why)
+			passwordless = true
+			fmt.Fprintf(os.Stderr, "%s; trying sudo without a password\n", why)
 		} else if c = elevated(argv); c == nil {
 			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")
 		} else {
@@ -269,7 +271,14 @@ func asRoot(why string, which rootBinary, args ...string) error {
 		c = exec.Command("sudo", argv...)
 	}
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	err = c.Run()
+	if passwordless {
+		err = runSudoWithFallback(c, func() *exec.Cmd {
+			fmt.Fprintf(os.Stderr, "%s; asking for the password\n", why)
+			return elevated(argv)
+		})
+	} else {
+		err = c.Run()
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if _, sysT, terr := targets(); terr == nil && exe == service.BinaryPath(sysT) && service.Outdated(sysT) {

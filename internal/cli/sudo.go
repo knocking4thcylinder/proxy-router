@@ -1,6 +1,37 @@
 package cli
 
-import "slices"
+import (
+	"bytes"
+	"errors"
+	"os"
+	"os/exec"
+	"slices"
+	"strings"
+)
+
+// A permission listing can succeed even when executing the command needs
+// authentication. Retry via the dialog only for sudo's exact rejection,
+// which means the privileged command did not run. Other failures must not
+// run the command twice.
+func runSudoWithFallback(cmd *exec.Cmd, dialog func() *exec.Cmd) error {
+	var stderr bytes.Buffer
+	output := cmd.Stderr
+	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	err := cmd.Run()
+	if err != nil && strings.TrimSpace(stderr.String()) == "sudo: a password is required" {
+		next := dialog()
+		if next == nil {
+			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")
+		}
+		next.Stdin, next.Stdout, next.Stderr = cmd.Stdin, cmd.Stdout, output
+		return next.Run()
+	}
+	if output != nil {
+		_, _ = output.Write(stderr.Bytes())
+	}
+	return err
+}
 
 // sudoActions are the root halves of commands (as asRoot runs them) that
 // the macOS sudoers rule lets the tray's user run without a password:

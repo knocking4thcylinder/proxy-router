@@ -340,7 +340,10 @@ func (t *tray) build(m trayModel) {
 		info("    " + d)
 	}
 	if m.actionErr != "" {
-		info("Last action failed: " + firstLine(m.actionErr))
+		info("Last action failed:")
+		for _, line := range strings.Split(lastLines(m.actionErr, 4), "\n") {
+			info("    " + line)
+		}
 	}
 	if m.configErr != "" {
 		info("Config error: " + firstLine(m.configErr))
