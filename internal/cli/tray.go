@@ -30,7 +30,7 @@ import (
 var trayIcons embed.FS
 
 func trayCmd() *cobra.Command {
-	var foreground bool
+	var foreground, allow bool
 	cmd := &cobra.Command{
 		Use:   "tray",
 		Short: "Show a tray icon (menu bar icon on macOS) to control proxy-router",
@@ -39,13 +39,21 @@ proxy-router is connected, and lets you connect and disconnect, switch
 between proxy and TUN mode, pick a server and update subscriptions.
 
 It controls the background service, like "start" and "stop" do; TUN mode
-asks for your password in a system dialog. "Start tray at login" in its
-menu makes the icon come back after a reboot.
+asks for your password in a system dialog (on macOS only once for
+connecting and disconnecting). "Start tray at login" in its menu makes the
+icon come back after a reboot.
 
 The tray runs in the background and returns right away; quit it from its
 menu. --foreground keeps it attached to the terminal instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if allow {
+				dir, err := configDir()
+				if err != nil {
+					return err
+				}
+				return allowSudo(dir)
+			}
 			if os.Geteuid() == 0 {
 				return errors.New("run the tray as your user, not root; it asks for your password when TUN mode needs it")
 			}
@@ -86,6 +94,8 @@ menu. --foreground keeps it attached to the terminal instead.`,
 		},
 	}
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal")
+	cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the macOS password dialog)")
+	_ = cmd.Flags().MarkHidden("allow-sudo")
 	return cmd
 }
 
@@ -450,8 +460,7 @@ func (t *tray) selectServer(group, name string) {
 }
 
 // run runs proxy-router with args in the background (as root when asked,
-// with the system's password dialog), showing what's happening in the
-// menu.
+// see runElevated), showing what's happening in the menu.
 func (t *tray) run(what string, root bool, args ...string) {
 	t.mu.Lock()
 	if t.busy != "" {
@@ -468,16 +477,13 @@ func (t *tray) run(what string, root bool, args ...string) {
 			t.mu.Unlock()
 			t.poke()
 		}()
-		argv := append([]string{t.exe, "--dir", t.dir}, args...)
-		var cmd *exec.Cmd
-		if root {
-			cmd = elevated(argv, t.elevationEnv())
-		} else {
-			cmd = exec.Command(argv[0], argv[1:]...)
-		}
 		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		err := cmd.Run()
+		var err error
+		if root {
+			err = t.runElevated(args, &out)
+		} else {
+			err = runOut(exec.Command(t.exe, append([]string{"--dir", t.dir}, args...)...), &out)
+		}
 		if err != nil && root && authCanceled(err, out.String()) {
 			return
 		}
@@ -494,6 +500,12 @@ func (t *tray) run(what string, root bool, args ...string) {
 			notify("proxy-router", firstLine(out.String()))
 		}
 	}()
+}
+
+// runOut runs cmd with its output going to out.
+func runOut(cmd *exec.Cmd, out *bytes.Buffer) error {
+	cmd.Stdout, cmd.Stderr = out, out
+	return cmd.Run()
 }
 
 // elevationEnv makes a root process see the tray's user the way it would

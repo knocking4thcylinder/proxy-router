@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -37,11 +38,15 @@ func trayAvailable() error {
 // menuLabel escapes underscores, which DBus menus take as mnemonics.
 func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
 
-// elevated runs argv as root with pkexec, which asks for the password in
-// the desktop's polkit dialog.
-func elevated(argv, env []string) *exec.Cmd {
-	return exec.Command("pkexec", append(append([]string{"env"}, env...), argv...)...)
+// runElevated runs proxy-router with args as root with pkexec, which asks
+// for the password in the desktop's polkit dialog.
+func (t *tray) runElevated(args []string, out *bytes.Buffer) error {
+	argv := append(append([]string{"env"}, t.elevationEnv()...), t.exe, "--dir", t.dir)
+	return runOut(exec.Command("pkexec", append(argv, args...)...), out)
 }
+
+// allowSudo is only used on macOS.
+func allowSudo(string) error { return errors.New("--allow-sudo is only used on macOS") }
 
 // authCanceled reports whether the password dialog was dismissed.
 func authCanceled(err error, _ string) bool {

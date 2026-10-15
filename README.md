@@ -127,7 +127,14 @@ network, and grey when disconnected. Its menu:
 - **Connect / Disconnect**: `start` / `stop` the background service
 - **TUN Mode (All Traffic)**: switch modes (restarts the service if it's
   running). TUN mode asks for your password in the system's dialog
-  (polkit on Linux, the standard macOS prompt) instead of sudo.
+  (polkit on Linux, the standard macOS prompt) instead of sudo. On macOS
+  that's once: the dialog also adds a sudoers rule
+  (`/etc/sudoers.d/proxy-router`) so connecting and disconnecting TUN mode
+  don't ask again. It allows only `start --tun` and `stop`, run by the
+  service's own root-owned copy of proxy-router, so switching modes,
+  updating the service, and the first connect after rebuilding
+  proxy-router still ask. Switching to proxy mode and `uninstall` remove
+  the rule.
 - **Servers**: pick a server (grouped by subscription), use the fastest,
   update subscriptions
 - **Edit Routing Rules**, **Show Log**, **Open Config Folder**
