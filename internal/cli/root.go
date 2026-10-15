@@ -233,16 +233,38 @@ func (e *env) outboundInterface() (iface, note string) {
 		return "", ""
 	case "auto":
 		d, err := netif.Detect()
-		if err != nil || d.Tunnel == "" {
+		if err != nil {
 			return "", ""
 		}
-		if d.Physical == "" {
-			return "", fmt.Sprintf("another VPN (%s) owns the default route and no physical interface was found; connections will go through it", d.Tunnel)
-		}
-		return d.Physical, fmt.Sprintf("another VPN (%s) owns the default route; bypassing it via %s", d.Tunnel, d.Physical)
+		return bypass(d, e.ownTUN())
 	default:
 		return v, ""
 	}
+}
+
+// bypass is outboundInterface's "auto" choice for the default route
+// detected in d. own is the TUN of a running proxy-router in TUN mode: not
+// another VPN, so connections go through it like everything else. Going
+// around it would leave the tunnel, and its kill switch rejects that.
+func bypass(d netif.Detection, own string) (iface, note string) {
+	switch {
+	case d.Tunnel == "":
+		return "", ""
+	case d.Tunnel == own:
+		return "", fmt.Sprintf("TUN mode is on (%s); connections go through it, and so through the server it uses", own)
+	case d.Physical == "":
+		return "", fmt.Sprintf("another VPN (%s) owns the default route and no physical interface was found; connections will go through it", d.Tunnel)
+	}
+	return d.Physical, fmt.Sprintf("another VPN (%s) owns the default route; bypassing it via %s", d.Tunnel, d.Physical)
+}
+
+// ownTUN is the TUN interface of a running proxy-router in TUN mode (the
+// service, or "run --tun"), or "".
+func (e *env) ownTUN() string {
+	if st, ok := readRunStatus(e.cfg.Dir()); ok && st.Mode == "tun" {
+		return st.TUN
+	}
+	return ""
 }
 
 // resolveTTL is how long pinned server addresses are trusted.
