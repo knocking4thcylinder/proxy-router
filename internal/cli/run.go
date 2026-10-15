@@ -130,6 +130,10 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if o.tunName != "" {
+		// The kill switch recognizes proxy-router's own connections by it.
+		engine.MarkSockets(xc, tun.SocketMark())
+	}
 	return e, xc, notes, nil
 }
 
@@ -221,7 +225,8 @@ func run(ctx context.Context, o runOptions) error {
 	}
 	defer removeRunStatus(dir)
 
-	var tunIPv6 bool
+	// tunOpts is what tun.Up last applied.
+	var tunOpts tun.Options
 	if o.tun {
 		if err := tun.RequireRoot(); err != nil {
 			return err
@@ -233,7 +238,6 @@ func run(ctx context.Context, o runOptions) error {
 		if err != nil {
 			return err
 		}
-		tunIPv6 = e.cfg.TUN.IPv6
 		if o.tunName = e.cfg.TUN.Name; o.tunName == "" {
 			if o.tunName, err = tun.FreeName(); err != nil {
 				return err
@@ -293,10 +297,20 @@ func run(ctx context.Context, o runOptions) error {
 		if err := tun.WaitForInterface(o.tunName, 5*time.Second); err != nil {
 			return err
 		}
-		if err := tun.Up(o.tunName, tunIPv6); err != nil {
-			return err
+		tunOpts = tunOptions(e, o.tunName)
+		// The service keeps the kill switch when it exits: it's restarted
+		// (by systemd/launchd, or "proxy-router restart"), and when it's
+		// stopped, "proxy-router stop" removes it. In the foreground, the
+		// user is right there.
+		defer func() {
+			tun.Down(tunOpts, o.service)
+			if o.service && tunOpts.KillSwitch {
+				fmt.Println(`TUN: the kill switch stays on until the service is back; "sudo proxy-router stop" removes it`)
+			}
+		}()
+		if err := tun.Up(tunOpts); err != nil {
+			return fmt.Errorf("TUN: %w", err)
 		}
-		defer tun.Down(o.tunName, tunIPv6)
 	}
 
 	// fatal is set when the proxy couldn't be restored after a reload; run
@@ -359,6 +373,32 @@ func run(ctx context.Context, o runOptions) error {
 		go func() { refreshed <- refreshStale(ctx) }()
 	}
 
+	// Network settings drift without the files changing (DHCP rewriting
+	// DNS, systemd-resolved restarting); Sync puts them back.
+	var tunSync <-chan time.Time
+	if o.tunName != "" {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		tunSync = t.C
+	}
+	// syncTUN follows network and config changes: tun.ipv6, kill_switch
+	// and system_route apply without a restart.
+	syncTUN := func() {
+		if ne, err := load(); err == nil {
+			if next := tunOptions(ne, o.tunName); !next.Equal(tunOpts) {
+				if err := tun.Up(next); err != nil {
+					fmt.Fprintln(os.Stderr, "TUN:", err)
+				} else {
+					tunOpts = next
+					fmt.Printf("%s TUN settings applied\n", time.Now().Format(time.TimeOnly))
+				}
+			}
+		}
+		if err := tun.Sync(tunOpts); err != nil {
+			fmt.Fprintln(os.Stderr, "TUN:", err)
+		}
+	}
+
 	var updates <-chan time.Time
 	if iv := e.cfg.UpdateInterval.D(); iv > 0 && !o.noUpdate {
 		t := time.NewTicker(min(iv, time.Hour))
@@ -412,9 +452,7 @@ func run(ctx context.Context, o runOptions) error {
 			if now := snapshot(); now != stamps {
 				stamps = now
 				if o.tunName != "" {
-					if err := tun.Sync(o.tunName, tunIPv6); err != nil {
-						fmt.Fprintln(os.Stderr, "TUN:", err)
-					}
+					syncTUN()
 				}
 				reload("files or network changed")
 			}
@@ -422,6 +460,10 @@ func run(ctx context.Context, o runOptions) error {
 			if changed {
 				stamps = snapshot()
 				reload("subscriptions updated")
+			}
+		case <-tunSync:
+			if err := tun.Sync(tunOpts); err != nil {
+				fmt.Fprintln(os.Stderr, "TUN:", err)
 			}
 		case <-reresolve.C:
 			reload("server addresses changed")
