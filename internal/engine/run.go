@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,42 +13,78 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/core"
 
 	// Registers every Xray protocol, transport and the JSON config loader.
 	_ "github.com/xtls/xray-core/main/distro/all"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
-// SetAssetDir tells Xray where geoip.dat / geosite.dat live.
+// SetAssetDir tells Xray where geoip.dat / geosite.dat live. In the TUN
+// service (config.Confined) it also stops Xray from reading any file
+// outside that root-owned directory: certificate files from imported
+// outbounds, or its fallbacks under /usr/share/xray.
 func SetAssetDir(dir string) {
 	os.Setenv("XRAY_LOCATION_ASSET", dir)
+	if config.Confined() {
+		// Once: reloads call this while Xray may be reading, and the
+		// directory doesn't change.
+		confineReads.Do(func() {
+			filesystem.NewFileReader = func(path string) (io.ReadCloser, error) {
+				return openInDir(dir, path)
+			}
+		})
+	}
+}
+
+var confineReads sync.Once
+
+// openInDir opens path if it's inside dir, without following symlinks
+// out of it.
+func openInDir(dir, path string) (*os.File, error) {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s: only files in %s can be read here", path, dir)
+	}
+	return os.OpenInRoot(dir, rel)
 }
 
 // Start builds and starts an Xray instance from a JSON-able config.
-func Start(cfg map[string]any) (*core.Instance, error) {
+func Start(cfg map[string]any) (inst *core.Instance, err error) {
+	defer recoverXray(&err)
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
 	}
-	inst, err := core.StartInstance("json", data)
+	inst, err = core.StartInstance("json", data)
 	if err != nil {
 		return nil, fmt.Errorf("xray: %w", err)
 	}
 	return inst, nil
 }
 
+// recoverXray turns a panic in Xray's config builder (it has a few on
+// malformed input) into an error, so a bad subscription can't crash-loop
+// the service.
+func recoverXray(err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("xray: invalid config: %v", r)
+	}
+}
+
 // Validate checks that Xray accepts the config (including geo lookups)
 // without starting it.
-func Validate(cfg map[string]any) error {
+func Validate(cfg map[string]any) (err error) {
+	defer recoverXray(&err)
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -110,15 +147,23 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
 	xlog.RegisterHandler(discardLog{})
 	results := make([]PingResult, len(entries))
-	sem := make(chan struct{}, max(o.Parallel, 1))
 
 	// One semaphore per resolved server IP.
 	var mu sync.Mutex
 	endpoints := map[string]chan struct{}{}
 	endpointSem := func(addr string) chan struct{} {
 		key := addr
-		if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
-			key = ips[0]
+		switch {
+		case isIPOrCIDR(addr):
+		case o.Resolve != nil:
+			// Same lookups as pinning, so server names stay off plain DNS.
+			if ip, err := o.Resolve(addr); err == nil {
+				key = ip
+			}
+		default:
+			if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
+				key = ips[0]
+			}
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -150,44 +195,57 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	}
 
 	completed := 0
+	run := func(j job) {
+		if o.PerEndpoint > 0 {
+			ep := endpointSem(j.server.Address)
+			ep <- struct{}{}
+			defer func() { <-ep }()
+		}
+		d, exit, err := pingOne(ctx, j.server, o)
+
+		mu.Lock()
+		defer mu.Unlock()
+		r := &results[j.result]
+		if err == nil {
+			r.Alive++
+			if r.Err != nil || r.Latency == 0 || d < r.Latency {
+				r.Latency, r.Exit, r.Err = d, exit, nil
+			}
+		} else if r.Latency == 0 {
+			r.Err = err
+		}
+		completed++
+		remaining[j.result]--
+		if o.OnProgress != nil {
+			o.OnProgress(PingProgress{
+				Result: *r, Completed: completed, Total: len(jobs),
+				EntryDone: remaining[j.result] == 0,
+			})
+		}
+	}
+	// A fixed set of workers: a provider's pool can have any number of
+	// members, and each test starts an Xray instance.
+	queue := make(chan job)
 	var wg sync.WaitGroup
-	for _, j := range jobs {
+	for range min(max(o.Parallel, 1), maxPingParallel, max(len(jobs), 1)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if o.PerEndpoint > 0 {
-				ep := endpointSem(j.server.Address)
-				ep <- struct{}{}
-				defer func() { <-ep }()
-			}
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			d, exit, err := pingOne(ctx, j.server, o)
-
-			mu.Lock()
-			defer mu.Unlock()
-			r := &results[j.result]
-			if err == nil {
-				r.Alive++
-				if r.Err != nil || r.Latency == 0 || d < r.Latency {
-					r.Latency, r.Exit, r.Err = d, exit, nil
-				}
-			} else if r.Latency == 0 {
-				r.Err = err
-			}
-			completed++
-			remaining[j.result]--
-			if o.OnProgress != nil {
-				o.OnProgress(PingProgress{
-					Result: *r, Completed: completed, Total: len(jobs),
-					EntryDone: remaining[j.result] == 0,
-				})
+			for j := range queue {
+				run(j)
 			}
 		}()
 	}
+	for _, j := range jobs {
+		queue <- j
+	}
+	close(queue)
 	wg.Wait()
 	return results
 }
+
+// maxPingParallel caps how many servers Ping tests at once.
+const maxPingParallel = 64
 
 type discardLog struct{}
 
@@ -266,7 +324,7 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 			if resp, err := client.Do(req); err == nil {
 				b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 				resp.Body.Close()
-				if v := strings.TrimSpace(string(b)); resp.StatusCode == http.StatusOK && v != "" && len(v) < 40 {
+				if v := safetext.Clean(string(b), 0); resp.StatusCode == http.StatusOK && v != "" && len(v) < 40 {
 					exit = v
 				}
 			}
@@ -274,6 +332,9 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	}
 	return latency, exit, nil
 }
+
+// maxAsset caps geo file downloads (geoip.dat is around 20 MB).
+var maxAsset int64 = 256 << 20
 
 // DownloadAsset fetches url into dir/name atomically.
 func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
@@ -291,32 +352,46 @@ func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("%s: %s", url, resp.Status)
 	}
+	if resp.ContentLength > maxAsset {
+		return 0, fmt.Errorf("%s: larger than %d MB", url, maxAsset>>20)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
 	config.GiveBack(dir)
-	tmp, err := os.CreateTemp(dir, "."+name+".*")
+	n, err := config.WriteReaderAtomic(filepath.Join(dir, name), &assetReader{r: resp.Body, left: maxAsset}, 0o644)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%s: %w", url, err)
 	}
-	defer os.Remove(tmp.Name())
-	n, err := io.Copy(tmp, resp.Body)
-	if err == nil {
-		err = tmp.Chmod(0o644)
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	config.GiveBack(tmp.Name())
-	if err != nil {
-		return 0, err
-	}
-	if n == 0 {
-		return 0, fmt.Errorf("%s: empty file", url)
-	}
-	return n, os.Rename(tmp.Name(), filepath.Join(dir, name))
+	return n, nil
 }
 
+// assetReader fails a download that is empty or larger than left, so
+// it's never renamed into place.
+type assetReader struct {
+	r    io.Reader
+	left int64
+	read bool
+}
+
+func (a *assetReader) Read(p []byte) (int, error) {
+	if int64(len(p)) > a.left+1 {
+		p = p[:a.left+1]
+	}
+	n, err := a.r.Read(p)
+	a.left -= int64(n)
+	a.read = a.read || n > 0
+	switch {
+	case a.left < 0:
+		return 0, fmt.Errorf("larger than %d MB", maxAsset>>20)
+	case err == io.EOF && !a.read:
+		return 0, errors.New("empty file")
+	}
+	return n, err
+}
+
+// splitHostPort splits a listen address. An empty host means loopback:
+// listening on every interface has to be asked for (0.0.0.0, [::]).
 func splitHostPort(addr string) (string, int, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -327,7 +402,7 @@ func splitHostPort(addr string) (string, int, error) {
 		return "", 0, fmt.Errorf("%q: bad port", addr)
 	}
 	if host == "" {
-		host = "0.0.0.0"
+		host = "127.0.0.1"
 	}
 	return host, port, nil
 }

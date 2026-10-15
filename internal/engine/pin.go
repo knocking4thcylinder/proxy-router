@@ -1,12 +1,21 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
+
+	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/transport/internet"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // Resolver turns a server hostname into an IP.
@@ -118,10 +127,132 @@ func keepHostname(ob map[string]any, host string) {
 	}
 }
 
-// CachingResolver resolves with the system resolver, preferring the given
-// family ("ipv4", "ipv6", or anything else for no preference), and caches
-// answers for ttl.
-func CachingResolver(prefer string, ttl time.Duration) Resolver {
+// Lookup returns the addresses of host.
+type Lookup func(ctx context.Context, host string) ([]netip.Addr, error)
+
+// SystemLookup asks the system resolver: plain DNS, which the network can
+// read and tamper with.
+func SystemLookup(ctx context.Context, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+}
+
+// DoHLookup asks the DNS-over-HTTPS servers in turn, connecting from iface
+// ("" = system routing) like the direct outbound, so the queries neither
+// show server names to the network nor depend on the tunnel. mark (0 for
+// none) is the SO_MARK the TUN kill switch lets out, as on Xray's own
+// outbounds.
+func DoHLookup(servers []string, iface string, mark int) Lookup {
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dest, err := xnet.ParseDestination("tcp:" + addr)
+		if err != nil {
+			return nil, err
+		}
+		return internet.DialSystem(ctx, dest, &internet.SocketConfig{Interface: iface, Mark: int32(mark)})
+	}
+	client := &http.Client{Transport: &http.Transport{
+		DialContext:         dial,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 5 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+	}}
+	return dohLookup(client, servers)
+}
+
+func dohLookup(client *http.Client, servers []string) Lookup {
+	return func(ctx context.Context, host string) ([]netip.Addr, error) {
+		var errs []error
+		for _, server := range servers {
+			var addrs []netip.Addr
+			var err error
+			sctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			for _, qtype := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
+				var got []netip.Addr
+				if got, err = dohQuery(sctx, client, server, host, qtype); err != nil {
+					break
+				}
+				addrs = append(addrs, got...)
+			}
+			cancel()
+			if err == nil && len(addrs) > 0 {
+				return addrs, nil
+			}
+			if err == nil {
+				err = fmt.Errorf("%s: no addresses", server)
+			}
+			errs = append(errs, err)
+		}
+		return nil, errors.Join(errs...)
+	}
+}
+
+// dohQuery is one RFC 8484 query.
+func dohQuery(ctx context.Context, client *http.Client, server, host string, qtype dnsmessage.Type) ([]netip.Addr, error) {
+	if !strings.HasSuffix(host, ".") {
+		host += "."
+	}
+	name, err := dnsmessage.NewName(host)
+	if err != nil {
+		return nil, err
+	}
+	q, err := (&dnsmessage.Message{
+		Header:    dnsmessage.Header{RecursionDesired: true},
+		Questions: []dnsmessage.Question{{Name: name, Type: qtype, Class: dnsmessage.ClassINET}},
+	}).Pack()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server, bytes.NewReader(q))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s: %s", server, resp.Status)
+	}
+	var m dnsmessage.Message
+	if err := m.Unpack(body); err != nil {
+		return nil, fmt.Errorf("%s: %w", server, err)
+	}
+	if m.RCode != dnsmessage.RCodeSuccess {
+		return nil, fmt.Errorf("%s: %s", server, m.RCode)
+	}
+	var out []netip.Addr
+	for _, a := range m.Answers {
+		switch r := a.Body.(type) {
+		case *dnsmessage.AResource:
+			out = append(out, netip.AddrFrom4(r.A))
+		case *dnsmessage.AAAAResource:
+			out = append(out, netip.AddrFrom16(r.AAAA))
+		}
+	}
+	return out, nil
+}
+
+// OrElse tries lookup, then fallback.
+func OrElse(lookup, fallback Lookup) Lookup {
+	return func(ctx context.Context, host string) ([]netip.Addr, error) {
+		addrs, err := lookup(ctx, host)
+		if err == nil {
+			return addrs, nil
+		}
+		return fallback(ctx, host)
+	}
+}
+
+// CachingResolver resolves with lookup, preferring the given family
+// ("ipv4", "ipv6", or anything else for no preference), and caches answers
+// for ttl.
+func CachingResolver(prefer string, ttl time.Duration, lookup Lookup) Resolver {
 	type entry struct {
 		ip  string
 		exp time.Time
@@ -138,9 +269,10 @@ func CachingResolver(prefer string, ttl time.Duration) Resolver {
 		}
 		mu.Unlock()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Room for DoHLookup's 4s per server and then a fallback.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		addrs, err := lookup(ctx, host)
 		if err != nil {
 			return "", err
 		}

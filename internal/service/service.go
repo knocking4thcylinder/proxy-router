@@ -15,8 +15,11 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/secpath"
 )
 
 // Name identifies the service to launchd (label) and systemd (unit name).
@@ -66,11 +69,33 @@ type Spec struct {
 	Args   []string // arguments after the binary
 }
 
+// Check rejects specs that can't be written safely: the service files are
+// line-oriented, and a newline in an argument (say, in a crafted --dir)
+// would add directives to them.
+func (s Spec) Check() error {
+	for _, a := range append([]string{s.Binary}, s.Args...) {
+		if !utf8.ValidString(a) {
+			return fmt.Errorf("service argument %q isn't valid UTF-8", a)
+		}
+		if strings.IndexFunc(a, unicode.IsControl) >= 0 {
+			return fmt.Errorf("service argument %q contains control characters", a)
+		}
+	}
+	return nil
+}
+
+// errUserFilesAsRoot keeps root from writing in directories the user
+// controls, where symlinks could point the writes anywhere.
+var errUserFilesAsRoot = errors.New("a user service's files are changed as that user, not as root")
+
 // InstallBinary copies the running executable to the service's own
 // location, so rebuilding or moving the build output doesn't touch the
 // running service, and a root service never runs a user-writable file.
 // Returns the destination path.
 func InstallBinary(t Target) (string, error) {
+	if t.Scope == User && os.Geteuid() == 0 {
+		return "", errUserFilesAsRoot
+	}
 	src, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -82,39 +107,25 @@ func InstallBinary(t Target) (string, error) {
 	if same, _ := sameContents(src, dst); same {
 		return dst, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", err
-	}
 	in, err := os.Open(src)
 	if err != nil {
 		return "", err
 	}
 	defer in.Close()
-	// Write a new file and rename it over the old one: the running service
-	// keeps executing its (now unlinked) copy until it restarts.
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".proxy-router.*")
-	if err != nil {
-		return "", err
+	// A new file renamed over the old one: the running service keeps
+	// executing its (now unlinked) copy until it restarts.
+	return dst, writeAtomic(dst, in, 0o755)
+}
+
+// RootBinary returns the system service's copy of proxy-router if it's
+// safe to run as root: a regular file that only root can change, in
+// directories only root can change.
+func RootBinary() (string, error) {
+	path := BinaryPath(Target{Scope: System})
+	if path == "" {
+		return "", ErrUnsupported
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := io.Copy(tmp, in); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Chmod(0o755); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp.Name(), dst); err != nil {
-		return "", err
-	}
-	if t.Scope == User {
-		chownTo(t.User, filepath.Dir(dst), dst)
-	}
-	return dst, nil
+	return secpath.CheckFile(path, 0)
 }
 
 // UpToDate reports whether s is installed exactly as given, with the
@@ -147,34 +158,76 @@ func sameContents(a, b string) (bool, error) {
 	return bytes.Equal(fa, fb), nil
 }
 
-// writeOwned writes a definition file, owned by the target's user for user
-// services (we may be root under sudo).
-func writeOwned(t Target, path string, data []byte) error {
+// writeDefinition writes a service definition file. User services' files
+// are only written by that user.
+func writeDefinition(t Target, path string, data []byte) error {
+	if t.Scope == User && os.Geteuid() == 0 {
+		return errUserFilesAsRoot
+	}
+	return writeAtomic(path, bytes.NewReader(data), 0o644)
+}
+
+// writeAtomic writes path through a temp file in the same directory and a
+// rename, so it replaces a symlink at path rather than writing where it
+// points, and readers never see a partial file.
+func writeAtomic(path string, r io.Reader, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
 		return err
 	}
-	if t.Scope == User {
-		chownTo(t.User, filepath.Dir(path), path)
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, r); err != nil {
+		tmp.Close()
+		return err
 	}
-	return nil
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
-func chownTo(u *user.User, paths ...string) {
-	if u == nil || os.Geteuid() != 0 {
-		return
+// rootPath is where commands are looked up when running as root, instead
+// of an inherited $PATH.
+const rootPath = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+// command is exec.Command, but as root it only runs programs from
+// rootPath and passes that PATH on.
+func command(name string, args ...string) *exec.Cmd {
+	if os.Geteuid() != 0 || filepath.IsAbs(name) {
+		return exec.Command(name, args...)
 	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
-	for _, p := range paths {
-		_ = os.Lchown(p, uid, gid)
+	cmd := exec.Command(rootLookPath(name), args...)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PATH=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
 	}
+	cmd.Env = append(cmd.Env, "PATH="+rootPath)
+	return cmd
+}
+
+// rootLookPath finds name in rootPath. A missing program yields a path
+// that doesn't exist, so running it fails instead of searching $PATH.
+func rootLookPath(name string) string {
+	dirs := filepath.SplitList(rootPath)
+	for _, dir := range dirs {
+		p := filepath.Join(dir, name)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return filepath.Join(dirs[0], name)
 }
 
 func run(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
+	out, err := command(name, args...).CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
 		if s == "" {

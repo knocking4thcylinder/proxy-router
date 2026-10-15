@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
-// Protocols that never carry user traffic to a remote server.
+// Protocols that never carry user traffic to a remote server ("direct"
+// and "block" are Xray's aliases).
 var helperProtocols = map[string]bool{
 	"freedom": true, "blackhole": true, "dns": true, "loopback": true,
+	"direct": true, "block": true,
 }
 
 // ParseXrayJSON parses an Xray JSON config, or an array of them (the format
@@ -62,10 +64,13 @@ func serverFromConfig(cfg map[string]any) (*Server, error) {
 			byTag[tag] = ob
 		}
 		proto, _ := ob["protocol"].(string)
-		if tag == "proxy" || (main == nil && !helperProtocols[proto]) {
-			if main == nil || tag == "proxy" {
-				main = ob
-			}
+		switch {
+		case tag == "proxy" && helperProtocols[proto]:
+			// Would send the user's traffic straight out (or nowhere)
+			// while looking connected.
+			return nil, fmt.Errorf("the \"proxy\" outbound is %s, which doesn't go through a server", proto)
+		case tag == "proxy", main == nil && !helperProtocols[proto]:
+			main = ob
 		}
 	}
 	if main == nil {
@@ -96,10 +101,11 @@ func serverFromConfig(cfg map[string]any) (*Server, error) {
 		queue = append(queue, dependencies(dep)...)
 	}
 
-	var warnings []string
-	for _, ob := range append([]map[string]any{main}, chain...) {
-		warnings = append(warnings, sanitizeOutbound(ob)...)
+	obs, warnings, err := sanitizeAll(append([]map[string]any{main}, chain...), 1)
+	if err != nil {
+		return nil, err
 	}
+	main, chain = obs[0], obs[1:]
 
 	s := &Server{Protocol: main["protocol"].(string)}
 	s.Name, _ = cfg["remarks"].(string)
@@ -107,7 +113,6 @@ func serverFromConfig(cfg map[string]any) (*Server, error) {
 	if s.Name == "" {
 		s.Name = fmt.Sprintf("%s:%d", s.Address, s.Port)
 	}
-	var err error
 	if s.Outbound, err = json.Marshal(main); err != nil {
 		return nil, err
 	}
@@ -222,10 +227,12 @@ func poolFromConfig(cfg map[string]any) (*Server, error) {
 		queue = append(queue, dependencies(dep)...)
 	}
 
-	s := &Server{Pool: &Pool{Selector: selector}}
-	for _, ob := range append(append([]map[string]any{}, members...), chain...) {
-		s.Warnings = append(s.Warnings, sanitizeOutbound(ob)...)
+	obs, warnings, err := sanitizeAll(append(append([]map[string]any{}, members...), chain...), len(members))
+	if err != nil {
+		return nil, err
 	}
+	members, chain = obs[:len(members)], obs[len(members):]
+	s := &Server{Pool: &Pool{Selector: selector}, Warnings: warnings}
 	for _, m := range members {
 		raw, err := json.Marshal(m)
 		if err != nil {
@@ -240,11 +247,13 @@ func poolFromConfig(cfg map[string]any) (*Server, error) {
 		}
 		s.Chain = append(s.Chain, raw)
 	}
-	if st, ok := balancer["strategy"]; ok {
+	if st := sanitizeStrategy(balancer["strategy"]); st != nil {
 		s.Pool.Strategy, _ = json.Marshal(st)
 	}
-	if bo, ok := cfg["burstObservatory"].(map[string]any); ok && bo["pingConfig"] != nil {
-		s.Pool.Probe, _ = json.Marshal(bo["pingConfig"])
+	if bo, ok := cfg["burstObservatory"].(map[string]any); ok {
+		if pc, ok := bo["pingConfig"].(map[string]any); ok {
+			s.Pool.Probe, _ = json.Marshal(SanitizeProbe(pc))
+		}
 	}
 	s.Outbound = s.Pool.Members[0]
 	s.Protocol, _ = members[0]["protocol"].(string)
@@ -273,14 +282,30 @@ func asList(v any) []any {
 	return nil
 }
 
+// dialers returns the sockopt objects whose dialerProxy routes an
+// outbound's connections: its own and XHTTP's download connection's
+// (which, before sanitizing, may still be inside "extra").
+func dialers(ob map[string]any) []map[string]any {
+	ss, _ := ob["streamSettings"].(map[string]any)
+	streams := []map[string]any{ss}
+	for _, key := range []string{"xhttpSettings", "splithttpSettings"} {
+		streams = append(streams, child(ss, key, "downloadSettings"), child(ss, key, "extra", "downloadSettings"))
+	}
+	var out []map[string]any
+	for _, s := range streams {
+		if so, ok := s["sockopt"].(map[string]any); ok {
+			out = append(out, so)
+		}
+	}
+	return out
+}
+
 // dependencies returns tags an outbound routes its own traffic through.
 func dependencies(ob map[string]any) []string {
 	var tags []string
-	if ss, ok := ob["streamSettings"].(map[string]any); ok {
-		if so, ok := ss["sockopt"].(map[string]any); ok {
-			if t, _ := so["dialerProxy"].(string); t != "" {
-				tags = append(tags, t)
-			}
+	for _, so := range dialers(ob) {
+		if t, _ := so["dialerProxy"].(string); t != "" {
+			tags = append(tags, t)
 		}
 	}
 	if ps, ok := ob["proxySettings"].(map[string]any); ok {
@@ -293,11 +318,9 @@ func dependencies(ob map[string]any) []string {
 
 // renameDependencies rewrites dependency tags in place using rename.
 func renameDependencies(ob map[string]any, rename func(string) string) {
-	if ss, ok := ob["streamSettings"].(map[string]any); ok {
-		if so, ok := ss["sockopt"].(map[string]any); ok {
-			if t, _ := so["dialerProxy"].(string); t != "" {
-				so["dialerProxy"] = rename(t)
-			}
+	for _, so := range dialers(ob) {
+		if t, _ := so["dialerProxy"].(string); t != "" {
+			so["dialerProxy"] = rename(t)
 		}
 	}
 	if ps, ok := ob["proxySettings"].(map[string]any); ok {
@@ -307,20 +330,22 @@ func renameDependencies(ob map[string]any, rename func(string) string) {
 	}
 }
 
-// sanitizeOutbound removes options the embedded Xray no longer accepts.
-func sanitizeOutbound(ob map[string]any) []string {
-	var warnings []string
-	if ss, ok := ob["streamSettings"].(map[string]any); ok {
-		if tls, ok := ss["tlsSettings"].(map[string]any); ok {
-			if v, ok := tls["allowInsecure"]; ok {
-				delete(tls, "allowInsecure")
-				if v == true {
-					warnings = append(warnings, "allowInsecure is no longer supported by Xray; certificate will be verified")
-				}
-			}
-		}
+// sanitizeStrategy keeps a balancer strategy Xray knows, with its tuning
+// numbers.
+func sanitizeStrategy(v any) map[string]any {
+	st, _ := v.(map[string]any)
+	t, _ := st["type"].(string)
+	switch t {
+	case "random", "roundRobin", "leastPing", "leastLoad":
+	default:
+		return nil
 	}
-	return warnings
+	out := map[string]any{"type": t}
+	if settings, ok := st["settings"].(map[string]any); ok {
+		clean, _ := object(fieldsOf("expected", "maxRTT", "tolerance", "baselines"))(&cleaner{}, "", settings)
+		out["settings"] = clean
+	}
+	return out
 }
 
 // endpoint extracts the server address for display purposes.

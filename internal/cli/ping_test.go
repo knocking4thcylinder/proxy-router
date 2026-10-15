@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,7 +31,7 @@ func TestPingPrintsResultsWhileOtherProbesArePending(t *testing.T) {
 	}()
 	entries := make([]config.Entry, 2)
 	for i, name := range []string{"fast", "slow"} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addr := connectProxy(t, func(w http.ResponseWriter, r *http.Request) {
 			if name == "slow" {
 				select {
 				case <-release:
@@ -41,10 +40,12 @@ func TestPingPrintsResultsWhileOtherProbesArePending(t *testing.T) {
 				}
 			}
 			w.WriteHeader(http.StatusNoContent)
-		}))
-		t.Cleanup(srv.Close)
-		entries[i] = config.Entry{Index: i + 1, Server: &share.Server{Name: name, Outbound: json.RawMessage(fmt.Sprintf(
-			`{"protocol":"freedom","settings":{"redirect":%q}}`, strings.TrimPrefix(srv.URL, "http://")))}}
+		})
+		s, err := share.ParseLink("http://" + addr + "#" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[i] = config.Entry{Index: i + 1, Server: s}
 	}
 	reader, writer := io.Pipe()
 	defer reader.Close()
@@ -155,4 +156,32 @@ func TestPingTerminalProgressStaysOnOneLine(t *testing.T) {
 	if !strings.Contains(out.String(), "#8 fast server | 176ms") {
 		t.Fatalf("result was not printed on a single line: %q", out.String())
 	}
+}
+
+// connectProxy starts an HTTP proxy that answers every request tunnelled
+// through it with serve, whatever the destination, and returns its
+// host:port. (Xray's http outbound always tunnels with CONNECT.)
+func connectProxy(t *testing.T, serve http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
+			return
+		}
+		conn, rw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprint(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
+		req, err := http.ReadRequest(rw.Reader)
+		if err != nil {
+			return
+		}
+		rec := httptest.NewRecorder()
+		serve(rec, req.WithContext(r.Context()))
+		_ = rec.Result().Write(conn)
+	}))
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(srv.URL, "http://")
 }

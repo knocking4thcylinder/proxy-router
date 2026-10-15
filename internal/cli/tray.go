@@ -48,11 +48,7 @@ menu. --foreground keeps it attached to the terminal instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if allow {
-				dir, err := configDir()
-				if err != nil {
-					return err
-				}
-				return allowSudo(dir)
+				return allowSudo()
 			}
 			if os.Geteuid() == 0 {
 				return errors.New("run the tray as your user, not root; it asks for your password when TUN mode needs it")
@@ -104,11 +100,12 @@ menu. --foreground keeps it attached to the terminal instead.`,
 // tray.log. The caller holds the tray lock, which is handed over.
 func detachTray(exe, dir string) error {
 	logName := filepath.Join(dir, "tray.log")
-	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
 	defer logf.Close()
+	_ = logf.Chmod(0o600)
 	cmd := exec.Command(exe, "--dir", dir, "tray", "--foreground")
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -407,10 +404,10 @@ func (t *tray) build(m trayModel) {
 		if e, err := load(); err == nil {
 			path = e.cfg.RulesPath()
 		}
-		openPath(path)
+		openText(path)
 	})
-	t.onClick(systray.AddMenuItem("Show Log", ""), false, func() { openPath(logPath(t.dir)) })
-	t.onClick(systray.AddMenuItem("Open Config Folder", ""), false, func() { openPath(t.dir) })
+	t.onClick(systray.AddMenuItem("Show Log", ""), false, func() { openText(logPath(t.dir)) })
+	t.onClick(systray.AddMenuItem("Open Config Folder", ""), false, func() { openFolder(t.dir) })
 	systray.AddSeparator()
 	t.onClick(systray.AddMenuItemCheckbox("Start Tray at Login", "", m.autostart), false, func() {
 		if err := setTrayAutostart(!m.autostart, t.exe, t.dir); err != nil {
@@ -459,8 +456,9 @@ func (t *tray) selectServer(group, name string) {
 	t.poke()
 }
 
-// run runs proxy-router with args in the background (as root when asked,
-// see runElevated), showing what's happening in the menu.
+// run runs proxy-router with args in the background, showing what's
+// happening in the menu. root says it may ask for the password (in the
+// system's dialog); dismissing that isn't an error.
 func (t *tray) run(what string, root bool, args ...string) {
 	t.mu.Lock()
 	if t.busy != "" {
@@ -477,13 +475,18 @@ func (t *tray) run(what string, root bool, args ...string) {
 			t.mu.Unlock()
 			t.poke()
 		}()
-		var out bytes.Buffer
-		var err error
-		if root {
-			err = t.runElevated(args, &out)
-		} else {
-			err = runOut(exec.Command(t.exe, append([]string{"--dir", t.dir}, args...)...), &out)
+		// Commands run as the tray's user. Those that need root for part
+		// of their work ask for the password themselves, in the
+		// desktop's dialog, and only run that part as root.
+		argv := append([]string{t.exe, "--dir", t.dir}, args...)
+		switch args[0] {
+		case "start", "stop", "restart":
+			argv = append(argv, "--password-dialog")
 		}
+		cmd := exec.Command(argv[0], argv[1:]...)
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
 		if err != nil && root && authCanceled(err, out.String()) {
 			return
 		}
@@ -500,23 +503,6 @@ func (t *tray) run(what string, root bool, args ...string) {
 			notify("proxy-router", firstLine(out.String()))
 		}
 	}()
-}
-
-// runOut runs cmd with its output going to out.
-func runOut(cmd *exec.Cmd, out *bytes.Buffer) error {
-	cmd.Stdout, cmd.Stderr = out, out
-	return cmd.Run()
-}
-
-// elevationEnv makes a root process see the tray's user the way it would
-// under sudo, which is how proxy-router finds the user's files and
-// services.
-func (t *tray) elevationEnv() []string {
-	return []string{
-		"SUDO_UID=" + t.userT.User.Uid,
-		"SUDO_GID=" + t.userT.User.Gid,
-		"SUDO_USER=" + t.userT.User.Username,
-	}
 }
 
 func setTrayIcon(name string) {

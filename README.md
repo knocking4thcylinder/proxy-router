@@ -91,15 +91,18 @@ command you type only controls it.
 
 - **Mode:** `--tun` / `--no-tun`, else the mode of the installed service,
   else `tun.enabled` in `config.yaml`. TUN mode needs root, so `start` (and
-  `stop`, `restart`) run themselves with sudo when needed. Switching modes
-  replaces the old service.
+  `stop`, `restart`) ask for sudo for the system service's part; the user
+  service is always handled as you. Switching modes replaces the old
+  service. See [packaging/README.md](packaging/README.md) for what runs as
+  root.
 - **Changes apply live:** `use`, `sub update`, and edits to `config.yaml` or
   the rules file. The service watches its files the same way `run` does.
 - **After rebuilding proxy-router**, run `proxy-router restart`. The service
   runs its own copy of the binary (in `~/Library/Application Support/proxy-router/`,
   `/Library/Application Support/proxy-router/`, `~/.local/share/proxy-router/`
   or `/var/lib/proxy-router/`), so a rebuild doesn't affect it until then.
-  `status` notes when the copy is out of date.
+  `status` notes when the copy is out of date. `start` doesn't update an
+  installed TUN service's copy; only `restart` does.
 - **At boot or login, TUN mode waits** for a network connection, and for
   another VPN to disconnect, instead of failing. `status` shows what it's
   waiting for.
@@ -130,11 +133,11 @@ network, and grey when disconnected. Its menu:
   (polkit on Linux, the standard macOS prompt) instead of sudo. On macOS
   that's once: the dialog also adds a sudoers rule
   (`/etc/sudoers.d/proxy-router`) so connecting and disconnecting TUN mode
-  don't ask again. It allows only `start --tun` and `stop`, run by the
-  service's own root-owned copy of proxy-router, so switching modes,
-  updating the service, and the first connect after rebuilding
-  proxy-router still ask. Switching to proxy mode and `uninstall` remove
-  the rule.
+  don't ask again. It allows only the root part of those two (`start
+  --tun` and `stop --system`, for your user and config folder), run by
+  the service's own root-owned copy of proxy-router, so switching modes
+  and updating the service to a new build still ask. Switching to proxy
+  mode and `uninstall` remove the rule.
 - **Servers**: pick a server (grouped by subscription), use the fastest,
   update subscriptions
 - **Edit Routing Rules**, **Show Log**, **Open Config Folder**
@@ -178,7 +181,8 @@ Quitting the tray leaves the service running.
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
-any unique part of the name.
+any unique part of the name. After `group/`, only that group's servers
+match, so another subscription can't take over the name.
 
 `ping` prints each result as it finishes, with an animated progress counter
 and elapsed time in a terminal. The final table is sorted fastest first;
@@ -247,7 +251,8 @@ An optional `dns:` section in Xray's format is passed through unchanged.
 ## Files
 
 Everything is in `~/.config/proxy-router/` (override with `--dir` or
-`$PROXY_ROUTER_HOME`):
+`$PROXY_ROUTER_HOME`, which is ignored under sudo). Root only uses it if
+it's yours and nobody else can write to it or the directories above it:
 
 - `config.yaml`: listen addresses, interface binding, log level, update interval, User-Agent, geo URLs, ping URL
 - `routing.yaml`: routing rules
@@ -351,12 +356,91 @@ sudo proxy-router run --tun      # or in the foreground
 
 This captures all system traffic, so apps don't need proxy settings.
 proxy-router creates a `utunN` interface and points `0.0.0.0/1` +
-`128.0.0.0/1` at it (`::/1` + `8000::/1` with `tun.ipv6: true`). These beat
-the default route without replacing it, so anything more specific keeps
-working as before: your LAN, and Tailscale's peers and `100.64.0.0/10`.
-proxy-router's own connections are pinned to the physical interface, so
-they can't loop back into the TUN. The routes are removed on exit (and
-disappear with the interface anyway).
+`128.0.0.0/1` at it. These beat the default route without replacing it, so
+anything more specific keeps working as before: your LAN, and Tailscale's
+peers and `100.64.0.0/10`. proxy-router's own connections are pinned to the
+physical interface, so they can't loop back into the TUN. The routes are
+removed on exit (and disappear with the interface anyway).
+
+IPv6 is always taken over too (`::/1` + `8000::/1`). With `tun.ipv6: true`
+it goes through the proxy; otherwise (the default) those routes reject it,
+so apps fall back to IPv4 at once instead of leaking around the proxy.
+Without IPv6 on the machine there's nothing to take over, and that's fine.
+
+proxy-router only touches routes it owns. If another VPN already has the
+split routes, TUN mode refuses to start instead of replacing them (on Linux
+its routes are tagged `proto 112`).
+
+```yaml
+tun:
+  ipv6: false        # true: proxy IPv6 too; false: block it
+  kill_switch: true  # block traffic outside the TUN, see below
+```
+
+### DNS
+
+System DNS is pointed into the TUN, where proxy-router answers it:
+
+- **Linux with systemd-resolved** (`/etc/resolv.conf` →
+  `127.0.0.53`): the TUN becomes resolved's DNS route for every name
+  (`resolvectl dns/domain ~./default-route`), reverted on exit. Names with
+  a more specific route keep theirs: Tailscale's tailnet, a LAN search
+  domain like `lan`.
+- **Linux without it** (a static `/etc/resolv.conf`): the kill switch
+  redirects DNS bound for a local resolver into the TUN. With the kill
+  switch off, proxy-router warns that those queries leak.
+- **macOS:** the primary network service's DNS servers are overridden in
+  the dynamic store (not saved to disk), kept in place when DHCP or the
+  network changes, and restored on exit.
+
+The resolver address is `198.18.0.53`, which only exists inside the TUN.
+
+### Kill switch
+
+`tun.kill_switch` (on by default) is a firewall policy that blocks traffic
+leaving outside the TUN: an nftables table `inet proxy_router` on Linux, a
+pf anchor `com.apple/proxy-router` on macOS. It lets through:
+
+- loopback and the TUN itself;
+- proxy-router's own connections (on Linux they carry socket mark
+  `0x7072`; pf has no marks, so on macOS it's anything run by root);
+- `system_route` addresses (Tailscale, including MagicDNS's DNS);
+- the LAN, link-local, multicast and broadcast, and DHCP and IPv6
+  neighbour discovery;
+
+and rejects DNS (port 53 and 853) to anything else, LAN resolvers
+included. A LAN-only name (`printer.lan`) then only resolves if you add the
+router's address to `system_route`.
+
+It's on from the moment the TUN comes up, and **it stays on when the
+service exits**: while it restarts after a crash or a config error, and
+during `proxy-router restart`, nothing leaks; traffic just stops. A
+foreground `run --tun` removes it when you stop it.
+
+**If the network is stuck** (the service keeps failing, or you stopped it
+with `systemctl`/`launchctl` directly):
+
+```sh
+sudo proxy-router stop     # stops the service and removes the kill switch
+```
+
+`stop`, `uninstall` and switching to proxy mode always remove it. It isn't
+saved anywhere, so a reboot also clears it, but the service puts it back
+once TUN mode is up. By hand: `sudo nft delete table inet proxy_router`
+(Linux) or `sudo pfctl -a com.apple/proxy-router -F all` (macOS). Set
+`tun.kill_switch: false` to turn it off. pf stays enabled once proxy-router
+enabled it; with only macOS's own rules that changes nothing.
+
+Not covered: traffic before the service first brings the TUN up after a
+boot, and traffic forwarded for containers or VMs (only this machine's own
+traffic is filtered).
+
+On Linux, TUN mode needs `CAP_NET_ADMIN` (the TUN device, routes,
+nftables, socket marks, binding to the interface), netlink and
+`AF_INET`/`AF_INET6`/`AF_UNIX` sockets, `/dev/net/tun`, and D-Bus or
+varlink access to systemd-resolved. Network tools (`ip`, `nft`,
+`resolvectl`; `route`, `pfctl`, `scutil`, `netstat` on macOS) are run from
+the system directories, never from `$PATH`.
 
 On Linux, tailscaled's own encrypted traffic to its peers also follows these
 routes, so it goes through the proxy. Tailnet addresses still work, but
@@ -372,9 +456,9 @@ How it works:
   or resource busy".) If the main instance can't be restored after a
   failed reload, `run` exits rather than staying up with nothing behind it.
 - **DNS is answered by proxy-router.** Queries apps send through the TUN
-  (to whatever resolver the system uses) are answered from Xray's cached
-  resolver: DNS-over-HTTPS through the tunnel. Tailscale names (`*.ts.net`)
-  go to the system resolver.
+  (to `198.18.0.53`, see above, or any other resolver) are answered from
+  Xray's cached resolver: DNS-over-HTTPS through the tunnel. Tailscale
+  names (`*.ts.net`) go to the system resolver.
 - **Server names never depend on the tunnel.** Server hostnames are
   resolved before the TUN starts and written into the config as IPs. If that
   fails, Xray resolves them with DoH sent *outside* the tunnel, pinned to
@@ -429,6 +513,12 @@ when a port is taken and by which process.
 - Xray removed `allowInsecure`. Links that set it are imported with
   certificate verification on, and you get a warning. Use `pcs=`
   (pinned cert SHA-256) or `vcn=` links instead.
+- Servers from subscriptions are rebuilt from known-safe Xray options
+  only. Local certificate files, socket marks and interfaces, kernel
+  WireGuard, VLESS reverse and server-only options are dropped (`list -v`
+  shows what), and a provider can't make the selected server a direct or
+  blocking outbound. Provider health checks must use https and can't make
+  direct requests.
 - Subscriptions are fetched as Happ (`Happ/3.24.1`) by default. Change it
   with `user_agent` in `config.yaml` or `sub add --user-agent`. Panels with
   device limits need `--hwid`.

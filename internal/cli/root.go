@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
+	"github.com/knocking4thcylinder/proxy-router/internal/service"
 )
 
 // Version can be set with -ldflags "-X .../internal/cli.Version=v1.2.3";
@@ -54,7 +56,7 @@ func version() string {
 	return "dev-" + rev + dirty
 }
 
-var flagDir string
+var flagDir, flagUID string
 
 // Execute runs the CLI.
 func Execute() error {
@@ -80,8 +82,17 @@ runs it in the foreground instead.`,
 		Version:       version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			config.SetTargetUID(flagUID)
+			_, err := config.TargetUser()
+			return err
+		},
 	}
 	root.PersistentFlags().StringVar(&flagDir, "dir", "", "config directory (default ~/.config/proxy-router, or $PROXY_ROUTER_HOME)")
+	// Set when proxy-router runs itself as root, and in the TUN service's
+	// unit: whose files and services root works with.
+	root.PersistentFlags().StringVar(&flagUID, "uid", "", "as root: the user to work for (default: the one sudo or pkexec reports)")
+	_ = root.PersistentFlags().MarkHidden("uid")
 	root.AddCommand(
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
@@ -102,12 +113,18 @@ type env struct {
 	state *config.State
 }
 
-// configDir is --dir, or the default config directory.
+// configDir is --dir, or the default config directory. As root it has to
+// pass config.CheckDir.
 func configDir() (string, error) {
+	get := config.Dir
 	if flagDir != "" {
-		return filepath.Abs(flagDir)
+		get = func() (string, error) { return filepath.Abs(flagDir) }
 	}
-	return config.Dir()
+	dir, err := get()
+	if err != nil {
+		return "", err
+	}
+	return config.CheckDir(dir)
 }
 
 func load() (*env, error) {
@@ -115,9 +132,11 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.SetOwnerFromDir(dir)
-	if err := ensureFiles(dir, false); err != nil {
-		return nil, err
+	// The TUN service runs on the user's files but never writes to them.
+	if !config.Confined() {
+		if err := ensureFiles(dir, false); err != nil {
+			return nil, err
+		}
 	}
 	cfg, err := config.Load(dir)
 	if err != nil {
@@ -127,13 +146,16 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
+	if config.Confined() {
+		applyRefreshed(state)
+	}
 	engine.SetAssetDir(cfg.AssetDir())
 	return &env{cfg: cfg, state: state}, nil
 }
 
 // ensureFiles writes default config.yaml / routing.yaml if missing.
 func ensureFiles(dir string, force bool) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	config.GiveBack(dir)
@@ -147,7 +169,7 @@ func ensureFiles(dir string, force bool) error {
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := config.WriteFileAtomic(path, []byte(content), 0o644); err != nil {
+		if err := config.WriteFileAtomic(path, []byte(content), 0o600); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "created %s\n", path)
@@ -177,6 +199,31 @@ func initCmd() *cobra.Command {
 	return cmd
 }
 
+// confineRoot puts a proxy-router running as root (the TUN service, or
+// "sudo proxy-router run") in config.Confine's read-only mode. dir belongs
+// to the user root works for (config.TargetUser: the service's --uid,
+// recorded at install time, or the sudo/pkexec user), otherwise to root.
+func confineRoot(dir string) error {
+	uid := 0
+	u, err := config.TargetUser()
+	if err != nil {
+		return err
+	}
+	if u != nil {
+		if uid, err = strconv.Atoi(u.Uid); err != nil {
+			return fmt.Errorf("bad uid %q", u.Uid)
+		}
+	}
+	config.Confine(dir, uid, filepath.Join(systemStateDir(), "assets"))
+	return nil
+}
+
+// systemStateDir is the root-owned directory holding the TUN service's
+// binary and geo files (the unit's StateDirectory on Linux).
+func systemStateDir() string {
+	return filepath.Dir(service.BinaryPath(service.Target{Scope: service.System}))
+}
+
 // outboundInterface resolves bind_interface. With "auto" it returns the
 // physical interface when another VPN's tunnel owns the default route, and
 // a human readable note explaining the choice.
@@ -186,29 +233,62 @@ func (e *env) outboundInterface() (iface, note string) {
 		return "", ""
 	case "auto":
 		d, err := netif.Detect()
-		if err != nil || d.Tunnel == "" {
+		if err != nil {
 			return "", ""
 		}
-		if d.Physical == "" {
-			return "", fmt.Sprintf("another VPN (%s) owns the default route and no physical interface was found; connections will go through it", d.Tunnel)
-		}
-		return d.Physical, fmt.Sprintf("another VPN (%s) owns the default route; bypassing it via %s", d.Tunnel, d.Physical)
+		return bypass(d, e.ownTUN())
 	default:
 		return v, ""
 	}
 }
 
+// bypass is outboundInterface's "auto" choice for the default route
+// detected in d. own is the TUN of a running proxy-router in TUN mode: not
+// another VPN, so connections go through it like everything else. Going
+// around it would leave the tunnel, and its kill switch rejects that.
+func bypass(d netif.Detection, own string) (iface, note string) {
+	switch {
+	case d.Tunnel == "":
+		return "", ""
+	case d.Tunnel == own:
+		return "", fmt.Sprintf("TUN mode is on (%s); connections go through it, and so through the server it uses", own)
+	case d.Physical == "":
+		return "", fmt.Sprintf("another VPN (%s) owns the default route and no physical interface was found; connections will go through it", d.Tunnel)
+	}
+	return d.Physical, fmt.Sprintf("another VPN (%s) owns the default route; bypassing it via %s", d.Tunnel, d.Physical)
+}
+
+// ownTUN is the TUN interface of a running proxy-router in TUN mode (the
+// service, or "run --tun"), or "".
+func (e *env) ownTUN() string {
+	if st, ok := readRunStatus(e.cfg.Dir()); ok && st.Mode == "tun" {
+		return st.TUN
+	}
+	return ""
+}
+
 // resolveTTL is how long pinned server addresses are trusted.
 const resolveTTL = 10 * time.Minute
 
-var processResolver engine.Resolver
+var processResolvers = map[string]engine.Resolver{}
 
-// resolver returns one caching resolver per process, so reloads reuse it.
-func (e *env) resolver() engine.Resolver {
-	if processResolver == nil {
-		processResolver = engine.CachingResolver(e.cfg.PreferredIP, resolveTTL)
+// resolver returns one caching resolver per process (and interface and
+// settings), so reloads reuse it. Server names are looked up with DoH
+// outside the tunnel, from iface like the direct outbound, with the TUN
+// kill switch's socket mark (0 outside TUN mode); the system resolver, in
+// plain DNS, is only a fallback that can be turned off.
+func (e *env) resolver(iface string, mark int) engine.Resolver {
+	key := fmt.Sprintf("%s/%d/%s/%t", iface, mark, e.cfg.PreferredIP, e.cfg.SystemDNSFallback)
+	if r := processResolvers[key]; r != nil {
+		return r
 	}
-	return processResolver
+	lookup := engine.DoHLookup(config.DirectDoH, iface, mark)
+	if e.cfg.SystemDNSFallback {
+		lookup = engine.OrElse(lookup, engine.SystemLookup)
+	}
+	r := engine.CachingResolver(e.cfg.PreferredIP, resolveTTL, lookup)
+	processResolvers[key] = r
+	return r
 }
 
 func ago(t time.Time) string {

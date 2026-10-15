@@ -4,14 +4,18 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -19,7 +23,18 @@ import (
 
 // Dir returns the directory holding all proxy-router files.
 // $PROXY_ROUTER_HOME overrides the default (~/.config/proxy-router).
+//
+// As root it's always ~/.config/proxy-router of the user root works for
+// (TargetUser): the environment may have come from that user (sudo -E,
+// sudoers env_keep), so it isn't trusted. Pass --dir for anything else.
 func Dir() (string, error) {
+	if os.Geteuid() == 0 {
+		u, err := rootUser()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(u.HomeDir, ".config", "proxy-router"), nil
+	}
 	if d := os.Getenv("PROXY_ROUTER_HOME"); d != "" {
 		return d, nil
 	}
@@ -37,10 +52,6 @@ func Dir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Under sudo (TUN mode) keep using the invoking user's files.
-	if u := sudoUser(); u != nil {
-		home = u.HomeDir
-	}
 	return filepath.Join(home, ".config", "proxy-router"), nil
 }
 
@@ -49,6 +60,11 @@ type Config struct {
 	Listen struct {
 		Socks string `yaml:"socks"`
 		HTTP  string `yaml:"http"`
+		// Login required by both, if set. Listening beyond loopback needs
+		// one, or AllowOpen.
+		User      string `yaml:"user"`
+		Password  string `yaml:"password"`
+		AllowOpen bool   `yaml:"allow_open"`
 	} `yaml:"listen"`
 	// Path to the routing rules file, relative to the config directory.
 	Rules string `yaml:"rules"`
@@ -86,6 +102,10 @@ type Config struct {
 	// subscription, YouTube failed through every server until this was on.
 	ResolveLocally bool `yaml:"resolve_locally"`
 
+	// Look server hostnames up with the system resolver (plain DNS) when
+	// DNS-over-HTTPS to DirectDoH fails.
+	SystemDNSFallback bool `yaml:"system_dns_fallback"`
+
 	// Happ's advanced settings.
 	Fragment    Fragment `yaml:"fragment"`
 	Noises      Noises   `yaml:"noises"`
@@ -93,7 +113,8 @@ type Config struct {
 	PreferredIP string   `yaml:"preferred_ip"` // auto, ipv4, ipv6, ipv4v6, ipv6v4
 	TUN         TUN      `yaml:"tun"`
 
-	dir string
+	dir      string
+	assetDir string
 }
 
 func defaults() *Config {
@@ -114,7 +135,9 @@ func defaults() *Config {
 	c.Mux = Mux{Concurrency: 8, XUDPConcurrency: 16, XUDPProxyUDP443: "reject"}
 	c.PreferredIP = "ipv4"
 	c.ResolveLocally = true
+	c.SystemDNSFallback = true
 	c.TUN.MTU = 1500
+	c.TUN.KillSwitch = true
 	return c
 }
 
@@ -122,7 +145,10 @@ func defaults() *Config {
 func Load(dir string) (*Config, error) {
 	c := defaults()
 	c.dir = dir
-	data, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if confined.on {
+		c.assetDir = confined.assetDir
+	}
+	data, err := readFile(dir, "config.yaml", maxConfig)
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil
 	}
@@ -135,14 +161,28 @@ func Load(dir string) (*Config, error) {
 	if err := c.validateTweaks(); err != nil {
 		return nil, fmt.Errorf("config.yaml: %w", err)
 	}
+	if confined.on && (!filepath.IsLocal(c.Rules) || strings.HasPrefix(c.Rules, "~")) {
+		return nil, fmt.Errorf("config.yaml: rules: the TUN service only reads rules files inside %s, not %q", dir, c.Rules)
+	}
+	for _, e := range c.SystemRoute {
+		if err := checkGeoRef(e); err != nil {
+			return nil, fmt.Errorf("config.yaml: system_route: %w", err)
+		}
+	}
 	return c, nil
 }
 
 // Dir is the directory the config was loaded from.
 func (c *Config) Dir() string { return c.dir }
 
-// AssetDir holds geoip.dat / geosite.dat.
-func (c *Config) AssetDir() string { return filepath.Join(c.dir, "assets") }
+// AssetDir holds geoip.dat / geosite.dat: assets/ in the config
+// directory, or the root-owned one given to Confine.
+func (c *Config) AssetDir() string {
+	if c.assetDir != "" {
+		return c.assetDir
+	}
+	return filepath.Join(c.dir, "assets")
+}
 
 // RulesPath resolves the rules file path.
 func (c *Config) RulesPath() string { return c.resolve(c.Rules) }
@@ -166,8 +206,16 @@ func decodeStrict(data []byte, v any) error {
 	if errors.Is(err, io.EOF) {
 		return nil // empty file
 	}
+	if err != nil && confined.on {
+		// The service's log may be readable by others (adm, admin); don't
+		// copy values from the user's files into it.
+		err = errors.New(yamlSnippet.ReplaceAllString(err.Error(), "`...`"))
+	}
 	return err
 }
+
+// yamlSnippet matches the values yaml.v3 quotes in its errors.
+var yamlSnippet = regexp.MustCompile("`[^`]*`")
 
 // Duration is a time.Duration that reads "12h", "30m" or "0" from YAML.
 type Duration time.Duration
@@ -187,72 +235,134 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 
 func (d Duration) D() time.Duration { return time.Duration(d) }
 
-// sudoUser returns the user who ran sudo, when running as root via sudo.
+// sudoUser returns the user a process running as root works for (sudo,
+// pkexec, or --uid; see TargetUser), or nil.
 func sudoUser() *user.User {
-	if os.Geteuid() != 0 || os.Getenv("SUDO_UID") == "" {
-		return nil
-	}
-	u, err := user.LookupId(os.Getenv("SUDO_UID"))
-	if err != nil {
-		return nil
-	}
+	u, _ := TargetUser()
 	return u
 }
 
-// owner is who files written as root should belong to when there's no sudo
-// user: the owner of the config directory (the background service runs as
-// root with --dir pointing at the user's directory).
-var owner struct {
-	set      bool
-	uid, gid int
+// Size limits for files read by the root service.
+const (
+	maxConfig = 4 << 20
+	maxState  = 64 << 20
+)
+
+// confined is set by Confine.
+var confined confinement
+
+type confinement struct {
+	on            bool
+	dir, assetDir string
+	uid           int
 }
 
-// SetOwnerFromDir makes GiveBack hand files to dir's owner when running as
-// root outside sudo.
-func SetOwnerFromDir(dir string) {
-	if os.Geteuid() != 0 {
-		return
-	}
-	if st, ok := statOwner(dir); ok && st.uid != 0 {
-		owner.set, owner.uid, owner.gid = true, st.uid, st.gid
-	}
+// Confine puts this process, running as root, in the TUN service's mode:
+// config.yaml, the rules file and state.json are read from dir only
+// through readConfined (no symlinks, regular files owned by uid, size
+// capped), nothing is ever written there, and geo files live in assetDir,
+// a root-owned directory, instead of dir/assets.
+func Confine(dir string, uid int, assetDir string) {
+	confined.on, confined.dir, confined.uid, confined.assetDir = true, filepath.Clean(dir), uid, assetDir
 }
 
-// GiveBack hands a file created as root back to the user, so running as
-// root (sudo, or the TUN service) doesn't leave root-owned files behind.
+// Confined reports whether Confine was called.
+func Confined() bool { return confined.on }
+
+// readFile reads dir/name, through readConfined when confined.
+func readFile(dir, name string, max int64) ([]byte, error) {
+	if !confined.on {
+		return os.ReadFile(filepath.Join(dir, name))
+	}
+	if filepath.Clean(dir) != confined.dir {
+		return nil, fmt.Errorf("%s: the TUN service only reads files in %s", filepath.Join(dir, name), confined.dir)
+	}
+	return readConfined(dir, name, confined.uid, max)
+}
+
+// readPath is readFile for a path that has to be inside the confined
+// directory.
+func readPath(path string, max int64) ([]byte, error) {
+	if !confined.on {
+		return os.ReadFile(path)
+	}
+	rel, err := filepath.Rel(confined.dir, path)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("%s: the TUN service only reads files in %s", path, confined.dir)
+	}
+	return readConfined(confined.dir, rel, confined.uid, max)
+}
+
+// ReadUserFile reads a small file from the user's directory. As root it
+// goes through readConfined with the sudo user as the owner, and refuses
+// in the TUN service, which reads nothing there but its config.
+func ReadUserFile(dir, name string) ([]byte, error) {
+	const max = 1 << 20
+	switch {
+	case confined.on:
+		return nil, errors.New("the TUN service doesn't read " + name)
+	case os.Geteuid() != 0:
+		return os.ReadFile(filepath.Join(dir, name))
+	}
+	u := sudoUser()
+	if u == nil {
+		return readConfined(dir, name, 0, max)
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return nil, err
+	}
+	return readConfined(dir, name, uid, max)
+}
+
+// GiveBack hands a file or directory created as root under sudo back to
+// the user, so running as root doesn't leave root-owned files behind.
 func GiveBack(path string) {
-	if u := sudoUser(); u != nil {
-		uid, _ := strconv.Atoi(u.Uid)
-		gid, _ := strconv.Atoi(u.Gid)
-		_ = os.Lchown(path, uid, gid)
-		return
+	if o := giveBackTo(); o != nil {
+		_ = os.Lchown(path, o.uid, o.gid)
 	}
-	if owner.set && os.Geteuid() == 0 {
-		_ = os.Lchown(path, owner.uid, owner.gid)
+}
+
+type ids struct{ uid, gid int }
+
+// giveBackTo is who files written as root belong to: the sudo user, or
+// nobody (keep root's) in the TUN service, which only writes to its own
+// root-owned directories.
+func giveBackTo() *ids {
+	if confined.on {
+		return nil
 	}
+	u := sudoUser()
+	if u == nil {
+		return nil
+	}
+	uid, err1 := strconv.Atoi(u.Uid)
+	gid, err2 := strconv.Atoi(u.Gid)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	return &ids{uid, gid}
 }
 
 // WriteFileAtomic writes via a temp file so readers never see partial data.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	_, err := WriteReaderAtomic(path, bytes.NewReader(data), perm)
+	return err
+}
+
+// WriteReaderAtomic is WriteFileAtomic for data from r; it returns the
+// number of bytes written.
+func WriteReaderAtomic(path string, r io.Reader, perm os.FileMode) (int64, error) {
+	if confined.on {
+		if rel, err := filepath.Rel(confined.dir, path); err == nil && (rel == "." || filepath.IsLocal(rel)) {
+			return 0, fmt.Errorf("%s: the TUN service doesn't write to %s", path, confined.dir)
+		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	GiveBack(tmp.Name())
-	return os.Rename(tmp.Name(), path)
+	return writeAtomic(path, r, perm, giveBackTo())
+}
+
+func randomSuffix() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

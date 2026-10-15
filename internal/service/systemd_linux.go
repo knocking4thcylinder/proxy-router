@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // DefinitionPath is the systemd unit file.
@@ -39,13 +40,36 @@ func systemctl(t Target, args ...string) (string, error) {
 	return run("systemctl", args...)
 }
 
-// quote escapes one ExecStart argument.
+// quote escapes one ExecStart argument. Install rejects control
+// characters (Spec.Check); should one get here anyway it's written as a C
+// escape, never raw, so it can't start a new line of the unit.
 func quote(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\"'\\$%;") {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return strings.ContainsRune(" \t\"'\\$%;", r) || unicode.IsControl(r)
+	}) < 0 {
 		return s
 	}
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `$$`, `%`, `%%`)
-	return `"` + r.Replace(s) + `"`
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\' || r == '"':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '$':
+			b.WriteString("$$")
+		case r == '%':
+			b.WriteString("%%")
+		case unicode.IsControl(r) && r < 0x80:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.IsControl(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // Definition is the unit file Install writes for s.
@@ -54,10 +78,11 @@ func Definition(s Spec) []byte {
 	for _, a := range append([]string{s.Binary}, s.Args...) {
 		cmd = append(cmd, quote(a))
 	}
-	wantedBy, after := "default.target", ""
+	wantedBy, after, hardening := "default.target", "", ""
 	if s.Scope == System {
 		wantedBy = "multi-user.target"
 		after = "Wants=network-online.target\nAfter=network-online.target\n"
+		hardening = systemHardening
 	}
 	return []byte(fmt.Sprintf(`[Unit]
 Description=proxy-router
@@ -66,15 +91,55 @@ Description=proxy-router
 ExecStart=%s
 Restart=on-failure
 RestartSec=3
-
+%s
 [Install]
 WantedBy=%s
-`, after, strings.Join(cmd, " "), wantedBy))
+`, after, strings.Join(cmd, " "), hardening, wantedBy))
 }
+
+// systemHardening confines the root TUN service. It writes only to its
+// StateDirectory (/var/lib/proxy-router: binary, geo files) and
+// RuntimeDirectory (/run/proxy-router: status.json), logs to the journal
+// and reads the user's config read-only. Capabilities: NET_ADMIN for the
+// TUN device, routes and SO_MARK, NET_RAW for SO_BINDTODEVICE,
+// NET_BIND_SERVICE for low listen ports, and DAC_READ_SEARCH to read the
+// user's 0600 files in their 0700 home. No PrivateNetwork or
+// PrivateDevices: it has to manage the host's network and /dev/net/tun.
+const systemHardening = `StandardOutput=journal
+StandardError=journal
+StateDirectory=proxy-router
+StateDirectoryMode=0755
+RuntimeDirectory=proxy-router
+RuntimeDirectoryMode=0755
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+`
 
 // Install writes the unit, enables it at boot/login and (re)starts it.
 func Install(s Spec) error {
-	if err := writeOwned(s.Target, DefinitionPath(s.Target), Definition(s)); err != nil {
+	if err := s.Check(); err != nil {
+		return err
+	}
+	if err := writeDefinition(s.Target, DefinitionPath(s.Target), Definition(s)); err != nil {
 		return err
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", Unit}, {"restart", Unit}} {
@@ -97,6 +162,9 @@ func Stop(t Target) error {
 
 // Remove stops the service and deletes its files.
 func Remove(t Target) error {
+	if t.Scope == User && os.Geteuid() == 0 {
+		return errUserFilesAsRoot
+	}
 	if err := Stop(t); err != nil {
 		return err
 	}

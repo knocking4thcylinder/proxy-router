@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
+	"github.com/knocking4thcylinder/proxy-router/internal/service"
 	"github.com/knocking4thcylinder/proxy-router/internal/sysproxy"
 	"github.com/knocking4thcylinder/proxy-router/internal/tun"
 )
@@ -43,8 +45,9 @@ type runOptions struct {
 	// tunName is chosen once per run so reloads reuse the same interface.
 	tunName string
 	// tunListen is the main instance's loopback SOCKS address the TUN front
-	// forwards to.
+	// forwards to, and tunLogin the per-run login it uses there.
 	tunListen string
+	tunLogin  engine.Account
 }
 
 func runCmd() *cobra.Command {
@@ -104,21 +107,24 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 		return nil, nil, nil, err
 	}
 	var iface string
+	var mark int
 	if o.tunName != "" {
 		// Our own traffic must leave through the real uplink, or it would
 		// loop back into the TUN.
 		if iface, err = netif.Physical(o.tunName); err != nil {
 			return nil, nil, nil, err
 		}
+		mark = tun.SocketMark()
 	} else {
 		iface, _ = e.outboundInterface()
 	}
-	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: iface, TUNListen: o.tunListen}
+	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: iface,
+		TUNListen: o.tunListen, TUNAccount: o.tunLogin}
 	if iface != "" || e.cfg.ResolveLocally {
 		// Resolve server hostnames here: in TUN mode the system resolver may
 		// be routed into the TUN, and with resolve_locally Xray's DNS goes
 		// through the proxy, which can't help find the proxy itself.
-		plan.Resolve = e.resolver()
+		plan.Resolve = e.resolver(iface, mark)
 	}
 	if o.server != "" {
 		entry, err := e.state.Find(o.server)
@@ -133,6 +139,10 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 	xc, notes, err := engine.Build(plan)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if o.tunName != "" {
+		// The kill switch recognizes proxy-router's own connections by it.
+		engine.MarkSockets(xc, mark)
 	}
 	return e, xc, notes, nil
 }
@@ -196,10 +206,61 @@ func refreshStale(ctx context.Context) bool {
 	}
 	fmt.Fprintf(os.Stderr, "updating %d subscription(s)...\n", len(stale))
 	e.updateAll(ctx, stale)
-	if err := e.state.Save(); err != nil {
+	if config.Confined() {
+		keepRefreshed(e.state, stale)
+	} else if err := e.state.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
 	}
 	return true
+}
+
+// serviceSubs holds the subscriptions the TUN service refreshed. It
+// can't save them to the user's state.json, so it keeps them in memory
+// (as JSON, so later loads get their own copies) and load() lays them
+// over what it reads. Once the user's own commands save a newer refresh,
+// that wins; after a restart the service refreshes again.
+var serviceSubs struct {
+	sync.Mutex
+	subs map[string][]byte
+	hwid string
+}
+
+func keepRefreshed(s *config.State, subs []*config.Subscription) {
+	serviceSubs.Lock()
+	defer serviceSubs.Unlock()
+	if serviceSubs.subs == nil {
+		serviceSubs.subs = map[string][]byte{}
+	}
+	for _, sub := range subs {
+		if data, err := json.Marshal(sub); err == nil {
+			serviceSubs.subs[sub.Name] = data
+		}
+	}
+	// The HWID made up for the requests has to stay the same.
+	serviceSubs.hwid = s.HWID
+}
+
+// applyRefreshed replaces the servers of subscriptions in s with ones
+// keepRefreshed has from a later refresh of the same URL.
+func applyRefreshed(s *config.State) {
+	serviceSubs.Lock()
+	defer serviceSubs.Unlock()
+	for i, sub := range s.Subscriptions {
+		data, ok := serviceSubs.subs[sub.Name]
+		if !ok {
+			continue
+		}
+		var r config.Subscription
+		if json.Unmarshal(data, &r) != nil || r.URL != sub.URL || !r.UpdatedAt.After(sub.UpdatedAt) {
+			continue
+		}
+		c := *sub
+		c.Servers, c.Info, c.UpdatedAt, c.LastError = r.Servers, r.Info, r.UpdatedAt, r.LastError
+		s.Subscriptions[i] = &c
+	}
+	if s.HWID == "" {
+		s.HWID = serviceSubs.hwid
+	}
 }
 
 func run(ctx context.Context, o runOptions) error {
@@ -207,9 +268,17 @@ func run(ctx context.Context, o runOptions) error {
 	if err != nil {
 		return err
 	}
+	if os.Geteuid() == 0 {
+		// The unit records whose files the service reads (--uid).
+		if o.service && flagUID == "" {
+			return errors.New(`the TUN service was installed by an older proxy-router; reinstall it with "proxy-router restart"`)
+		}
+		if err := confineRoot(dir); err != nil {
+			return err
+		}
+	}
 	if o.service {
-		config.SetOwnerFromDir(dir)
-		if err := redirectOutput(logPath(dir)); err != nil {
+		if err := serviceOutput(dir); err != nil {
 			return err
 		}
 		fmt.Printf("\n=== proxy-router %s service starting, %s ===\n", version(), time.Now().Format(time.RFC3339))
@@ -225,7 +294,9 @@ func run(ctx context.Context, o runOptions) error {
 	}
 	defer removeRunStatus(dir)
 
-	var tunIPv6 bool
+	// tunOpts is what tun.Up last applied.
+	var tunOpts tun.Options
+	release := func() {}
 	if o.tun {
 		if err := tun.RequireRoot(); err != nil {
 			return err
@@ -237,15 +308,20 @@ func run(ctx context.Context, o runOptions) error {
 		if err != nil {
 			return err
 		}
-		tunIPv6 = e.cfg.TUN.IPv6
 		if o.tunName = e.cfg.TUN.Name; o.tunName == "" {
 			if o.tunName, err = tun.FreeName(); err != nil {
 				return err
 			}
 		}
-		if o.tunListen, err = freeLoopback(); err != nil {
+		// Hold the port until the main instance takes it, so no other
+		// program can grab it meanwhile and receive the TUN's traffic.
+		reserved, err := freeLoopback()
+		if err != nil {
 			return err
 		}
+		defer reserved.Close()
+		o.tunListen, o.tunLogin = reserved.Addr().String(), engine.NewAccount()
+		release = func() { reserved.Close() }
 	}
 	e, xc, notes, err := buildCurrentNotes(o)
 	if err != nil {
@@ -275,7 +351,7 @@ func run(ctx context.Context, o runOptions) error {
 	// created last owns them. They have to be the main instance's (its DNS
 	// settings, its chain helpers), so it also re-takes them on each reload.
 	if o.tunName != "" {
-		fc, err := engine.BuildTUNFront(o.tunName, e.cfg.TUN.MTU, o.tunListen)
+		fc, err := engine.BuildTUNFront(o.tunName, e.cfg.TUN.MTU, o.tunListen, o.tunLogin)
 		if err != nil {
 			return err
 		}
@@ -287,6 +363,7 @@ func run(ctx context.Context, o runOptions) error {
 	}
 
 	raw, _ := json.Marshal(xc)
+	release()
 	inst, err := start(xc)
 	if err != nil {
 		return err
@@ -297,10 +374,20 @@ func run(ctx context.Context, o runOptions) error {
 		if err := tun.WaitForInterface(o.tunName, 5*time.Second); err != nil {
 			return err
 		}
-		if err := tun.Up(o.tunName, tunIPv6); err != nil {
-			return err
+		tunOpts = tunOptions(e, o.tunName)
+		// The service keeps the kill switch when it exits: it's restarted
+		// (by systemd/launchd, or "proxy-router restart"), and when it's
+		// stopped, "proxy-router stop" removes it. In the foreground, the
+		// user is right there.
+		defer func() {
+			tun.Down(tunOpts, o.service)
+			if o.service && tunOpts.KillSwitch {
+				fmt.Println(`TUN: the kill switch stays on until the service is back; "sudo proxy-router stop" removes it`)
+			}
+		}()
+		if err := tun.Up(tunOpts); err != nil {
+			return fmt.Errorf("TUN: %w", err)
 		}
-		defer tun.Down(o.tunName, tunIPv6)
 	}
 
 	// fatal is set when the proxy couldn't be restored after a reload; run
@@ -363,6 +450,32 @@ func run(ctx context.Context, o runOptions) error {
 		go func() { refreshed <- refreshStale(ctx) }()
 	}
 
+	// Network settings drift without the files changing (DHCP rewriting
+	// DNS, systemd-resolved restarting); Sync puts them back.
+	var tunSync <-chan time.Time
+	if o.tunName != "" {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		tunSync = t.C
+	}
+	// syncTUN follows network and config changes: tun.ipv6, kill_switch
+	// and system_route apply without a restart.
+	syncTUN := func() {
+		if ne, err := load(); err == nil {
+			if next := tunOptions(ne, o.tunName); !next.Equal(tunOpts) {
+				if err := tun.Up(next); err != nil {
+					fmt.Fprintln(os.Stderr, "TUN:", err)
+				} else {
+					tunOpts = next
+					fmt.Printf("%s TUN settings applied\n", time.Now().Format(time.TimeOnly))
+				}
+			}
+		}
+		if err := tun.Sync(tunOpts); err != nil {
+			fmt.Fprintln(os.Stderr, "TUN:", err)
+		}
+	}
+
 	var updates <-chan time.Time
 	if iv := e.cfg.UpdateInterval.D(); iv > 0 && !o.noUpdate {
 		t := time.NewTicker(min(iv, time.Hour))
@@ -416,9 +529,7 @@ func run(ctx context.Context, o runOptions) error {
 			if now := snapshot(); now != stamps {
 				stamps = now
 				if o.tunName != "" {
-					if err := tun.Sync(o.tunName, tunIPv6); err != nil {
-						fmt.Fprintln(os.Stderr, "TUN:", err)
-					}
+					syncTUN()
 				}
 				reload("files or network changed")
 			}
@@ -426,6 +537,10 @@ func run(ctx context.Context, o runOptions) error {
 			if changed {
 				stamps = snapshot()
 				reload("subscriptions updated")
+			}
+		case <-tunSync:
+			if err := tun.Sync(tunOpts); err != nil {
+				fmt.Fprintln(os.Stderr, "TUN:", err)
 			}
 		case <-reresolve.C:
 			reload("server addresses changed")
@@ -439,18 +554,16 @@ func run(ctx context.Context, o runOptions) error {
 	return fatal
 }
 
-// checkPorts fails early, naming the culprit, if a listen address is taken
-// (Happ, v2rayN and friends default to the same 10808/10809).
-// freeLoopback returns an unused 127.0.0.1 TCP address.
-func freeLoopback() (string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", err
-	}
-	defer l.Close()
-	return l.Addr().String(), nil
+// freeLoopback reserves an unused 127.0.0.1 TCP port; close the listener
+// right before binding the port for real. Something could still take it in
+// between (or while a reload restarts the main instance), but then the
+// main instance fails to start and run exits, which stops the TUN.
+func freeLoopback() (net.Listener, error) {
+	return net.Listen("tcp", "127.0.0.1:0")
 }
 
+// checkPorts fails early, naming the culprit, if a listen address is taken
+// (Happ, v2rayN and friends default to the same 10808/10809).
 func checkPorts(cfg *config.Config) error {
 	for key, addr := range map[string]string{"socks": cfg.Listen.Socks, "http": cfg.Listen.HTTP} {
 		if addr == "" {
@@ -544,6 +657,16 @@ func geoCmd() *cobra.Command {
 		Short: "Download the latest geoip.dat and geosite.dat",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if os.Geteuid() == 0 {
+				// Root updates the TUN service's own copies.
+				dir, err := configDir()
+				if err != nil {
+					return err
+				}
+				if err := confineRoot(dir); err != nil {
+					return err
+				}
+			}
 			e, err := load()
 			if err != nil {
 				return err
@@ -556,6 +679,9 @@ func geoCmd() *cobra.Command {
 					continue
 				}
 				fmt.Printf("%s: %s\n", name, humanBytes(n))
+			}
+			if st, _ := service.Query(service.Target{Scope: service.System}); st.Installed && os.Geteuid() != 0 {
+				fmt.Println(`note: the TUN service keeps its own copies; "sudo proxy-router geo update" updates them`)
 			}
 			return errors.Join(errs...)
 		},
@@ -577,6 +703,7 @@ func configCmd() *cobra.Command {
 					o.tunName = "prtun0"
 				}
 				o.tunListen = "127.0.0.1:10807" // placeholder; run picks a free port
+				o.tunLogin = engine.NewAccount()
 			}
 			_, xc, notes, err := buildCurrentNotes(o)
 			if err != nil {

@@ -65,3 +65,127 @@ func TestDefinitionLints(t *testing.T) {
 		}
 	}
 }
+
+func TestSpecCheck(t *testing.T) {
+	ok := Spec{Binary: "/var/lib/proxy-router/proxy-router", Args: []string{"--dir", "/home/a b/.config/pr $%\"'\\", "run"}}
+	if err := ok.Check(); err != nil {
+		t.Fatalf("rejected %q: %v", ok.Args, err)
+	}
+	for _, bad := range []string{
+		"/home/u\n[Service]\nExecStartPre=/bin/sh -c id",
+		"/home/u\r",
+		"/home/u\x00",
+		"/home/u\t",
+		"/home/u\x1b[2J",
+		"/home/u\x7f",
+		"/home/u\u0085",
+		"/home/u\xff",
+	} {
+		s := Spec{Binary: ok.Binary, Args: []string{"--dir", bad, "run"}}
+		if err := s.Check(); err == nil {
+			t.Errorf("accepted arg %q", bad)
+		}
+		s = Spec{Binary: bad, Args: ok.Args}
+		if err := s.Check(); err == nil {
+			t.Errorf("accepted binary %q", bad)
+		}
+	}
+}
+
+// TestWriteAtomicReplacesSymlink: a symlink at the destination is
+// replaced, not written through.
+func TestWriteAtomicReplacesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "unit")
+	if err := os.Symlink(victim, dst); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(dst, strings.NewReader("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Fatalf("wrote through the symlink: %q", b)
+	}
+	if fi, err := os.Lstat(dst); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("destination isn't a regular file: %v %v", fi, err)
+	}
+}
+
+func TestUserFilesNotAsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	u := &user.User{Uid: "12345", Gid: "12345", Username: "nobody-test", HomeDir: t.TempDir()}
+	tg := Target{Scope: User, User: u}
+	if _, err := InstallBinary(tg); err == nil {
+		t.Error("InstallBinary wrote a user's files as root")
+	}
+	if err := writeDefinition(tg, DefinitionPath(tg), nil); err == nil {
+		t.Error("writeDefinition wrote a user's files as root")
+	}
+	if err := Remove(tg); err == nil {
+		t.Error("Remove deleted a user's files as root")
+	}
+}
+
+func TestRootLookPath(t *testing.T) {
+	// A program planted in $PATH is never picked.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	for _, name := range []string{"sh", "systemctl", "launchctl", "no-such-program"} {
+		p := rootLookPath(name)
+		if !strings.HasPrefix(p, "/usr/") && !strings.HasPrefix(p, "/sbin/") && !strings.HasPrefix(p, "/bin/") {
+			t.Errorf("%s: %s is outside %s", name, p, rootPath)
+		}
+	}
+	if p := rootLookPath("sh"); !exists(p) {
+		t.Errorf("sh: %s doesn't exist", p)
+	}
+}
+
+// TestSystemHardening checks the root TUN service is confined and the
+// user service isn't touched.
+func TestSystemHardening(t *testing.T) {
+	var want []string
+	switch runtime.GOOS {
+	case "linux":
+		want = []string{
+			"NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=read-only", "PrivateTmp=yes",
+			"DevicePolicy=closed", "DeviceAllow=/dev/net/tun rw", "StandardOutput=journal",
+			"StateDirectory=proxy-router", "RuntimeDirectory=proxy-router", "UMask=0077",
+			"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH",
+			"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+			"Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+		}
+	case "darwin":
+		want = []string{"<key>Umask</key>", "<string>/var/log/proxy-router.log</string>"}
+	default:
+		t.Skip("no service support")
+	}
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := string(Definition(Spec{Target: Target{Scope: System, User: u}, Binary: "/bin/true"}))
+	usr := string(Definition(Spec{Target: Target{Scope: User, User: u}, Binary: "/bin/true"}))
+	for _, w := range want {
+		if !strings.Contains(sys, w) {
+			t.Errorf("system definition lacks %q:\n%s", w, sys)
+		}
+		if strings.Contains(usr, w) {
+			t.Errorf("user definition has %q:\n%s", w, usr)
+		}
+	}
+	for _, bad := range []string{"PrivateNetwork", "PrivateDevices"} {
+		if strings.Contains(sys, bad) {
+			t.Errorf("system definition has %s, which would break TUN", bad)
+		}
+	}
+}

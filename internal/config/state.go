@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type Subscription struct {
 	UserAgent string            `json:"user_agent,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
 	SendHWID  bool              `json:"send_hwid,omitempty"`
+	AllowHTTP bool              `json:"allow_http,omitempty"`
 	UpdatedAt time.Time         `json:"updated_at,omitzero"`
 	LastError string            `json:"last_error,omitempty"`
 	Info      subscription.Info `json:"info"`
@@ -59,7 +61,7 @@ func (e Entry) String() string { return fmt.Sprintf("#%d %s/%s", e.Index, e.Grou
 
 func LoadState(dir string) (*State, error) {
 	s := &State{path: filepath.Join(dir, "state.json")}
-	data, err := os.ReadFile(s.path)
+	data, err := readFile(dir, "state.json", maxState)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
@@ -72,7 +74,14 @@ func LoadState(dir string) (*State, error) {
 	return s, nil
 }
 
+// ErrReadOnly is returned by Save in the TUN service, which never writes
+// to the user's directory.
+var ErrReadOnly = errors.New("the TUN service doesn't write state.json")
+
 func (s *State) Save() error {
+	if confined.on {
+		return ErrReadOnly
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -133,7 +142,9 @@ func (s *State) Select(e Entry) {
 }
 
 // FindAll resolves a query to every matching server: "*" (all), an index,
-// group/name, or every server whose name contains the text.
+// "group/*" (all of a group), "group/name", or every server whose name
+// contains the text. After "group/", the text only matches that group's
+// servers, and an exact name wins over names that merely contain it.
 func (s *State) FindAll(query string) []Entry {
 	query = strings.TrimSpace(strings.TrimPrefix(query, "#"))
 	entries := s.Entries()
@@ -146,18 +157,25 @@ func (s *State) FindAll(query string) []Entry {
 		}
 		return nil
 	}
-	var out []Entry
-	q := strings.ToLower(query)
-	for _, e := range entries {
-		if e.Group+"/"+e.Server.Name == query || strings.Contains(strings.ToLower(e.Server.Name), q) {
-			out = append(out, e)
+	if group, name, ok := s.scope(query); ok {
+		entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Group != group })
+		if name == "*" {
+			return entries
 		}
+		exact, partial := match(entries, name)
+		if len(exact) > 0 {
+			return exact
+		}
+		return partial
 	}
-	return out
+	q := strings.ToLower(query)
+	return slices.DeleteFunc(entries, func(e Entry) bool { return !strings.Contains(strings.ToLower(e.Server.Name), q) })
 }
 
 // Find resolves a user query to one server. Accepted forms: list index
 // ("3"), "group/name", exact name, or a unique case-insensitive substring.
+// After "group/", only that group's servers are considered, so another
+// subscription can't take over the query by adding a similar name.
 func (s *State) Find(query string) (Entry, error) {
 	query = strings.TrimSpace(strings.TrimPrefix(query, "#"))
 	entries := s.Entries()
@@ -170,23 +188,12 @@ func (s *State) Find(query string) (Entry, error) {
 		}
 		return entries[n-1], nil
 	}
-	if group, name, ok := strings.Cut(query, "/"); ok {
-		for _, e := range entries {
-			if e.Group == group && e.Server.Name == name {
-				return e, nil
-			}
-		}
+	name := query
+	if group, rest, ok := s.scope(query); ok {
+		entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Group != group })
+		name = rest
 	}
-	var exact, partial []Entry
-	q := strings.ToLower(query)
-	for _, e := range entries {
-		switch {
-		case e.Server.Name == query:
-			exact = append(exact, e)
-		case strings.Contains(strings.ToLower(e.Server.Name), q):
-			partial = append(partial, e)
-		}
-	}
+	exact, partial := match(entries, name)
 	for _, matches := range [][]Entry{exact, partial} {
 		switch len(matches) {
 		case 0:
@@ -202,4 +209,34 @@ func (s *State) Find(query string) (Entry, error) {
 		}
 	}
 	return Entry{}, fmt.Errorf("no server matches %q", query)
+}
+
+// scope splits "group/name" when it starts with a known group (the longest,
+// as names may contain '/' too).
+func (s *State) scope(query string) (group, name string, ok bool) {
+	groups := []string{ManualGroup}
+	for _, sub := range s.Subscriptions {
+		groups = append(groups, sub.Name)
+	}
+	for _, g := range groups {
+		if rest, found := strings.CutPrefix(query, g+"/"); found && len(g) >= len(group) {
+			group, name, ok = g, rest, true
+		}
+	}
+	return group, name, ok
+}
+
+// match splits entries into exact name matches and names containing query
+// (case-insensitively).
+func match(entries []Entry, query string) (exact, partial []Entry) {
+	q := strings.ToLower(query)
+	for _, e := range entries {
+		switch {
+		case e.Server.Name == query:
+			exact = append(exact, e)
+		case strings.Contains(strings.ToLower(e.Server.Name), q):
+			partial = append(partial, e)
+		}
+	}
+	return exact, partial
 }

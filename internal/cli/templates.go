@@ -6,6 +6,14 @@ const defaultConfigYAML = `# proxy-router settings. Subscriptions and the select
 listen:
   socks: 127.0.0.1:10808   # SOCKS5 (TCP + UDP). Empty string disables it.
   http: 127.0.0.1:10809    # HTTP / HTTPS CONNECT proxy. Empty string disables it.
+  # Login for both. Needed to listen beyond this machine (0.0.0.0, a LAN
+  # address); a host-less ":10808" means 127.0.0.1. Note that SOCKS5 UDP is
+  # let through for any program on an IP that has logged in once.
+  user: ""
+  password: ""
+  # Allow listening beyond this machine without a login: an open proxy for
+  # anyone who can reach the port.
+  allow_open: false
 
 # Interface for proxy-router's own connections (to servers and "direct").
 #   auto: if another VPN (Happ in VPN mode, WireGuard, ...) owns the default
@@ -48,6 +56,9 @@ ping:
 # Destinations that always use the system's own routing: never proxied, never
 # pinned to an interface, and never sent into the TUN. Keeps Tailscale (and
 # other VPNs' private ranges) working while proxy-router is on.
+# Names here are looked up with the system resolver in plain DNS (MagicDNS
+# names exist nowhere else) and follow the system route when their address
+# is in one of the IP ranges here; a name alone could be faked by any app.
 system_route:
   - 100.64.0.0/10          # Tailscale IPv4
   - fd7a:115c:a1e0::/48    # Tailscale IPv6
@@ -60,6 +71,11 @@ system_route:
 # already connect to IPs. A dns: section in the rules file replaces the DoH
 # servers used.
 resolve_locally: true
+
+# Server hostnames are looked up with DNS-over-HTTPS (1.1.1.1, 8.8.8.8)
+# outside the tunnel. If that fails, ask the system resolver, which sends
+# them in plain DNS for the network to see. false: never.
+system_dns_fallback: true
 
 # ---- Happ's advanced settings ----
 
@@ -96,12 +112,17 @@ preferred_ip: ipv4
 
 # Capture all system traffic, like Happ's "Xray TUN". Needs root:
 #   sudo proxy-router run --tun
-# LAN, Tailscale and other more specific routes keep working.
+# LAN, Tailscale and other more specific routes keep working. System DNS is
+# pointed into the TUN.
 tun:
   enabled: false
   name: ""                 # empty picks a free utunN
   mtu: 1500
-  ipv6: false              # also capture IPv6
+  ipv6: false              # proxy IPv6 too; when false it's blocked, never leaked
+  # Block anything that would leave outside the TUN, also while restarting
+  # or after a crash. LAN and system_route stay reachable. If networking is
+  # stuck after a crash, "sudo proxy-router stop" removes it.
+  kill_switch: true
 `
 
 const defaultRoutingYAML = `# proxy-router routing rules.
@@ -149,13 +170,18 @@ default: proxy
 
 # AsIs:         match domain rules only on the domain name
 # IPIfNonMatch: if no domain rule matches, resolve it and try IP rules
-# IPOnDemand:   resolve immediately when an IP rule is reached
+#               (connections to an IP keep using that IP)
+# IPOnDemand:   resolve immediately when an IP rule is reached; for
+#               connections to an IP with a sniffed name, the name's
+#               addresses are used instead of the real one
 domain_strategy: IPIfNonMatch
 
 rules:
+  # By address only: a TLS/HTTP name like x.lan is whatever the app sends,
+  # even to a public address. Apps that look local names up themselves
+  # (everything in TUN mode) connect to a local address, which this matches.
   - name: local network
     outbound: direct
-    domain: [full:localhost, domain:local, domain:lan]
     ip:
       - 127.0.0.0/8
       - 10.0.0.0/8

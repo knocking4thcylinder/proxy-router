@@ -1,17 +1,19 @@
 package cli
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 )
 
 const trayUsesTemplate = false
@@ -35,18 +37,20 @@ func trayAvailable() error {
 	return nil
 }
 
-// menuLabel escapes underscores, which DBus menus take as mnemonics.
-func menuLabel(s string) string { return strings.ReplaceAll(s, "_", "__") }
-
-// runElevated runs proxy-router with args as root with pkexec, which asks
-// for the password in the desktop's polkit dialog.
-func (t *tray) runElevated(args []string, out *bytes.Buffer) error {
-	argv := append(append([]string{"env"}, t.elevationEnv()...), t.exe, "--dir", t.dir)
-	return runOut(exec.Command("pkexec", append(argv, args...)...), out)
+// menuLabel strips control and bidi characters from s, keeping its
+// indent, and escapes underscores, which DBus menus take as mnemonics.
+func menuLabel(s string) string {
+	text := strings.TrimLeft(s, " ")
+	return s[:len(s)-len(text)] + strings.ReplaceAll(safetext.Clean(text, 100), "_", "__")
 }
 
-// allowSudo is only used on macOS.
-func allowSudo(string) error { return errors.New("--allow-sudo is only used on macOS") }
+// elevated runs argv as root with pkexec, which asks for the password in
+// the desktop's polkit dialog. argv[0] runs directly, not through env, so
+// the dialog names it, and a polkit action for it (packaging/linux) can
+// apply.
+func elevated(argv []string) *exec.Cmd {
+	return exec.Command("pkexec", argv...)
+}
 
 // authCanceled reports whether the password dialog was dismissed.
 func authCanceled(err error, _ string) bool {
@@ -54,9 +58,61 @@ func authCanceled(err error, _ string) bool {
 	return errors.As(err, &ee) && ee.ExitCode() == 126
 }
 
-func openPath(path string) {
-	if err := exec.Command("xdg-open", path).Start(); err != nil {
-		notify("Couldn't open "+path, err.Error())
+// openText opens a file in the desktop's text editor (the text/plain
+// handler), whatever its name says it is: xdg-open goes by the file's
+// type, and a rules path set to, say, a .desktop file would launch it.
+// Without an editor to use it opens the folder the file is in.
+func openText(path string) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().IsRegular() && textEditor(path) == nil {
+		return
+	}
+	openFolder(filepath.Dir(path))
+}
+
+// textEditor starts the text/plain handler on path.
+func textEditor(path string) error {
+	out, err := exec.Command("xdg-mime", "query", "default", "text/plain").Output()
+	app := strings.TrimSpace(string(out))
+	if err != nil || app == "" || strings.ContainsAny(app, "/\n") {
+		return errors.New("no text editor set")
+	}
+	if _, err := exec.LookPath("gtk-launch"); err == nil {
+		return exec.Command("gtk-launch", app, path).Run()
+	}
+	for _, dir := range appDirs() {
+		if file := filepath.Join(dir, app); statOK(file) {
+			return exec.Command("gio", "launch", file, path).Run()
+		}
+	}
+	return errors.New("can't start " + app)
+}
+
+// appDirs are where desktop entries live, most important first.
+func appDirs() []string {
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		home, _ := os.UserHomeDir()
+		data = filepath.Join(home, ".local", "share")
+	}
+	dirs := os.Getenv("XDG_DATA_DIRS")
+	if dirs == "" {
+		dirs = "/usr/local/share:/usr/share"
+	}
+	var out []string
+	for _, d := range append([]string{data}, filepath.SplitList(dirs)...) {
+		out = append(out, filepath.Join(d, "applications"))
+	}
+	return out
+}
+
+func statOK(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func openFolder(dir string) {
+	if err := exec.Command("xdg-open", dir).Start(); err != nil {
+		notify("Couldn't open "+dir, err.Error())
 	}
 }
 
@@ -88,10 +144,13 @@ func setTrayAutostart(on bool, exe, dir string) error {
 		}
 		return nil
 	}
-	// Desktop entry Exec quoting: double quotes, with \ " ` $ escaped.
-	q := func(s string) string {
-		r := strings.NewReplacer(`\`, `\\\\`, `"`, `\\"`, "`", "\\\\`", `$`, `\\$`)
-		return `"` + r.Replace(s) + `"`
+	qexe, err := desktopExecArg(exe)
+	if err != nil {
+		return err
+	}
+	qdir, err := desktopExecArg(dir)
+	if err != nil {
+		return err
 	}
 	entry := fmt.Sprintf(`[Desktop Entry]
 Type=Application
@@ -100,9 +159,22 @@ Comment=Tray icon for proxy-router
 Exec=%s --dir %s tray --foreground
 Terminal=false
 X-GNOME-Autostart-enabled=true
-`, q(exe), q(dir))
+`, qexe, qdir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return config.WriteFileAtomic(path, []byte(entry), 0o644)
+}
+
+// desktopExecArg quotes one argument for a desktop entry's Exec key: in
+// double quotes with \ " ` $ backslash-escaped, % doubled (it starts field
+// codes like %f), and then every backslash doubled again because Exec is a
+// string value with its own escapes. A control character can't be
+// written: a newline would end the key and start another.
+func desktopExecArg(s string) (string, error) {
+	if !utf8.ValidString(s) || strings.IndexFunc(s, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%q can't go in a desktop entry: it contains control characters", s)
+	}
+	r := strings.NewReplacer(`\`, `\\\\`, `"`, `\\"`, "`", "\\\\`", `$`, `\\$`, `%`, `%%`)
+	return `"` + r.Replace(s) + `"`, nil
 }

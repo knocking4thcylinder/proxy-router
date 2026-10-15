@@ -3,6 +3,7 @@ package subscription
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
@@ -23,6 +25,9 @@ type Request struct {
 	// HWID, when set, is sent as x-hwid along with device headers, which
 	// panels with device limits (e.g. Remnawave) require.
 	HWID string
+	// AllowHTTP accepts a plain http:// URL, which anyone on the path can
+	// tamper with.
+	AllowHTTP bool
 }
 
 // Info is metadata providers send in response headers.
@@ -51,17 +56,32 @@ type Result struct {
 // link lists leave out.
 const DefaultUserAgent = "Happ/3.24.1"
 
-// Fetch downloads and decodes a subscription.
+// Lengths provider text is cut to.
+const (
+	maxName  = 128
+	maxText  = 1024
+	maxError = 300
+)
+
+// Fetch downloads and decodes a subscription. Errors never contain the
+// URL's path or query, which usually hold the access token.
 func Fetch(ctx context.Context, req Request) (*Result, error) {
+	return defaultPolicy.fetch(ctx, req)
+}
+
+func (p policy) fetch(ctx context.Context, req Request) (*Result, error) {
 	u, err := url.Parse(req.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, fmt.Errorf("subscription URL must be http(s): %q", req.URL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, fmt.Errorf("subscription URL must be https: %s", Redact(req.URL))
+	}
+	if u.Scheme == "http" && !req.AllowHTTP {
+		return nil, ErrInsecureURL
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, req.URL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("subscription URL %s: bad request", Redact(req.URL))
 	}
 	ua := req.UserAgent
 	if ua == "" {
@@ -78,17 +98,22 @@ func Fetch(ctx context.Context, req Request) (*Result, error) {
 		hreq.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(hreq)
+	client := p.client(u, p.local(ctx, u), req.AllowHTTP, req.Headers)
+	resp, err := client.Do(hreq)
 	if err != nil {
-		return nil, err
+		return nil, redactErr(err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned %s: %s", resp.Status, snippet(body))
+		return nil, fmt.Errorf("server returned %s", safetext.Clean(resp.Status, 80))
+	}
+	// The transport has already undone any gzip, so this caps the real size.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", redactErr(err))
+	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("subscription is larger than %d MiB", maxBody>>20)
 	}
 
 	res := Decode(body)
@@ -98,16 +123,26 @@ func Fetch(ctx context.Context, req Request) (*Result, error) {
 		if len(res.Errors) > 0 {
 			msg += fmt.Sprintf(" (first error: %v)", res.Errors[0])
 		} else if len(body) > 0 {
-			msg += fmt.Sprintf(" (body starts with %q)", snippet(body))
+			msg += fmt.Sprintf(" (%d bytes in no format it understands)", len(body))
 		}
-		return nil, fmt.Errorf("%s", msg)
+		return nil, errors.New(msg)
 	}
 	return res, nil
 }
 
 // Decode turns a subscription body into servers. It accepts Xray JSON
 // (object or array), base64 encoded link lists and plain link lists.
+// Names, warnings and errors come back safe to print.
 func Decode(body []byte) *Result {
+	res := decode(body)
+	CleanServers(res.Servers)
+	for i, err := range res.Errors {
+		res.Errors[i] = errors.New(safetext.Clean(err.Error(), maxError))
+	}
+	return res
+}
+
+func decode(body []byte) *Result {
 	text := strings.TrimSpace(strings.TrimPrefix(string(body), "\uFEFF"))
 	res := &Result{}
 	if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
@@ -127,12 +162,26 @@ func Decode(body []byte) *Result {
 	return res
 }
 
+// CleanServers strips control characters and escape sequences from the
+// provider-controlled names and warnings of servers.
+func CleanServers(servers []*share.Server) {
+	for _, s := range servers {
+		s.Name = safetext.Clean(s.Name, maxName)
+		if s.Name == "" {
+			s.Name = safetext.Clean(fmt.Sprintf("%s:%d", s.Address, s.Port), maxName)
+		}
+		for i, w := range s.Warnings {
+			s.Warnings[i] = safetext.Clean(w, maxError)
+		}
+	}
+}
+
 func parseInfo(h http.Header) Info {
 	var info Info
-	info.Title = decodeMaybeBase64(h.Get("profile-title"))
+	info.Title = safetext.Clean(decodeMaybeBase64(h.Get("profile-title")), maxName)
 	if info.Title == "" {
 		if _, params, ok := strings.Cut(h.Get("content-disposition"), "filename="); ok {
-			info.Title = strings.Trim(params, `"' `)
+			info.Title = safetext.Clean(strings.Trim(params, `"' `), maxName)
 		}
 	}
 	for _, part := range strings.Split(h.Get("subscription-userinfo"), ";") {
@@ -155,9 +204,9 @@ func parseInfo(h http.Header) Info {
 		}
 	}
 	info.UpdateInterval, _ = strconv.Atoi(strings.TrimSpace(h.Get("profile-update-interval")))
-	info.SupportURL = h.Get("support-url")
-	info.WebPageURL = h.Get("profile-web-page-url")
-	info.Announce = decodeMaybeBase64(h.Get("announce"))
+	info.SupportURL = safetext.Clean(h.Get("support-url"), maxText)
+	info.WebPageURL = safetext.Clean(h.Get("profile-web-page-url"), maxText)
+	info.Announce = safetext.Clean(decodeMaybeBase64(h.Get("announce")), maxText)
 	return info
 }
 
@@ -182,12 +231,4 @@ func deviceOS() string {
 		return "Linux"
 	}
 	return runtime.GOOS
-}
-
-func snippet(b []byte) string {
-	s := strings.TrimSpace(string(b))
-	if len(s) > 80 {
-		s = s[:80] + "…"
-	}
-	return s
 }

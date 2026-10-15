@@ -10,13 +10,13 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
+	"github.com/knocking4thcylinder/proxy-router/internal/safetext"
 )
 
 // pingWithProgress owns all terminal writes, including the timer, so concurrent
@@ -180,11 +180,4 @@ func pingExit(r engine.PingResult) string {
 }
 
 // Subscription labels and remote error text must stay on one terminal line.
-func pingText(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
-}
+func pingText(s string) string { return safetext.Clean(s, 0) }
