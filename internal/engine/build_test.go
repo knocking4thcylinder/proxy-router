@@ -144,3 +144,27 @@ func TestRulesValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestBindInterfaceOverridesImported(t *testing.T) {
+	obs := []map[string]any{
+		{"tag": "a", "streamSettings": map[string]any{
+			"sockopt": map[string]any{"interface": "lo"},
+			"xhttpSettings": map[string]any{"downloadSettings": map[string]any{
+				"sockopt": map[string]any{"interface": "lo"},
+			}},
+		}},
+		{"tag": "b", "streamSettings": map[string]any{"sockopt": map[string]any{"dialerProxy": "a"}}},
+	}
+	BindInterface(obs, "eth0")
+	ss := obs[0]["streamSettings"].(map[string]any)
+	if ss["sockopt"].(map[string]any)["interface"] != "eth0" {
+		t.Errorf("sockopt = %v", ss["sockopt"])
+	}
+	ds := ss["xhttpSettings"].(map[string]any)["downloadSettings"].(map[string]any)
+	if ds["sockopt"].(map[string]any)["interface"] != "eth0" {
+		t.Errorf("download sockopt = %v", ds["sockopt"])
+	}
+	if _, ok := obs[1]["streamSettings"].(map[string]any)["sockopt"].(map[string]any)["interface"]; ok {
+		t.Error("outbounds that dial through another one bind via that one")
+	}
+}
