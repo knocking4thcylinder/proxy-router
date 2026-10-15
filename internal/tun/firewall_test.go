@@ -37,6 +37,9 @@ func TestNftRuleset(t *testing.T) {
 	// is blocked; the router's DNS isn't, though the router is.
 	before(t, rs, "ip daddr { 100.64.0.0/10 } accept", "th dport { 53, 853 } reject")
 	before(t, rs, "th dport { 53, 853 } reject", "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16")
+	// DNS redirected into the TUN is let through: the output chain sees
+	// the interface it was routed to before the redirect.
+	before(t, rs, "ip daddr 198.18.0.53 ct status dnat accept", "th dport { 53, 853 } reject")
 	before(t, rs, "ip6 daddr { fe80::/10", "\t\treject with icmpx type admin-prohibited\n\t}")
 	// DNS to system_route addresses isn't redirected either.
 	before(t, rs, "chain dns", "ip daddr { 100.64.0.0/10 } return")

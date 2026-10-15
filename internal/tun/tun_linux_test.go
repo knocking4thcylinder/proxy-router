@@ -43,6 +43,7 @@ func TestUpLinux(t *testing.T) {
 	got := commands(*cmds)
 	want := []string{
 		"ip link set dev prtun0 up",
+		"ip -4 addr replace 198.18.0.1/32 dev prtun0",
 		"nft -f -",
 		"ip -j -4 route show exact 0.0.0.0/1",
 		"ip -j -4 route show exact 128.0.0.0/1",
@@ -62,8 +63,8 @@ func TestUpLinux(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("commands:\n%s", strings.Join(got, "\n"))
 	}
-	if !strings.Contains((*cmds)[1], "table inet proxy_router {") {
-		t.Fatalf("nft input: %s", (*cmds)[1])
+	if !strings.Contains((*cmds)[2], "table inet proxy_router {") {
+		t.Fatalf("nft input: %s", (*cmds)[2])
 	}
 }
 
@@ -88,7 +89,7 @@ func TestUpRefusesForeignRoutes(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	for _, c := range *cmds {
-		if strings.Contains(c, "replace") {
+		if strings.Contains(c, "route replace") {
 			t.Fatalf("touched routes: %s", c)
 		}
 	}

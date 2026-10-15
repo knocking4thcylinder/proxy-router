@@ -20,6 +20,10 @@ func SocketMark() int { return Mark }
 // outlive the process, so a later run (or Cleanup) recognizes them by it.
 const routeProto = "112"
 
+// linkAddr is the TUN's IPv4 address. Xray leaves it without one on Linux,
+// and systemd-resolved doesn't send DNS to links without a routable address.
+const linkAddr = "198.18.0.1/32"
+
 func ipFamily(family string) string {
 	if family == "inet6" {
 		return "-6"
@@ -108,6 +112,9 @@ func Up(o Options) error {
 		return err
 	}
 	if err := run("ip", "link", "set", "dev", o.Name, "up"); err != nil {
+		return err
+	}
+	if err := run("ip", "-4", "addr", "replace", linkAddr, "dev", o.Name); err != nil {
 		return err
 	}
 	// Kill switch first, so nothing leaks while the rest is set up.
