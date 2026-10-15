@@ -61,6 +61,11 @@ system_route:
 # servers used.
 resolve_locally: true
 
+# Server hostnames are looked up with DNS-over-HTTPS (1.1.1.1, 8.8.8.8)
+# outside the tunnel. If that fails, ask the system resolver, which sends
+# them in plain DNS for the network to see. false: never.
+system_dns_fallback: true
+
 # ---- Happ's advanced settings ----
 
 # Split the TLS ClientHello into pieces so DPI can't read the SNI.

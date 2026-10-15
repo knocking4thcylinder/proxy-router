@@ -192,14 +192,24 @@ func (e *env) outboundInterface() (iface, note string) {
 // resolveTTL is how long pinned server addresses are trusted.
 const resolveTTL = 10 * time.Minute
 
-var processResolver engine.Resolver
+var processResolvers = map[string]engine.Resolver{}
 
-// resolver returns one caching resolver per process, so reloads reuse it.
-func (e *env) resolver() engine.Resolver {
-	if processResolver == nil {
-		processResolver = engine.CachingResolver(e.cfg.PreferredIP, resolveTTL)
+// resolver returns one caching resolver per process (and interface and
+// settings), so reloads reuse it. Server names are looked up with DoH
+// outside the tunnel, from iface like the direct outbound; the system
+// resolver, in plain DNS, is only a fallback that can be turned off.
+func (e *env) resolver(iface string) engine.Resolver {
+	key := fmt.Sprintf("%s/%s/%t", iface, e.cfg.PreferredIP, e.cfg.SystemDNSFallback)
+	if r := processResolvers[key]; r != nil {
+		return r
 	}
-	return processResolver
+	lookup := engine.DoHLookup(config.DirectDoH, iface)
+	if e.cfg.SystemDNSFallback {
+		lookup = engine.OrElse(lookup, engine.SystemLookup)
+	}
+	r := engine.CachingResolver(e.cfg.PreferredIP, resolveTTL, lookup)
+	processResolvers[key] = r
+	return r
 }
 
 func ago(t time.Time) string {

@@ -86,6 +86,10 @@ type Config struct {
 	// subscription, YouTube failed through every server until this was on.
 	ResolveLocally bool `yaml:"resolve_locally"`
 
+	// Look server hostnames up with the system resolver (plain DNS) when
+	// DNS-over-HTTPS to DirectDoH fails.
+	SystemDNSFallback bool `yaml:"system_dns_fallback"`
+
 	// Happ's advanced settings.
 	Fragment    Fragment `yaml:"fragment"`
 	Noises      Noises   `yaml:"noises"`
@@ -114,6 +118,7 @@ func defaults() *Config {
 	c.Mux = Mux{Concurrency: 8, XUDPConcurrency: 16, XUDPProxyUDP443: "reject"}
 	c.PreferredIP = "ipv4"
 	c.ResolveLocally = true
+	c.SystemDNSFallback = true
 	c.TUN.MTU = 1500
 	return c
 }

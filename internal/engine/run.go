@@ -106,8 +106,17 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	endpoints := map[string]chan struct{}{}
 	endpointSem := func(addr string) chan struct{} {
 		key := addr
-		if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
-			key = ips[0]
+		switch {
+		case isIPOrCIDR(addr):
+		case o.Resolve != nil:
+			// Same lookups as pinning, so server names stay off plain DNS.
+			if ip, err := o.Resolve(addr); err == nil {
+				key = ip
+			}
+		default:
+			if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
+				key = ips[0]
+			}
 		}
 		mu.Lock()
 		defer mu.Unlock()

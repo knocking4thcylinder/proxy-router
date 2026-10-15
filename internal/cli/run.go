@@ -114,7 +114,7 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 		// Resolve server hostnames here: in TUN mode the system resolver may
 		// be routed into the TUN, and with resolve_locally Xray's DNS goes
 		// through the proxy, which can't help find the proxy itself.
-		plan.Resolve = e.resolver()
+		plan.Resolve = e.resolver(iface)
 	}
 	if o.server != "" {
 		entry, err := e.state.Find(o.server)

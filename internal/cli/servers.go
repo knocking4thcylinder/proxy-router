@@ -350,7 +350,7 @@ func (e *env) resolverIf(iface string) engine.Resolver {
 	if iface == "" && !e.cfg.ResolveLocally {
 		return nil
 	}
-	return e.resolver()
+	return e.resolver(iface)
 }
 
 func shortErr(err error) string {
