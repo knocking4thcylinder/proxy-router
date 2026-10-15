@@ -4,6 +4,7 @@ package cli
 
 import (
 	"errors"
+	"os/exec"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -22,3 +23,7 @@ func trayCmd() *cobra.Command {
 		},
 	}
 }
+
+// elevated would run argv as root after a password dialog; there's none
+// in this build.
+func elevated(argv []string) *exec.Cmd { return nil }

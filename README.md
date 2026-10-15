@@ -91,15 +91,18 @@ command you type only controls it.
 
 - **Mode:** `--tun` / `--no-tun`, else the mode of the installed service,
   else `tun.enabled` in `config.yaml`. TUN mode needs root, so `start` (and
-  `stop`, `restart`) run themselves with sudo when needed. Switching modes
-  replaces the old service.
+  `stop`, `restart`) ask for sudo for the system service's part; the user
+  service is always handled as you. Switching modes replaces the old
+  service. See [packaging/README.md](packaging/README.md) for what runs as
+  root.
 - **Changes apply live:** `use`, `sub update`, and edits to `config.yaml` or
   the rules file. The service watches its files the same way `run` does.
 - **After rebuilding proxy-router**, run `proxy-router restart`. The service
   runs its own copy of the binary (in `~/Library/Application Support/proxy-router/`,
   `/Library/Application Support/proxy-router/`, `~/.local/share/proxy-router/`
   or `/var/lib/proxy-router/`), so a rebuild doesn't affect it until then.
-  `status` notes when the copy is out of date.
+  `status` notes when the copy is out of date. `start` doesn't update an
+  installed TUN service's copy; only `restart` does.
 - **At boot or login, TUN mode waits** for a network connection, and for
   another VPN to disconnect, instead of failing. `status` shows what it's
   waiting for.
@@ -240,7 +243,8 @@ An optional `dns:` section in Xray's format is passed through unchanged.
 ## Files
 
 Everything is in `~/.config/proxy-router/` (override with `--dir` or
-`$PROXY_ROUTER_HOME`):
+`$PROXY_ROUTER_HOME`, which is ignored under sudo). Root only uses it if
+it's yours and nobody else can write to it or the directories above it:
 
 - `config.yaml`: listen addresses, interface binding, log level, update interval, User-Agent, geo URLs, ping URL
 - `routing.yaml`: routing rules

@@ -5,14 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/secpath"
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
 )
 
@@ -27,6 +32,39 @@ func (o *startOptions) flags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&o.force, "force", false, "start TUN mode even though another VPN owns the default route")
 	cmd.Flags().CountVarP(&o.verbose, "verbose", "v", "log every connection; -vv also logs why connections fail")
 	cmd.MarkFlagsMutuallyExclusive("tun", "no-tun")
+	passwordDialogFlag(cmd)
+}
+
+// args are the start / restart arguments for the root half of starting
+// in TUN mode.
+func (o startOptions) args(restart bool) []string {
+	args := []string{"start", "--tun"}
+	if restart {
+		args[0] = "restart"
+	}
+	if o.force {
+		args = append(args, "--force")
+	}
+	if o.verbose > 0 {
+		args = append(args, "-"+strings.Repeat("v", o.verbose))
+	}
+	return args
+}
+
+// passwordDialog is --password-dialog: ask for the password in the
+// desktop's dialog (polkit, or the macOS one) instead of with sudo.
+var passwordDialog bool
+
+func passwordDialogFlag(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&passwordDialog, "password-dialog", false, "ask for the password in the desktop's dialog instead of with sudo (used by the tray)")
+	_ = cmd.Flags().MarkHidden("password-dialog")
+}
+
+// systemOnlyFlag is stop / uninstall --system: only the TUN-mode system
+// service. It's what they run as root.
+func systemOnlyFlag(cmd *cobra.Command, v *bool) {
+	cmd.Flags().BoolVar(v, "system", false, "only the TUN-mode system service")
+	_ = cmd.Flags().MarkHidden("system")
 }
 
 func startCmd() *cobra.Command {
@@ -67,25 +105,33 @@ func restartCmd() *cobra.Command {
 }
 
 func stopCmd() *cobra.Command {
-	return &cobra.Command{
+	var systemOnly bool
+	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the background service; it won't start at login/boot until \"start\"",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stopService(false)
+			return stopService(false, systemOnly)
 		},
 	}
+	systemOnlyFlag(cmd, &systemOnly)
+	passwordDialogFlag(cmd)
+	return cmd
 }
 
 func uninstallCmd() *cobra.Command {
-	return &cobra.Command{
+	var systemOnly bool
+	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Stop the background service and remove it (config and servers are kept)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stopService(true)
+			return stopService(true, systemOnly)
 		},
 	}
+	systemOnlyFlag(cmd, &systemOnly)
+	passwordDialogFlag(cmd)
+	return cmd
 }
 
 func statusCmd() *cobra.Command {
@@ -120,12 +166,11 @@ func logsCmd() *cobra.Command {
 }
 
 // targets returns the user and system service definitions for the user
-// running proxy-router (the sudo user when under sudo).
+// running proxy-router (as root, the user it works for: --uid, or the one
+// sudo or pkexec reports).
 func targets() (userT, sysT service.Target, err error) {
-	var u *user.User
-	if id := os.Getenv("SUDO_UID"); id != "" && os.Geteuid() == 0 {
-		u, err = user.LookupId(id)
-	} else {
+	u, err := config.TargetUser()
+	if err == nil && u == nil {
 		u, err = user.Current()
 	}
 	if err != nil {
@@ -134,10 +179,33 @@ func targets() (userT, sysT service.Target, err error) {
 	return service.Target{Scope: service.User, User: u}, service.Target{Scope: service.System, User: u}, nil
 }
 
-// asRoot re-runs the current command with sudo, keeping the config
-// directory (sudo may reset $HOME).
-func asRoot(why string) error {
-	exe, err := os.Executable()
+// rootBinary says which executable asRoot runs as root.
+type rootBinary int
+
+const (
+	// The TUN service's copy if it's installed; this executable only
+	// when there's none (stop, uninstall).
+	installedBinary rootBinary = iota
+	// The TUN service's copy if it's installed, else this executable,
+	// which then installs itself (start).
+	installBinary
+	// This executable, which installs itself, unless the TUN service's
+	// copy is the same build (restart, which picks up a new build).
+	upgradeBinary
+)
+
+// asRoot runs proxy-router as root with args, asking for the password with
+// sudo, or the desktop's dialog with --password-dialog. It returns when
+// that's done, or exits with its status if it failed. Only root's half of
+// the work goes there; the caller does the user's half as the user.
+//
+// What runs as root is the TUN service's own copy of proxy-router when
+// it's installed and only root can change it, rather than this executable,
+// which the user (or anything running as them) can replace. This
+// executable runs as root only to install itself as that copy: the first
+// TUN-mode start, and restarts that update the service to a new build.
+func asRoot(why string, which rootBinary, args ...string) error {
+	exe, err := rootExecutable(which)
 	if err != nil {
 		return err
 	}
@@ -145,15 +213,72 @@ func asRoot(why string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "%s; running with sudo\n", why)
-	c := exec.Command("sudo", append([]string{exe, "--dir", dir}, os.Args[1:]...)...)
+	// Root refuses a config directory other users could change
+	// (config.CheckDir); say so before asking for a password.
+	if _, err := secpath.Check(dir, os.Getuid()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("config directory: %w", err)
+	}
+	// Who root works for goes as a flag: sudo and pkexec check it against
+	// the uid they report, and nothing is taken from the environment.
+	argv := append([]string{exe, "--dir", dir, "--uid", strconv.Itoa(os.Getuid())}, args...)
+	var c *exec.Cmd
+	if passwordDialog {
+		if c = elevated(argv); c == nil {
+			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")
+		}
+		fmt.Fprintf(os.Stderr, "%s; asking for the password\n", why)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s; running with sudo\n", why)
+		c = exec.Command("sudo", argv...)
+	}
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err = c.Run()
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
+		if _, sysT, terr := targets(); terr == nil && exe == service.BinaryPath(sysT) && service.Outdated(sysT) {
+			fmt.Fprintln(os.Stderr, `note: the TUN service has a different build of proxy-router; "proxy-router restart" updates it`)
+		}
 		os.Exit(ee.ExitCode())
 	}
 	return err
+}
+
+// takesUID reports whether the proxy-router at path knows --uid (run as
+// the user, which is harmless).
+func takesUID(path string) bool {
+	return exec.Command(path, "--uid", strconv.Itoa(os.Getuid()), "--version").Run() == nil
+}
+
+// rootExecutable picks what asRoot runs; see rootBinary.
+func rootExecutable(which rootBinary) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		return "", err
+	}
+	installed, err := service.RootBinary()
+	switch {
+	case err == nil && !takesUID(installed):
+		// Installed before --uid existed; it's root's, so this can't be
+		// faked. Such an install already trusts this executable, until
+		// it's updated.
+		fmt.Fprintln(os.Stderr, "the TUN service has an older build of proxy-router; using this one")
+	case err == nil:
+		_, sysT, terr := targets()
+		if which != upgradeBinary || (terr == nil && !service.Outdated(sysT)) {
+			return installed, nil
+		}
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		// Not root's alone any more: don't run it, and don't hide that.
+		fmt.Fprintf(os.Stderr, "warning: not running the TUN service's binary as root: %v\n", err)
+	}
+	if which != installedBinary {
+		fmt.Fprintf(os.Stderr, "installing this build (%s) as the TUN service's binary, which runs as root\n", self)
+	}
+	return self, nil
 }
 
 func modeName(t service.Target) string {
@@ -203,31 +328,41 @@ func startService(o startOptions, restart bool) error {
 	default:
 		useTUN = e.cfg.TUN.Enabled
 	}
-	want, other, otherSt := userT, sysT, ss
-	if useTUN {
-		want, other, otherSt = sysT, userT, us
-	}
-	if os.Geteuid() != 0 {
-		if useTUN {
-			return asRoot("TUN mode runs as a system service")
-		}
-		if otherSt.Installed {
-			return asRoot("the TUN service has to be removed first")
-		}
-	} else if !useTUN && os.Getenv("SUDO_UID") == "" {
+	// Root only ever handles the system service, and the user only the
+	// user service: root doesn't write in the user's directories.
+	switch root := os.Geteuid() == 0; {
+	case !useTUN && root:
 		return errors.New("proxy mode runs as your user, not root: run it without sudo (or pass --tun)")
-	}
-
-	if otherSt.Installed {
-		if err := service.Remove(other); err != nil {
+	case useTUN && !root:
+		which := installBinary
+		if restart {
+			which = upgradeBinary
+		}
+		if err := asRoot("TUN mode runs as a system service", which, o.args(restart)...); err != nil {
 			return err
 		}
-		fmt.Printf("removed the %s-mode %s\n", modeName(other), other)
+		// Root stopped the proxy-mode service; its files are the user's
+		// to remove.
+		if us.Installed {
+			if err := service.Remove(userT); err != nil {
+				return err
+			}
+			fmt.Printf("removed the proxy-mode %s\n", userT)
+		}
+		return nil
+	case !useTUN && ss.Installed:
+		if err := asRoot("the TUN service has to be removed first", installedBinary, "uninstall", "--system"); err != nil {
+			return err
+		}
 	}
 
+	want := userT
 	args := []string{"--dir", dir, "run", "--service"}
 	if useTUN {
-		args = append(args, "--tun")
+		// The service is told whose files it works with; it doesn't guess
+		// from the directory or the environment.
+		want = sysT
+		args = []string{"--dir", dir, "--uid", userT.User.Uid, "run", "--service", "--tun"}
 	} else {
 		args = append(args, "--no-tun")
 	}
@@ -241,6 +376,13 @@ func startService(o startOptions, restart bool) error {
 	if cur, _ := service.Query(want); cur.Running && !restart && service.UpToDate(spec) {
 		fmt.Println("already running")
 		return showStatus()
+	}
+	if useTUN && us.Installed {
+		// Through the user's service manager; no files are touched.
+		if err := service.Stop(userT); err != nil {
+			return err
+		}
+		fmt.Printf("stopped the proxy-mode %s\n", userT)
 	}
 	if _, err := service.InstallBinary(want); err != nil {
 		return fmt.Errorf("install the service binary: %w", err)
@@ -268,13 +410,16 @@ func waitStarted(dir string, begin time.Time) error {
 	return errors.New(`the service didn't start; see "proxy-router logs"`)
 }
 
-func stopService(remove bool) error {
+func stopService(remove, systemOnly bool) error {
 	userT, sysT, err := targets()
 	if err != nil {
 		return err
 	}
 	found := false
 	for _, t := range []service.Target{sysT, userT} {
+		if systemOnly && t.Scope == service.User {
+			continue
+		}
 		st, err := service.Query(t)
 		if err != nil || !st.Installed {
 			continue
@@ -283,8 +428,21 @@ func stopService(remove bool) error {
 		if !remove && !st.Running && !st.Enabled {
 			continue
 		}
-		if t.Scope == service.System && os.Geteuid() != 0 {
-			return asRoot("the TUN service runs as root")
+		// Root handles the system service and the user their own, as in
+		// startService.
+		switch root := os.Geteuid() == 0; {
+		case t.Scope == service.System && !root:
+			args := []string{"stop", "--system"}
+			if remove {
+				args[0] = "uninstall"
+			}
+			if err := asRoot("the TUN service runs as root", installedBinary, args...); err != nil {
+				return err
+			}
+			continue
+		case t.Scope == service.User && root:
+			fmt.Printf("left the proxy-mode %s alone: it's yours, run this without sudo for it\n", t)
+			continue
 		}
 		if remove {
 			err = service.Remove(t)

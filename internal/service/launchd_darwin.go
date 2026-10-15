@@ -75,8 +75,11 @@ func Definition(s Spec) []byte {
 
 // Install writes the plist, enables it at boot/login and (re)starts it.
 func Install(s Spec) error {
+	if err := s.Check(); err != nil {
+		return err
+	}
 	path := DefinitionPath(s.Target)
-	if err := writeOwned(s.Target, path, Definition(s)); err != nil {
+	if err := writeDefinition(s.Target, path, Definition(s)); err != nil {
 		return err
 	}
 	if err := Stop(s.Target); err != nil {
@@ -120,6 +123,9 @@ func Stop(t Target) error {
 
 // Remove stops the service and deletes its files.
 func Remove(t Target) error {
+	if t.Scope == User && os.Geteuid() == 0 {
+		return errUserFilesAsRoot
+	}
 	if err := Stop(t); err != nil {
 		return err
 	}
