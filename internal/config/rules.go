@@ -2,7 +2,8 @@ package config
 
 import (
 	"fmt"
-	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +21,8 @@ type Rules struct {
 	Pools map[string]PoolSpec `yaml:"pools"`
 	// Health check deciding which pool members are usable.
 	PoolProbe PoolProbe `yaml:"pool_probe"`
-	// Optional Xray "dns" object, passed through unchanged.
+	// Optional Xray "dns" object, passed through unchanged apart from
+	// checking its "ext:" file references.
 	DNS map[string]any `yaml:"dns"`
 }
 
@@ -91,7 +93,7 @@ func splitCSV(s string) []string {
 
 // LoadRules reads and validates a rules file.
 func LoadRules(path string) (*Rules, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPath(path, maxConfig)
 	if err != nil {
 		return nil, fmt.Errorf("rules file: %w (create one with `proxy-router init`)", err)
 	}
@@ -159,6 +161,66 @@ func (r *Rules) validate() error {
 		for _, in := range rule.Inbound {
 			if in != "socks" && in != "http" && in != "tun" {
 				return fmt.Errorf("%s: inbound must be socks, http or tun, got %q", label, in)
+			}
+		}
+		for _, list := range []StringList{rule.Domain, rule.IP, rule.Source} {
+			for _, v := range list {
+				if err := checkGeoRef(v); err != nil {
+					return fmt.Errorf("%s: %w", label, err)
+				}
+			}
+		}
+	}
+	if err := checkDNSRefs(r.DNS, "dns"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkGeoRef checks an Xray "ext:file:tag" reference (also ext-ip: and
+// ext-domain:) names a file in the assets directory. Xray joins the name
+// to the directory as is, so "ext:../../x:tag" would read any file.
+func checkGeoRef(v string) error {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "!")
+	for _, prefix := range []string{"ext:", "ext-ip:", "ext-domain:"} {
+		rest, ok := strings.CutPrefix(v, prefix)
+		if !ok {
+			continue
+		}
+		file, _, _ := strings.Cut(rest, ":")
+		if file == "" || file != filepath.Base(file) || !filepath.IsLocal(file) || strings.ContainsRune(file, '\\') {
+			return fmt.Errorf("%q: the file must be a plain name in the assets directory", v)
+		}
+	}
+	return nil
+}
+
+// checkDNSRefs runs checkGeoRef on every key and string in the dns block:
+// host and server domain lists, expectedIPs and the like all accept them.
+func checkDNSRefs(v any, at string) error {
+	switch v := v.(type) {
+	case string:
+		if err := checkGeoRef(v); err != nil {
+			return fmt.Errorf("%s: %w", at, err)
+		}
+	case []any:
+		for i, item := range v {
+			if err := checkDNSRefs(item, fmt.Sprintf("%s[%d]", at, i)); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if err := checkGeoRef(k); err != nil {
+				return fmt.Errorf("%s: %w", at, err)
+			}
+			if err := checkDNSRefs(v[k], at+"."+k); err != nil {
+				return err
 			}
 		}
 	}

@@ -94,11 +94,12 @@ menu. --foreground keeps it attached to the terminal instead.`,
 // tray.log. The caller holds the tray lock, which is handed over.
 func detachTray(exe, dir string) error {
 	logName := filepath.Join(dir, "tray.log")
-	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
 	defer logf.Close()
+	_ = logf.Chmod(0o600)
 	cmd := exec.Command(exe, "--dir", dir, "tray", "--foreground")
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

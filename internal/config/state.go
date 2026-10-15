@@ -59,7 +59,7 @@ func (e Entry) String() string { return fmt.Sprintf("#%d %s/%s", e.Index, e.Grou
 
 func LoadState(dir string) (*State, error) {
 	s := &State{path: filepath.Join(dir, "state.json")}
-	data, err := os.ReadFile(s.path)
+	data, err := readFile(dir, "state.json", maxState)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
@@ -72,7 +72,14 @@ func LoadState(dir string) (*State, error) {
 	return s, nil
 }
 
+// ErrReadOnly is returned by Save in the TUN service, which never writes
+// to the user's directory.
+var ErrReadOnly = errors.New("the TUN service doesn't write state.json")
+
 func (s *State) Save() error {
+	if confined.on {
+		return ErrReadOnly
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -36,8 +37,27 @@ type runStatus struct {
 
 var processStart = time.Now()
 
-func statusPath(dir string) string { return filepath.Join(dir, "status.json") }
-func logPath(dir string) string    { return filepath.Join(dir, "proxy-router.log") }
+// systemRunDir holds status.json while proxy-router runs as root (the TUN
+// service's RuntimeDirectory on Linux), so root never writes to the
+// user's directory. "status" and the tray read it as the user.
+func systemRunDir() string {
+	if runtime.GOOS == "darwin" {
+		return "/var/run/proxy-router"
+	}
+	return "/run/proxy-router"
+}
+
+// statusPath is where this process reports its status.
+func statusPath(dir string) string {
+	if os.Geteuid() == 0 {
+		return filepath.Join(systemRunDir(), "status.json")
+	}
+	return filepath.Join(dir, "status.json")
+}
+
+// logPath is the user service's log; the TUN service logs to the journal
+// (Linux) or service.SystemLog (macOS).
+func logPath(dir string) string { return filepath.Join(dir, "proxy-router.log") }
 
 func describeRun(e *env, o runOptions, state, waiting string) runStatus {
 	st := runStatus{
@@ -66,7 +86,15 @@ func describeRun(e *env, o runOptions, state, waiting string) runStatus {
 
 func writeRunStatus(dir string, st runStatus) {
 	data, _ := json.MarshalIndent(st, "", "  ")
-	_ = config.WriteFileAtomic(statusPath(dir), append(data, '\n'), 0o644)
+	perm := os.FileMode(0o600)
+	if os.Geteuid() == 0 {
+		// Readable by the user; it says no more than "ip route" does.
+		perm = 0o644
+		if !systemRunDirOK() {
+			return
+		}
+	}
+	_ = config.WriteFileAtomic(statusPath(dir), append(data, '\n'), perm)
 }
 
 // removeRunStatus deletes status.json if it's this process's.
@@ -76,10 +104,17 @@ func removeRunStatus(dir string) {
 	}
 }
 
-// readRunStatus returns the status of a live proxy-router process.
+// readRunStatus returns the status of a live proxy-router process: one
+// running as root (the TUN service), or else the user's.
 func readRunStatus(dir string) (runStatus, bool) {
+	if st, ok := parseRunStatus(os.ReadFile(filepath.Join(systemRunDir(), "status.json"))); ok {
+		return st, true
+	}
+	return parseRunStatus(config.ReadUserFile(dir, "status.json"))
+}
+
+func parseRunStatus(data []byte, err error) (runStatus, bool) {
 	var st runStatus
-	data, err := os.ReadFile(statusPath(dir))
 	if err != nil || json.Unmarshal(data, &st) != nil {
 		return st, false
 	}

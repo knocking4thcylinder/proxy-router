@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
+	"github.com/knocking4thcylinder/proxy-router/internal/service"
 	"github.com/knocking4thcylinder/proxy-router/internal/sysproxy"
 	"github.com/knocking4thcylinder/proxy-router/internal/tun"
 )
@@ -196,10 +198,61 @@ func refreshStale(ctx context.Context) bool {
 	}
 	fmt.Fprintf(os.Stderr, "updating %d subscription(s)...\n", len(stale))
 	e.updateAll(ctx, stale)
-	if err := e.state.Save(); err != nil {
+	if config.Confined() {
+		keepRefreshed(e.state, stale)
+	} else if err := e.state.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
 	}
 	return true
+}
+
+// serviceSubs holds the subscriptions the TUN service refreshed. It
+// can't save them to the user's state.json, so it keeps them in memory
+// (as JSON, so later loads get their own copies) and load() lays them
+// over what it reads. Once the user's own commands save a newer refresh,
+// that wins; after a restart the service refreshes again.
+var serviceSubs struct {
+	sync.Mutex
+	subs map[string][]byte
+	hwid string
+}
+
+func keepRefreshed(s *config.State, subs []*config.Subscription) {
+	serviceSubs.Lock()
+	defer serviceSubs.Unlock()
+	if serviceSubs.subs == nil {
+		serviceSubs.subs = map[string][]byte{}
+	}
+	for _, sub := range subs {
+		if data, err := json.Marshal(sub); err == nil {
+			serviceSubs.subs[sub.Name] = data
+		}
+	}
+	// The HWID made up for the requests has to stay the same.
+	serviceSubs.hwid = s.HWID
+}
+
+// applyRefreshed replaces the servers of subscriptions in s with ones
+// keepRefreshed has from a later refresh of the same URL.
+func applyRefreshed(s *config.State) {
+	serviceSubs.Lock()
+	defer serviceSubs.Unlock()
+	for i, sub := range s.Subscriptions {
+		data, ok := serviceSubs.subs[sub.Name]
+		if !ok {
+			continue
+		}
+		var r config.Subscription
+		if json.Unmarshal(data, &r) != nil || r.URL != sub.URL || !r.UpdatedAt.After(sub.UpdatedAt) {
+			continue
+		}
+		c := *sub
+		c.Servers, c.Info, c.UpdatedAt, c.LastError = r.Servers, r.Info, r.UpdatedAt, r.LastError
+		s.Subscriptions[i] = &c
+	}
+	if s.HWID == "" {
+		s.HWID = serviceSubs.hwid
+	}
 }
 
 func run(ctx context.Context, o runOptions) error {
@@ -207,9 +260,17 @@ func run(ctx context.Context, o runOptions) error {
 	if err != nil {
 		return err
 	}
+	if os.Geteuid() == 0 {
+		// The unit records whose files the service reads (--uid).
+		if o.service && flagUID == "" {
+			return errors.New(`the TUN service was installed by an older proxy-router; reinstall it with "proxy-router restart"`)
+		}
+		if err := confineRoot(dir); err != nil {
+			return err
+		}
+	}
 	if o.service {
-		config.SetOwnerFromDir(dir)
-		if err := redirectOutput(logPath(dir)); err != nil {
+		if err := serviceOutput(dir); err != nil {
 			return err
 		}
 		fmt.Printf("\n=== proxy-router %s service starting, %s ===\n", version(), time.Now().Format(time.RFC3339))
@@ -544,6 +605,16 @@ func geoCmd() *cobra.Command {
 		Short: "Download the latest geoip.dat and geosite.dat",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if os.Geteuid() == 0 {
+				// Root updates the TUN service's own copies.
+				dir, err := configDir()
+				if err != nil {
+					return err
+				}
+				if err := confineRoot(dir); err != nil {
+					return err
+				}
+			}
 			e, err := load()
 			if err != nil {
 				return err
@@ -556,6 +627,9 @@ func geoCmd() *cobra.Command {
 					continue
 				}
 				fmt.Printf("%s: %s\n", name, humanBytes(n))
+			}
+			if st, _ := service.Query(service.Target{Scope: service.System}); st.Installed && os.Geteuid() != 0 {
+				fmt.Println(`note: the TUN service keeps its own copies; "sudo proxy-router geo update" updates them`)
 			}
 			return errors.Join(errs...)
 		},
