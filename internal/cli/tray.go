@@ -184,8 +184,9 @@ type trayModel struct {
 }
 
 type trayGroup struct {
-	name    string
-	servers []string
+	name         string
+	servers      []string
+	subscription bool
 }
 
 func (t *tray) ready() {
@@ -255,7 +256,7 @@ func (t *tray) model() trayModel {
 		m.configErr = err.Error()
 	} else {
 		for _, sub := range e.state.Subscriptions {
-			g := trayGroup{name: sub.Name}
+			g := trayGroup{name: sub.Name, subscription: true}
 			for _, s := range sub.Servers {
 				g.servers = append(g.servers, s.Name)
 			}
@@ -391,24 +392,37 @@ func (t *tray) build(m trayModel) {
 		servers.Disable()
 	}
 	for _, g := range m.groups {
-		parent := servers
-		if len(m.groups) > 1 {
-			parent = servers.AddSubMenuItem(menuLabel(g.name), "")
+		label := fmt.Sprintf("%s (%d)", menuLabel(g.name), len(g.servers))
+		if g.name == m.selGroup {
+			label = "✓ " + label
+		}
+		parent := servers.AddSubMenuItem(label, "")
+		t.onClick(parent.AddSubMenuItem("Use the Fastest", "Test only this group"), m.busy || len(g.servers) == 0, func() {
+			t.run("Testing "+g.name+"…", false, "use", "--fastest", "--group", g.name)
+		})
+		if g.subscription {
+			t.onClick(parent.AddSubMenuItem("Update Subscription", ""), m.busy, func() {
+				t.run("Updating "+g.name+"…", false, "sub", "update", "--", g.name)
+			})
+		}
+		parent.AddSeparator()
+		if len(g.servers) == 0 {
+			parent.AddSubMenuItem("No servers", "").Disable()
 		}
 		for _, name := range g.servers {
 			item := parent.AddSubMenuItemCheckbox(menuLabel(name), "", g.name == m.selGroup && name == m.selName)
-			t.onClick(item, false, func() { t.selectServer(g.name, name) })
+			t.onClick(item, m.busy, func() { t.selectServer(g.name, name) })
 		}
 	}
 	if len(m.groups) == 0 {
 		servers.AddSubMenuItem(`No servers yet ("proxy-router sub add <url>")`, "").Disable()
 	} else {
 		servers.AddSeparator()
-		t.onClick(servers.AddSubMenuItem("Use the Fastest", "Ping every server and select the fastest"), m.busy, func() {
+		t.onClick(servers.AddSubMenuItem("Use the Fastest Across All Groups", "Ping every server and select the fastest"), m.busy, func() {
 			t.run("Testing servers…", false, "use", "--fastest")
 		})
 	}
-	t.onClick(servers.AddSubMenuItem("Update Subscriptions", ""), m.busy || len(m.groups) == 0, func() {
+	t.onClick(servers.AddSubMenuItem("Update All Subscriptions", ""), m.busy || len(m.groups) == 0, func() {
 		t.run("Updating subscriptions…", false, "sub", "update")
 	})
 	systray.AddSeparator()

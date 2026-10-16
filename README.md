@@ -142,8 +142,10 @@ network, and grey when disconnected. Its menu:
   the service's own root-owned copy of proxy-router, so switching modes
   and updating the service to a new build still ask. Switching to proxy
   mode and `uninstall` remove the rule.
-- **Servers**: pick a server (grouped by subscription), use the fastest,
-  update subscriptions
+- **Servers**: each subscription has its own submenu with a server count,
+  server selection, **Use the Fastest**, and **Update Subscription**. The
+  active group is marked with a check. Manually added servers have their own
+  submenu; actions across all subscriptions are labeled explicitly.
 - **Edit Routing Rules**, **Show Log**, **Open Config Folder**
 - **Start Tray at Login**: adds a login item (`~/.config/autostart` on
   Linux, a LaunchAgent on macOS) that runs this `proxy-router` binary, so
@@ -169,8 +171,8 @@ Quitting the tray leaves the service running.
 | `sub remove <name>` | |
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
-| `list [-g group] [-v]` | list servers; `-v` includes warnings |
-| `use <server>` / `use --fastest [-g group]` | select the server for `proxy` |
+| `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
+| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy` |
 | `ping [server...] [-g group] [--exit] [-q]` | live latency tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
@@ -183,6 +185,21 @@ Quitting the tray leaves the service running.
 | `config [-r rules.yaml] [-q] [--tun]` | validate, and print the generated Xray config |
 | `geo update` | download fresh `geoip.dat` / `geosite.dat` |
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
+
+Work with one subscription at a time using its name (Tab completion is supported):
+
+```sh
+proxy-router list -g "My VPN"
+proxy-router ping -g "My VPN"
+proxy-router use -g "My VPN" "Germany"
+proxy-router use --fastest -g "My VPN"
+proxy-router sub update "My VPN"
+```
+
+`--group` scopes server names and completion to that subscription, including
+explicit servers passed to `ping`. Server numbers remain global, so a number
+outside the requested group is rejected. Use `-g manual` for manually added
+servers. An unknown group reports an error.
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
 any unique part of the name. After `group/`, only that group's servers
