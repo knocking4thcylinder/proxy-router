@@ -60,6 +60,7 @@ func TestNftClear(t *testing.T) {
 func TestPfRules(t *testing.T) {
 	rs := pfRules(NewOptions("utun99", false, true, []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48"}))
 	for _, want := range []string{
+		"pass quick on lo0 all no state",
 		"pass out quick on utun99 all",
 		"pass out quick inet from any to { 100.64.0.0/10 }",
 		"pass out quick inet6 from any to { fd7a:115c:a1e0::/48 }",
@@ -68,6 +69,12 @@ func TestPfRules(t *testing.T) {
 		if !strings.Contains(rs, want) {
 			t.Errorf("missing %q in:\n%s", want, rs)
 		}
+	}
+	// The TUN front and user-facing SOCKS/HTTP listeners use loopback.
+	// Its exception must cover SYNs and replies in either direction,
+	// without creating PF states that can drop the local second pass.
+	if !strings.HasPrefix(rs, "pass quick on lo0 all no state\n") {
+		t.Fatalf("loopback must bypass state tracking before filtering:\n%s", rs)
 	}
 	before(t, rs, "100.64.0.0/10", "port { 53, 853 }")
 	before(t, rs, "port { 53, 853 }", "192.168.0.0/16")

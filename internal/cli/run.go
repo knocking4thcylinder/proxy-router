@@ -25,6 +25,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/netif"
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
+	"github.com/knocking4thcylinder/proxy-router/internal/share"
 	"github.com/knocking4thcylinder/proxy-router/internal/sysproxy"
 	"github.com/knocking4thcylinder/proxy-router/internal/tun"
 )
@@ -51,20 +52,36 @@ type runOptions struct {
 }
 
 func runCmd() *cobra.Command {
+	return newRunCmd(run, startService)
+}
+
+func newRunCmd(runForeground func(context.Context, runOptions) error, startBackground func(startOptions, bool) error) *cobra.Command {
 	var o runOptions
+	var foreground bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Start the local proxy with the selected server and routing rules",
-		Long: `Start the local SOCKS5/HTTP proxy.
+		Long: `Start the local SOCKS5/HTTP proxy in the background and return to the shell.
+Like "start", this enables the service at login (at boot in TUN mode).
+Use --foreground to keep it attached to this terminal until Ctrl-C.
+Use "proxy-router stop" to stop the background proxy and "proxy-router logs -f"
+to follow its output.
 
 While running, proxy-router reloads automatically when the rules file,
 config.yaml or the selected server ("proxy-router use") changes, and on
 SIGHUP. Subscriptions are refreshed every update_interval.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd.Context(), o)
+			if foreground || o.service {
+				return runForeground(cmd.Context(), o)
+			}
+			return startBackground(startOptions{
+				tun: o.tun, noTUN: o.noTUN, force: o.force, verbose: o.verbose,
+				rules: o.rules, server: o.server, systemProxy: o.systemProxy, noUpdate: o.noUpdate,
+			}, false)
 		},
 	}
+	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal until Ctrl-C")
 	cmd.Flags().StringVarP(&o.rules, "rules", "r", "", "routing rules file (default from config.yaml)")
 	cmd.Flags().StringVarP(&o.server, "server", "s", "", "server to use for this run instead of the selected one")
 	cmd.Flags().BoolVar(&o.systemProxy, "system-proxy", false, "point the system proxy settings at proxy-router while running (macOS)")
@@ -133,7 +150,8 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 		}
 		plan.Server = &entry
 	}
-	if err := e.ensureGeo(rules); err != nil {
+	geo := engine.PingOptions{Interface: iface, Config: e.cfg, Resolve: plan.Resolve, Mark: mark}
+	if err := e.ensureGeo(rules, plan.Server, geo); err != nil {
 		return nil, nil, nil, err
 	}
 	xc, notes, err := engine.Build(plan)
@@ -154,8 +172,9 @@ func (e *env) rulesPath(o runOptions) string {
 	return e.cfg.RulesPath()
 }
 
-// ensureGeo downloads geo files the rules need but are missing.
-func (e *env) ensureGeo(rules *config.Rules) error {
+// ensureGeo downloads geo files the rules need but are missing, through
+// server (nil: the selected one) set up as o says.
+func (e *env) ensureGeo(rules *config.Rules, server *config.Entry, o engine.PingOptions) error {
 	needIP, needSite := rules.NeedsGeo()
 	for _, f := range []struct {
 		need      bool
@@ -171,13 +190,49 @@ func (e *env) ensureGeo(rules *config.Rules) error {
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "rules use %s which is missing; downloading...\n", f.name)
-		n, err := engine.DownloadAsset(context.Background(), f.url, e.cfg.AssetDir(), f.name)
+		n, err := e.downloadGeo(context.Background(), server, o, f.url, f.name)
 		if err != nil {
-			return fmt.Errorf("download %s: %w (set HTTPS_PROXY or change geo URLs in config.yaml)", f.name, err)
+			return fmt.Errorf("download %s: %w (change the geo URLs in config.yaml, or put the file in %s)", f.name, err, e.cfg.AssetDir())
 		}
 		fmt.Fprintf(os.Stderr, "downloaded %s (%s)\n", f.name, humanBytes(n))
 	}
 	return nil
+}
+
+// geoTries caps how many members of a pool downloadGeo tries.
+const geoTries = 3
+
+// downloadGeo fetches a geo file through server (nil: the selected one),
+// trying a pool's members in turn. GitHub, where the files come from, is
+// often blocked where a proxy is needed, and TUN mode fetches its own
+// copies before the TUN is up. Only without any server does it go direct.
+func (e *env) downloadGeo(ctx context.Context, server *config.Entry, o engine.PingOptions, url, name string) (int64, error) {
+	if server == nil {
+		if cur, ok := e.state.Current(); ok {
+			server = &cur
+		}
+	}
+	if server == nil {
+		return engine.DownloadAsset(ctx, nil, url, e.cfg.AssetDir(), name)
+	}
+	via := server.Server.Members()
+	if via == nil {
+		via = []*share.Server{server.Server}
+	}
+	var errs []error
+	for _, s := range via[:min(len(via), geoTries)] {
+		client, stop, err := engine.ProxyClient(s, o, url)
+		if err == nil {
+			var n int64
+			n, err = engine.DownloadAsset(ctx, client, url, e.cfg.AssetDir(), name)
+			stop()
+			if err == nil {
+				return n, nil
+			}
+		}
+		errs = append(errs, fmt.Errorf("through %s: %w", clean(s.Name), err))
+	}
+	return 0, errors.Join(errs...)
 }
 
 // refreshStale updates subscriptions older than the update interval.
@@ -204,13 +259,14 @@ func refreshStale(ctx context.Context) bool {
 	if len(stale) == 0 {
 		return false
 	}
-	fmt.Fprintf(os.Stderr, "updating %d subscription(s)...\n", len(stale))
-	e.updateAll(ctx, stale)
+	fmt.Fprintf(os.Stderr, "proxy is running; refreshing %d subscription(s) in the background...\n", len(stale))
+	failed := e.updateAll(ctx, stale)
 	if config.Confined() {
 		keepRefreshed(e.state, stale)
 	} else if err := e.state.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "save state: %v\n", err)
 	}
+	fmt.Fprintf(os.Stderr, "subscription refresh finished: %d updated, %d failed\n", len(stale)-failed, failed)
 	return true
 }
 
@@ -446,8 +502,18 @@ func run(ctx context.Context, o runOptions) error {
 	// the cached servers instead of waiting (with no connectivity in TUN
 	// mode) for a slow or blocked subscription server.
 	refreshed := make(chan bool, 1)
+	refreshCtx, cancelRefresh := context.WithCancel(ctx)
+	defer cancelRefresh()
+	refreshing := false
+	refresh := func() {
+		if refreshing {
+			return
+		}
+		refreshing = true
+		go func() { refreshed <- refreshStale(refreshCtx) }()
+	}
 	if !o.noUpdate {
-		go func() { refreshed <- refreshStale(ctx) }()
+		refresh()
 	}
 
 	// Network settings drift without the files changing (DHCP rewriting
@@ -534,6 +600,7 @@ func run(ctx context.Context, o runOptions) error {
 				reload("files or network changed")
 			}
 		case changed := <-refreshed:
+			refreshing = false
 			if changed {
 				stamps = snapshot()
 				reload("subscriptions updated")
@@ -545,10 +612,7 @@ func run(ctx context.Context, o runOptions) error {
 		case <-reresolve.C:
 			reload("server addresses changed")
 		case <-updates:
-			if refreshStale(ctx) {
-				stamps = snapshot()
-				reload("subscriptions updated")
-			}
+			refresh()
 		}
 	}
 	return fatal
@@ -619,6 +683,14 @@ func printStatus(e *env, o runOptions) {
 	if st.HTTP != "" {
 		fmt.Printf("http:   %s\n", st.HTTP)
 	}
+	if !o.service {
+		fmt.Println("Proxy is running in the foreground. Press Ctrl-C to stop.")
+		cmd := "proxy-router start"
+		if st.TUN != "" {
+			cmd += " --tun"
+		}
+		fmt.Printf("To free this terminal, stop this run, then use: %s\n", cmd)
+	}
 }
 
 func setSystemProxy(cfg *config.Config) (sysproxy.Restore, error) {
@@ -671,9 +743,11 @@ func geoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			iface, _ := e.outboundInterface()
+			o := engine.PingOptions{Interface: iface, Config: e.cfg, Resolve: e.resolverIf(iface)}
 			var errs []error
 			for name, url := range map[string]string{"geoip.dat": e.cfg.Geo.GeoIP, "geosite.dat": e.cfg.Geo.GeoSite} {
-				n, err := engine.DownloadAsset(cmd.Context(), url, e.cfg.AssetDir(), name)
+				n, err := e.downloadGeo(cmd.Context(), nil, o, url, name)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", name, err))
 					continue

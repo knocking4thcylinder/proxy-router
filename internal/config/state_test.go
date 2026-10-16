@@ -76,3 +76,33 @@ func TestFindAll(t *testing.T) {
 		}
 	}
 }
+
+func TestFindInGroup(t *testing.T) {
+	st := findState(map[string][]string{"A": {"Shared", "Only A"}, "B": {"Shared", "Only B"}})
+	for _, tc := range []struct {
+		query, group string
+		index        int
+	}{
+		{"Shared", "B", 3}, {"Only", "B", 4}, {"3", "B", 3}, {"#3", "B", 3},
+		{"B/Shared", "B", 3}, {"A/Shared", "B", 0}, {"1", "B", 0},
+		{"Shared", "missing", 0}, {"Shared", "", 0},
+	} {
+		en, err := st.FindInGroup(tc.query, tc.group)
+		if tc.index == 0 {
+			if err == nil {
+				t.Errorf("%q in %q unexpectedly matched %+v", tc.query, tc.group, en)
+			}
+			continue
+		}
+		if err != nil || en.Index != tc.index {
+			t.Errorf("%q in %q = %+v, %v", tc.query, tc.group, en, err)
+		}
+	}
+	entries, err := st.GroupEntries("B")
+	if err != nil || len(entries) != 2 || entries[0].Index != 3 {
+		t.Fatalf("group entries: %v, %v", entries, err)
+	}
+	if _, err := st.GroupEntries("missing"); err == nil {
+		t.Fatal("unknown group accepted")
+	}
+}

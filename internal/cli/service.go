@@ -22,8 +22,10 @@ import (
 )
 
 type startOptions struct {
-	tun, noTUN, force bool
-	verbose           int
+	tun, noTUN, force     bool
+	verbose               int
+	rules, server         string
+	systemProxy, noUpdate bool
 }
 
 func (o *startOptions) flags(cmd *cobra.Command) {
@@ -31,6 +33,10 @@ func (o *startOptions) flags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&o.noTUN, "no-tun", false, "local SOCKS5/HTTP proxy only (user service)")
 	cmd.Flags().BoolVar(&o.force, "force", false, "start TUN mode even though another VPN owns the default route")
 	cmd.Flags().CountVarP(&o.verbose, "verbose", "v", "log every connection; -vv also logs why connections fail")
+	cmd.Flags().StringVarP(&o.rules, "rules", "r", "", "routing rules file (default from config.yaml)")
+	cmd.Flags().StringVarP(&o.server, "server", "s", "", "server to use instead of the selected one")
+	cmd.Flags().BoolVar(&o.systemProxy, "system-proxy", false, "point the system proxy settings at proxy-router (macOS)")
+	cmd.Flags().BoolVar(&o.noUpdate, "no-update", false, "don't refresh subscriptions")
 	cmd.MarkFlagsMutuallyExclusive("tun", "no-tun")
 	passwordDialogFlag(cmd)
 }
@@ -42,11 +48,30 @@ func (o startOptions) args(restart bool) []string {
 	if restart {
 		args[0] = "restart"
 	}
+	args = append(args, o.runArgs()...)
+	return args
+}
+
+// runArgs preserves run options through privilege elevation and service launch.
+func (o startOptions) runArgs() []string {
+	var args []string
 	if o.force {
 		args = append(args, "--force")
 	}
 	if o.verbose > 0 {
 		args = append(args, "-"+strings.Repeat("v", o.verbose))
+	}
+	if o.rules != "" {
+		args = append(args, "--rules", o.rules)
+	}
+	if o.server != "" {
+		args = append(args, "--server", o.server)
+	}
+	if o.systemProxy {
+		args = append(args, "--system-proxy")
+	}
+	if o.noUpdate {
+		args = append(args, "--no-update")
 	}
 	return args
 }
@@ -229,11 +254,13 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	// the uid they report, and nothing is taken from the environment.
 	argv := append([]string{exe, "--dir", dir, "--uid", strconv.Itoa(os.Getuid())}, args...)
 	var c *exec.Cmd
+	passwordless := false
 	if passwordDialog {
 		// The tray's connect and disconnect on macOS, once the dialog has
 		// written the sudoers rule for them.
 		if c = passwordlessSudo(argv); c != nil {
-			fmt.Fprintf(os.Stderr, "%s; running with sudo, which the sudoers rule allows without a password\n", why)
+			passwordless = true
+			fmt.Fprintf(os.Stderr, "%s; trying sudo without a password\n", why)
 		} else if c = elevated(argv); c == nil {
 			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")
 		} else {
@@ -244,7 +271,14 @@ func asRoot(why string, which rootBinary, args ...string) error {
 		c = exec.Command("sudo", argv...)
 	}
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	err = c.Run()
+	if passwordless {
+		err = runSudoWithFallback(c, func() *exec.Cmd {
+			fmt.Fprintf(os.Stderr, "%s; asking for the password\n", why)
+			return elevated(argv)
+		})
+	} else {
+		err = c.Run()
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if _, sysT, terr := targets(); terr == nil && exe == service.BinaryPath(sysT) && service.Outdated(sysT) {
@@ -308,6 +342,14 @@ func autostart(t service.Target) string {
 }
 
 func startService(o startOptions, restart bool) error {
+	// Service managers start from a different working directory.
+	if o.rules != "" {
+		path, err := filepath.Abs(o.rules)
+		if err != nil {
+			return err
+		}
+		o.rules = path
+	}
 	e, err := load()
 	if err != nil {
 		return err
@@ -379,12 +421,7 @@ func startService(o startOptions, restart bool) error {
 	} else {
 		args = append(args, "--no-tun")
 	}
-	if o.force {
-		args = append(args, "--force")
-	}
-	if o.verbose > 0 {
-		args = append(args, "-"+strings.Repeat("v", o.verbose))
-	}
+	args = append(args, o.runArgs()...)
 	spec := service.Spec{Target: want, Binary: service.BinaryPath(want), Args: args}
 	if cur, _ := service.Query(want); cur.Running && !restart && service.UpToDate(spec) {
 		fmt.Println("already running")

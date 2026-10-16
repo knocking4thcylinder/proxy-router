@@ -211,6 +211,39 @@ func (s *State) Find(query string) (Entry, error) {
 	return Entry{}, fmt.Errorf("no server matches %q", query)
 }
 
+// GroupEntries validates a group and preserves the global server indices.
+func (s *State) GroupEntries(group string) ([]Entry, error) {
+	if group != "" && group != ManualGroup && s.Subscription(group) == nil {
+		return nil, fmt.Errorf("no subscription named %q", group)
+	}
+	entries := s.Entries()
+	if group != "" {
+		entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Group != group })
+	}
+	return entries, nil
+}
+
+// FindInGroup resolves names within a subscription while retaining global indices.
+func (s *State) FindInGroup(query, group string) (Entry, error) {
+	if group == "" {
+		return s.Find(query)
+	}
+	if _, err := s.GroupEntries(group); err != nil {
+		return Entry{}, err
+	}
+	q := strings.TrimSpace(strings.TrimPrefix(query, "#"))
+	_, numeric := strconv.Atoi(q)
+	_, _, qualified := s.scope(q)
+	if numeric != nil && !qualified {
+		query = group + "/" + q
+	}
+	entry, err := s.Find(query)
+	if err == nil && entry.Group != group {
+		return Entry{}, fmt.Errorf("server %q is not in subscription %q", query, group)
+	}
+	return entry, err
+}
+
 // scope splits "group/name" when it starts with a known group (the longest,
 // as names may contain '/' too).
 func (s *State) scope(query string) (group, name string, ok bool) {

@@ -110,8 +110,12 @@ command you type only controls it.
   (`proxy-router logs -f`; `start -v` / `-vv` for more detail). The log is
   cleared when it reaches 10 MB.
 
-`run` still runs proxy-router in the foreground, for debugging. It refuses
-to start while the service is running.
+`run` starts the background service and returns to your shell, just like
+`start`. This also enables startup at login (at boot in TUN mode). Use
+`proxy-router stop` to stop it and `proxy-router logs -f` to follow output.
+For an attached debugging session, use `proxy-router run --foreground`
+(or `sudo proxy-router run --tun --foreground`) and stop it with Ctrl-C.
+Foreground mode refuses to start while the service is running.
 
 ## Tray icon
 
@@ -138,8 +142,10 @@ network, and grey when disconnected. Its menu:
   the service's own root-owned copy of proxy-router, so switching modes
   and updating the service to a new build still ask. Switching to proxy
   mode and `uninstall` remove the rule.
-- **Servers**: pick a server (grouped by subscription), use the fastest,
-  update subscriptions
+- **Servers**: each subscription has its own submenu with a server count,
+  server selection, **Use the Fastest**, and **Update Subscription**. The
+  active group is marked with a check. Manually added servers have their own
+  submenu; actions across all subscriptions are labeled explicitly.
 - **Edit Routing Rules**, **Show Log**, **Open Config Folder**
 - **Start Tray at Login**: adds a login item (`~/.config/autostart` on
   Linux, a LaunchAgent on macOS) that runs this `proxy-router` binary, so
@@ -165,8 +171,8 @@ Quitting the tray leaves the service running.
 | `sub remove <name>` | |
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
-| `list [-g group] [-v]` | list servers; `-v` includes warnings |
-| `use <server>` / `use --fastest [-g group]` | select the server for `proxy` |
+| `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
+| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy` |
 | `ping [server...] [-g group] [--exit] [-q]` | live latency tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
@@ -175,10 +181,25 @@ Quitting the tray leaves the service running.
 | `logs [-f] [-n lines]` | the service's log |
 | `uninstall` | remove the service (config and servers are kept) |
 | `tray` | tray / menu bar icon to connect, switch mode and pick servers |
-| `run [-r rules.yaml] [-s server] [--system-proxy] [--tun [--force]] [-v\|-vv]` | run in the foreground instead (`--tun` needs sudo) |
+| `run [--foreground] [-r rules.yaml] [-s server] [--system-proxy] [--tun [--force]] [-v\|-vv]` | start in the background; `--foreground` stays attached |
 | `config [-r rules.yaml] [-q] [--tun]` | validate, and print the generated Xray config |
 | `geo update` | download fresh `geoip.dat` / `geosite.dat` |
 | `init [--force]` | (re)create default `config.yaml` and `routing.yaml` |
+
+Work with one subscription at a time using its name (Tab completion is supported):
+
+```sh
+proxy-router list -g "My VPN"
+proxy-router ping -g "My VPN"
+proxy-router use -g "My VPN" "Germany"
+proxy-router use --fastest -g "My VPN"
+proxy-router sub update "My VPN"
+```
+
+`--group` scopes server names and completion to that subscription, including
+explicit servers passed to `ping`. Server numbers remain global, so a number
+outside the requested group is rejected. Use `-g manual` for manually added
+servers. An unknown group reports an error.
 
 `<server>` can be the number from `list`, the exact name, `group/name`, or
 any unique part of the name. After `group/`, only that group's servers
@@ -351,7 +372,7 @@ silently accepts things like a reversed range and then does nothing.
 
 ```sh
 proxy-router start --tun         # background service (asks for sudo)
-sudo proxy-router run --tun      # or in the foreground
+sudo proxy-router run --tun --foreground  # or in the foreground
 ```
 
 This captures all system traffic, so apps don't need proxy settings.
@@ -415,7 +436,7 @@ router's address to `system_route`.
 It's on from the moment the TUN comes up, and **it stays on when the
 service exits**: while it restarts after a crash or a config error, and
 during `proxy-router restart`, nothing leaks; traffic just stops. A
-foreground `run --tun` removes it when you stop it.
+foreground `run --tun --foreground` removes it when you stop it.
 
 **If the network is stuck** (the service keeps failing, or you stopped it
 with `systemctl`/`launchctl` directly):

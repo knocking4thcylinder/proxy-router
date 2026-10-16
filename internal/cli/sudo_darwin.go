@@ -11,7 +11,8 @@ import (
 )
 
 // passwordlessSudo returns a sudo command running argv when the sudoers
-// rule lets the user run it without a password, else nil. The rule only
+// listing permits it, else nil. Listing can succeed even when execution
+// requires authentication; runSudoWithFallback handles that. The rule only
 // covers the TUN service's root-owned copy of proxy-router with one of
 // sudoActions; "sudo -n -l" asks whether it allows argv without running
 // anything.

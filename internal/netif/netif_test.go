@@ -49,6 +49,16 @@ default            fe80::1%en0        UGcg                  en0
 	}
 }
 
+func TestPickSkipsScopedRoutes(t *testing.T) {
+	// macOS without IPv6 on en0: only the system utuns' scoped routes.
+	out := `default                                 fe80::%utun0                    UGcIg               utun0
+default                                 fe80::%utun1                    UGcIg               utun1
+`
+	if d := pick(parseNetstat(out)); d != (Detection{}) {
+		t.Fatalf("got %+v", d)
+	}
+}
+
 func TestPickIPv6SplitRoutes(t *testing.T) {
 	out := `default                                 fe80::1%en0                     UGcg                  en0
 ::/1                                    utun7                           USc                 utun7
