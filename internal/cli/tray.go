@@ -311,6 +311,12 @@ func (t *tray) model() trayModel {
 			m.details = append(m.details, "HTTP "+st.HTTP)
 		}
 	}
+	if !live {
+		if _, err := os.Stat(filepath.Join(systemRunDir(), "status.json")); errors.Is(err, os.ErrPermission) {
+			m.status, m.icon = "Service status unavailable", "waiting"
+			m.details = append(m.details, "Cannot read service status. Run proxy-router restart to update the service.")
+		}
+	}
 	if busy != "" {
 		m.status, m.busy = busy, true
 	}
@@ -501,6 +507,9 @@ func (t *tray) run(what string, root bool, args ...string) {
 			fmt.Fprint(os.Stderr, out.String())
 		}
 		if err != nil && root && authCanceled(err, out.String()) {
+			t.mu.Lock()
+			t.lastError = "Authentication was cancelled."
+			t.mu.Unlock()
 			return
 		}
 		if err != nil {

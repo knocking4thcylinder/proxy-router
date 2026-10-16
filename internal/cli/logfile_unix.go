@@ -63,12 +63,22 @@ func trim(f *os.File) {
 // systemRunDirOK creates systemRunDir if needed (systemd does for the
 // service) and checks that only root can write to it.
 func systemRunDirOK() bool {
-	d := systemRunDir()
+	return prepareStatusDir(systemRunDir(), 0)
+}
+
+// The service's umask is 0077, so Mkdir(0755) creates a directory the
+// user's tray cannot traverse. Set the final mode explicitly, after
+// checking ownership and permissions on a non-symlink directory handle.
+func prepareStatusDir(d string, uid int) bool {
 	_ = os.Mkdir(d, 0o755)
-	fi, err := os.Lstat(d)
-	if err != nil || !fi.IsDir() || fi.Mode().Perm()&0o022 != 0 {
+	fd, err := unix.Open(d, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
 		return false
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && st.Uid == 0
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || int(st.Uid) != uid || st.Mode&0o022 != 0 {
+		return false
+	}
+	return unix.Fchmod(fd, 0o755) == nil
 }
