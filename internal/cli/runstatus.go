@@ -47,6 +47,10 @@ func systemRunDir() string {
 	return "/run/proxy-router"
 }
 
+// outsidePath is the TUN service's unix socket handing out sockets that
+// leave around the TUN (see tun.ServeOutside).
+func outsidePath() string { return filepath.Join(systemRunDir(), "outside.sock") }
+
 // statusPath is where this process reports its status.
 func statusPath(dir string) string {
 	if os.Geteuid() == 0 {

@@ -14,12 +14,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/transport/internet"
 
 	// Registers every Xray protocol, transport and the JSON config loader.
 	_ "github.com/xtls/xray-core/main/distro/all"
@@ -242,6 +244,13 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	close(queue)
 	wg.Wait()
 	return results
+}
+
+// ControlSockets runs ctl on every socket Xray opens in this process,
+// before it connects or binds. It can't be undone, so it's only for
+// one-shot commands like ping.
+func ControlSockets(ctl func(network, address string, c syscall.RawConn) error) error {
+	return internet.RegisterDialerController(ctl)
 }
 
 // maxPingParallel caps how many servers Ping tests at once.

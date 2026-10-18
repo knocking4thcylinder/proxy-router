@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -139,4 +143,56 @@ func connectProxy(t *testing.T, serve http.HandlerFunc) string {
 	}))
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
+}
+
+// TestControlSocketsCoversPing: every socket a ping opens, TCP or UDP, goes
+// through ControlSockets, which is how ping gets around the TUN. It runs
+// in a child process: the control can't be removed again.
+func TestControlSocketsCoversPing(t *testing.T) {
+	if os.Getenv("PROXY_ROUTER_CONTROL_CHILD") == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestControlSocketsCoversPing$", "-test.v")
+		cmd.Env = append(os.Environ(), "PROXY_ROUTER_CONTROL_CHILD=1")
+		if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "--- PASS") {
+			t.Fatalf("child: %v\n%s", err, out)
+		}
+		return
+	}
+	var mu sync.Mutex
+	seen := map[string]int{}
+	if err := ControlSockets(func(network, _ string, _ syscall.RawConn) error {
+		mu.Lock()
+		defer mu.Unlock()
+		seen[network[:3]]++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+	tcp, err := share.ParseLink("http://" + connectProxy(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}) + "#tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t, true)
+	startServer(t, map[string]any{"protocol": "vless", "port": port,
+		"settings":       map[string]any{"clients": []any{map[string]any{"id": testUUID}}, "decryption": "none"},
+		"streamSettings": map[string]any{"network": "kcp", "kcpSettings": map[string]any{}}})
+	udp, err := share.ParseLink(fmt.Sprintf("vless://%s@127.0.0.1:%d?type=kcp&headerType=none#udp", testUUID, port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := Ping(context.Background(), []config.Entry{{Index: 1, Server: tcp}, {Index: 2, Server: udp}},
+		PingOptions{URL: target.URL, Timeout: 5 * time.Second, Parallel: 2})
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("%s: %v", r.Entry.Server.Name, r.Err)
+		}
+	}
+	if seen["tcp"] == 0 || seen["udp"] == 0 {
+		t.Errorf("controlled sockets: %v; want both TCP and UDP", seen)
+	}
 }
