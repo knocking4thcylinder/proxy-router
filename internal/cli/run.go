@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -388,6 +389,11 @@ func run(ctx context.Context, o runOptions) error {
 		if err := tun.Up(tunOpts); err != nil {
 			return fmt.Errorf("TUN: %w", err)
 		}
+		if closer, err := serveOutside(o.tunName); err != nil {
+			fmt.Fprintln(os.Stderr, "TUN: ping can't go around the TUN:", err)
+		} else {
+			defer closer.Close()
+		}
 	}
 
 	// fatal is set when the proxy couldn't be restored after a reload; run
@@ -552,6 +558,39 @@ func run(ctx context.Context, o runOptions) error {
 		}
 	}
 	return fatal
+}
+
+// serveOutside lets the user (or root) open sockets that leave through
+// the physical interface around the TUN named tunName, for ping.
+func serveOutside(tunName string) (io.Closer, error) {
+	if !systemRunDirOK() {
+		return nil, fmt.Errorf("%s is not a root-owned directory", systemRunDir())
+	}
+	uid := 0
+	if u, err := config.TargetUser(); err != nil {
+		return nil, err
+	} else if u != nil {
+		if uid, err = strconv.Atoi(u.Uid); err != nil {
+			return nil, err
+		}
+	}
+	// Ping asks for a socket per connection; don't run "ip route" for each.
+	var mu sync.Mutex
+	var phys string
+	var looked time.Time
+	physical := func() (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if phys == "" || time.Since(looked) > 2*time.Second {
+			p, err := netif.Physical(tunName)
+			if err != nil {
+				return "", err
+			}
+			phys, looked = p, time.Now()
+		}
+		return phys, nil
+	}
+	return tun.ServeOutside(outsidePath(), uid, physical)
 }
 
 // freeLoopback reserves an unused 127.0.0.1 TCP port; close the listener

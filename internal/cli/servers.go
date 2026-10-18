@@ -17,6 +17,7 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 	"github.com/knocking4thcylinder/proxy-router/internal/subscription"
+	"github.com/knocking4thcylinder/proxy-router/internal/tun"
 )
 
 func addCmd() *cobra.Command {
@@ -224,11 +225,11 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 					return fmt.Errorf("no servers to test")
 				}
 				fmt.Fprintf(os.Stderr, "testing %d servers...\n", len(entries))
-				iface, note := e.outboundInterface()
+				opts, note := e.pingOptions(16)
 				if note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
-				results := engine.Ping(cmd.Context(), entries, e.pingOptions(16, iface))
+				results := engine.Ping(cmd.Context(), entries, opts)
 				best := -1
 				for i, r := range results {
 					if r.Err == nil && (best < 0 || r.Latency < results[best].Latency) {
@@ -291,11 +292,10 @@ func pingCmd() *cobra.Command {
 			if len(entries) == 0 {
 				return fmt.Errorf("no servers to test")
 			}
-			iface, note := e.outboundInterface()
+			opts, note := e.pingOptions(parallel)
 			if note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
-			opts := e.pingOptions(parallel, iface)
 			if exit {
 				opts.ExitURL = "https://ipinfo.io/country"
 			}
@@ -321,16 +321,37 @@ func pingCmd() *cobra.Command {
 	return cmd
 }
 
-func (e *env) pingOptions(parallel int, iface string) engine.PingOptions {
-	return engine.PingOptions{
+// pingOptions sets up testing servers, plus a note on how they're reached.
+// They're tested directly, never through proxy-router's own TUN, which
+// would measure the server it uses too: the TUN service hands out sockets
+// that leave around it (see tun.ServeOutside).
+func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
+	o := engine.PingOptions{
 		URL:         e.cfg.Ping.URL,
 		Timeout:     e.cfg.Ping.Timeout.D(),
 		Parallel:    parallel,
 		PerEndpoint: e.cfg.Ping.PerEndpoint,
-		Interface:   iface,
 		Config:      e.cfg,
-		Resolve:     e.resolverIf(iface),
 	}
+	if own := e.ownTUN(); own != "" {
+		path := outsidePath()
+		err := tun.CheckOutside(path)
+		if err == nil {
+			err = engine.ControlSockets(tun.OutsideControl(path))
+		}
+		if err != nil {
+			o.Resolve = e.resolverIf("")
+			return o, fmt.Sprintf("TUN mode is on (%s), but its service can't let ping around it (%v); "+
+				"servers are tested through it, and so through the server it uses", own, err)
+		}
+		// Server names are looked up around the TUN too (DoH dials through
+		// Xray's dialer).
+		o.Resolve = e.resolver("", 0)
+		return o, fmt.Sprintf("TUN mode is on (%s); testing servers around it", own)
+	}
+	iface, note := e.outboundInterface()
+	o.Interface, o.Resolve = iface, e.resolverIf(iface)
+	return o, note
 }
 
 func (e *env) resolverIf(iface string) engine.Resolver {

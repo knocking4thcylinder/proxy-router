@@ -99,8 +99,8 @@ WantedBy=%s
 
 // systemHardening confines the root TUN service. It writes only to its
 // StateDirectory (/var/lib/proxy-router: binary, geo files) and
-// RuntimeDirectory (/run/proxy-router: status.json), logs to the journal
-// and reads the user's config read-only. Capabilities: NET_ADMIN for the
+// RuntimeDirectory (/run/proxy-router: status.json, outside.sock), logs to
+// the journal and reads the user's config read-only. Capabilities: NET_ADMIN for the
 // TUN device, routes and SO_MARK, NET_RAW for SO_BINDTODEVICE,
 // NET_BIND_SERVICE for low listen ports, and DAC_READ_SEARCH to read the
 // user's 0600 files in their 0700 home. No PrivateNetwork or

@@ -193,6 +193,11 @@ means the latency test worked but the separate country lookup did not.
 Pools have a separate `POOL` column showing how many members responded;
 their latency and exit come from the fastest responding member.
 
+`ping` (and `use --fastest`) always connect to servers directly. In TUN
+mode they go around the TUN, past the kill switch, instead of through the
+server the TUN uses, so results don't depend on it, and still work when
+it's down (see [Kill switch](#kill-switch)).
+
 While the service (or `run`) is active it picks up changes by itself:
 - editing the rules file or `config.yaml` applies within ~2 seconds
 - `proxy-router use …` from another terminal switches the server
@@ -403,7 +408,11 @@ pf anchor `com.apple/proxy-router` on macOS. It lets through:
 
 - loopback and the TUN itself;
 - proxy-router's own connections (on Linux they carry socket mark
-  `0x7072`; pf has no marks, so on macOS it's anything run by root);
+  `0x7072`; pf has no marks, so on macOS it's anything run by root),
+  including the sockets the service hands `ping` so it can test servers
+  around the TUN. It hands them out over `/run/proxy-router/outside.sock`
+  (`/var/run/` on macOS), which only your user and root can use. Any
+  program running as your user could ask for one too;
 - `system_route` addresses (Tailscale, including MagicDNS's DNS);
 - the LAN, link-local, multicast and broadcast, and DHCP and IPv6
   neighbour discovery;
