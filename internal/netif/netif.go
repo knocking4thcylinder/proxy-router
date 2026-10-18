@@ -50,11 +50,20 @@ func isVirtual(name string) bool {
 }
 
 // pick decides from default routes ordered by priority (active first).
+// Scoped routes don't count: they only apply to sockets bound to their
+// interface, and macOS gives every utun one (iCloud Private Relay and
+// Continuity's included), which comes first when there's no IPv6 uplink.
 func pick(routes []Route) Detection {
-	if len(routes) == 0 || !isTunnel(routes[0].Iface) {
-		return Detection{}
+	for _, r := range routes {
+		if r.Scoped {
+			continue
+		}
+		if isTunnel(r.Iface) {
+			return Detection{Tunnel: r.Iface, Physical: physical(routes, "")}
+		}
+		break
 	}
-	return Detection{Tunnel: routes[0].Iface, Physical: physical(routes, "")}
+	return Detection{}
 }
 
 // physical returns the first real uplink among routes, skipping exclude.
@@ -134,8 +143,9 @@ func Detect() (Detection, error) {
 	d := pick(routes)
 	if d.Tunnel == "" {
 		// A VPN that only takes IPv6 over still captures traffic.
-		if r6, _ := familyRoutes("inet6"); len(r6) > 0 && isTunnel(r6[0].Iface) {
-			d = Detection{Tunnel: r6[0].Iface, Physical: physical(routes, "")}
+		r6, _ := familyRoutes("inet6")
+		if t := pick(r6).Tunnel; t != "" {
+			d = Detection{Tunnel: t, Physical: physical(routes, "")}
 		}
 	}
 	return d, nil
