@@ -225,9 +225,10 @@ unique part of the name. A running "proxy-router run" switches automatically.
 
 --fastest downloads a test file through every server (ping.download_url)
 and picks the one it arrives fastest through. A running proxy-router then
-keeps checking that server (auto_switch in config.yaml) and moves to the
-fastest working one, within --group if given, when it stops carrying
-traffic. Selecting a server by name turns this off.`,
+watches its connections to that server (auto_switch in config.yaml): when
+they show trouble, such as data stopping mid-transfer, it checks the server
+and moves to the fastest working one, within --group if given, if it
+stopped carrying traffic. Selecting a server by name turns this off.`,
 		ValidArgsFunction: completeSelectedServer,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
@@ -275,8 +276,8 @@ traffic. Selecting a server by name turns this off.`,
 				return err
 			}
 			fmt.Printf("using %s\n", clean(entry.String()))
-			if fastest && e.cfg.AutoSwitch.Interval > 0 && entry.Server.Pool == nil {
-				fmt.Printf("while running, proxy-router checks it every %s and switches to the fastest working server when it fails\n", e.cfg.AutoSwitch.Interval.D())
+			if fastest && e.cfg.AutoSwitch.Enabled && e.cfg.Ping.DownloadURL != "" && entry.Server.Pool == nil {
+				fmt.Printf("while running, proxy-router checks it %s and switches to the fastest working server if it fails\n", howChecked(e.cfg, entry.Server))
 			}
 			return nil
 		},

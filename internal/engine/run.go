@@ -260,6 +260,13 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 // before it connects or binds. It can't be undone, so it's only for
 // one-shot commands like ping.
 func ControlSockets(ctl func(network, address string, c syscall.RawConn) error) error {
+	if base != nil {
+		// Xray only adds controllers to the dialer in effect, so put the
+		// one the Watcher wraps in place for a moment.
+		w := &watchDialer{base: base, w: watcher}
+		internet.UseAlternativeSystemDialer(base)
+		defer internet.UseAlternativeSystemDialer(w)
+	}
 	return internet.RegisterDialerController(ctl)
 }
 
@@ -447,10 +454,15 @@ func ProxyClient(s *share.Server, o PingOptions, url string) (*http.Client, func
 	}, nil
 }
 
+// probeTag tags the outbounds of instances that test servers. It isn't the
+// running proxy's "proxy", so its Watcher leaves their connections alone:
+// some outlive the instance (Xray's mux keeps retrying a dead server).
+const probeTag = "probe"
+
 // startThrough starts an Xray instance with only s's outbounds, and returns
 // a transport whose connections go through it.
 func startThrough(s *share.Server, o PingOptions, url string) (*core.Instance, *http.Transport, error) {
-	obs, err := s.Outbounds("proxy")
+	obs, err := s.Outbounds(probeTag)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -475,7 +487,7 @@ func startThrough(s *share.Server, o PingOptions, url string) (*core.Instance, *
 		xc["outbounds"] = append(obs, BindInterface([]map[string]any{{"tag": "direct", "protocol": "freedom"}}, o.Interface)...)
 		xc["routing"] = map[string]any{"rules": []any{
 			map[string]any{"inboundTag": []string{config.DirectDNSTag}, "outboundTag": "direct"},
-			map[string]any{"network": "tcp,udp", "outboundTag": "proxy"},
+			map[string]any{"network": "tcp,udp", "outboundTag": probeTag},
 		}}
 	}
 	MarkSockets(xc, o.Mark)

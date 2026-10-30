@@ -446,6 +446,11 @@ func run(ctx context.Context, o runOptions) error {
 		defer front.Close()
 	}
 
+	// Auto-switching watches the connections the main instance opens for
+	// the server; the watch goes in before any are.
+	watch := engine.WatchOutbound("proxy")
+	defer watch.Stop()
+
 	raw, _ := json.Marshal(xc)
 	release()
 	inst, err := start(xc)
@@ -585,13 +590,15 @@ func run(ctx context.Context, o runOptions) error {
 	// gen counts main instances, so a health check that went through one
 	// that has since been replaced is ignored.
 	gen := 0
-	sw := newSwitcher()
-	autoTicker := time.NewTicker(autoTick)
-	defer autoTicker.Stop()
+	sw := newSwitcher(watch)
+	sw.follow(o, gen)
 
 	// reload rebuilds the config and restarts the main instance if it
 	// changed, or always with force.
 	reload := func(reason string, force bool) {
+		// Whether or not the instance restarts, the selection may have
+		// changed.
+		defer func() { sw.follow(o, gen) }()
 		_, next, err := buildCurrent(o)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: not reloading: %v\n", reason, err)
@@ -659,8 +666,10 @@ func run(ctx context.Context, o runOptions) error {
 			reload("server addresses changed", false)
 		case <-updates:
 			refresh()
-		case <-autoTicker.C:
-			sw.tick(ctx, o, inst, gen)
+		case t := <-watch.Trouble():
+			sw.trouble(ctx, o, inst, gen, t)
+		case <-sw.due:
+			sw.again(ctx, o, inst, gen)
 		case r := <-sw.checked:
 			sw.check(ctx, o, r, gen)
 		case r := <-sw.scanned:
@@ -758,8 +767,8 @@ func modTimes(paths []string) string {
 func printStatus(e *env, o runOptions) {
 	st := describeRun(e, o, "", "")
 	fmt.Printf("server: %s\n", st.Server)
-	if st.Auto {
-		fmt.Printf("auto:   checked every %s; replaced by the fastest working server when it fails\n", e.cfg.AutoSwitch.Interval.D())
+	if target, ok := o.autoTarget(e); ok {
+		fmt.Printf("auto:   checked %s; replaced by the fastest working server when it fails\n", howChecked(e.cfg, target.Server))
 	}
 	if st.TUN != "" {
 		fmt.Printf("tun:    %s (all traffic; proxy-router's own connections leave via %s)\n", st.TUN, st.Via)

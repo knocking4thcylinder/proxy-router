@@ -10,17 +10,31 @@ import (
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
+	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
-// Auto-switching: after "use --fastest", a running proxy-router downloads
-// ping.download_url through the server it uses every auto_switch.interval.
-// When that fails auto_switch.failures times in a row (the transfer stalls,
-// as when a censor starts cutting connections to the server, or is too
-// slow), every other server is tested like "use --fastest" does and the
-// fastest working one takes over.
+// Auto-switching: after "use --fastest", a running proxy-router watches
+// its connections to the server it uses (engine.Watcher). Nothing is
+// tested while they work. When one shows trouble (data stopping
+// mid-transfer, as when a censor starts cutting connections to the server,
+// a reset, the server turning the account away, or the server unreachable),
+// ping.download_url is downloaded through the server. Servers whose
+// connections can't be watched (XHTTP over HTTP/3, mKCP, WireGuard) are
+// checked that way every auto_switch.interval instead, and Hysteria, only
+// partly watched, every autoFallback intervals as well. When the check fails
+// auto_switch.failures times in a row, every other server is tested like
+// "use --fastest" does and the fastest working one takes over.
 const (
-	// autoTick is how often the run loop looks at whether a check is due.
-	autoTick = 15 * time.Second
+	// autoRetry is how soon a failed check is repeated, to confirm it.
+	autoRetry = 10 * time.Second
+	// autoCalm is how long trouble is ignored after a check found the
+	// server working; it doubles, up to autoCalmMax, while trouble keeps
+	// turning out to be nothing.
+	autoCalm    = time.Minute
+	autoCalmMax = 10 * time.Minute
+	// autoFallback times auto_switch.interval is how often a partly
+	// watched server (Hysteria) is checked anyway.
+	autoFallback = 5
 	// autoQuiet is how long to wait after a scan found nothing better.
 	autoQuiet = 5 * time.Minute
 	// autoForget is how long a server that stopped working is left out of
@@ -57,7 +71,7 @@ func selectionOf(e config.Entry) config.Selection {
 // stops working.
 func (o runOptions) autoSwitching(e *env) bool {
 	return o.server == "" && e.state.Selected != nil && e.state.Selected.Auto &&
-		e.cfg.AutoSwitch.Interval > 0 && e.cfg.Ping.DownloadURL != ""
+		e.cfg.AutoSwitch.Enabled && e.cfg.Ping.DownloadURL != ""
 }
 
 // autoTarget is the server auto-switching watches: the one in use, unless
@@ -76,17 +90,61 @@ func (o runOptions) autoTarget(e *env) (config.Entry, bool) {
 	return entry, true
 }
 
+// checkEvery is how often auto-switching checks s on a timer (0: never),
+// and whether its connections are watched.
+func checkEvery(cfg *config.Config, s *share.Server) (time.Duration, bool) {
+	iv := cfg.AutoSwitch.Interval.D()
+	switch engine.WatchCoverage(s) {
+	case engine.Watched:
+		return 0, true
+	case engine.PartlyWatched:
+		return autoFallback * iv, true
+	}
+	return iv, false
+}
+
+// howChecked says when auto-switching checks s.
+func howChecked(cfg *config.Config, s *share.Server) string {
+	switch every, watched := checkEvery(cfg, s); {
+	case every == 0:
+		return "when its connections show trouble"
+	case watched:
+		return fmt.Sprintf("when its connections show trouble, and every %s", every)
+	default:
+		return fmt.Sprintf("every %s (its connections can't be watched)", every)
+	}
+}
+
 // switcher runs the checks and scans for the run loop, which owns it.
 type switcher struct {
-	lastCheck  time.Time
-	checking   bool
-	scanning   bool
-	failures   int
+	w *engine.Watcher
+	// looking is the server auto-switching looks after, through instance
+	// generation gen. Its connections are watched, and/or it's checked
+	// every so often (0: never).
+	looking *config.Selection
+	gen     int
+	stall   time.Duration
+	watched bool
+	every   time.Duration
+
+	checking bool
+	scanning bool
+	failures int
+	// passes counts checks in a row that found the server working.
+	passes     int
+	calmUntil  time.Time
 	quietUntil time.Time
 	// failed holds servers that stopped working, and when.
 	failed  map[config.Selection]time.Time
 	checked chan checkResult
 	scanned chan scanResult
+	// due fires when the next check is due: to repeat a failed one
+	// (confirming), or the next timed one.
+	due        chan struct{}
+	next       *time.Timer
+	confirming bool
+	// troubled: the check running was prompted by trouble.
+	troubled bool
 }
 
 type checkResult struct {
@@ -105,17 +163,98 @@ type scanResult struct {
 	tested int
 }
 
-func newSwitcher() *switcher {
+func newSwitcher(w *engine.Watcher) *switcher {
 	return &switcher{
+		w:       w,
 		failed:  map[config.Selection]time.Time{},
 		checked: make(chan checkResult, 1),
 		scanned: make(chan scanResult, 1),
+		due:     make(chan struct{}, 1),
 	}
 }
 
-// tick starts a check through inst, the running instance (generation gen),
-// if one is due.
-func (sw *switcher) tick(ctx context.Context, o runOptions, inst *core.Instance, gen int) {
+// follow looks after the server auto-switching is for, if any, through
+// instance generation gen. The run loop calls it whenever the instance or
+// the selection may have changed.
+func (sw *switcher) follow(o runOptions, gen int) {
+	if sw.scanning {
+		return
+	}
+	e, err := load()
+	if err != nil {
+		return
+	}
+	target, ok := o.autoTarget(e)
+	if !ok {
+		if sw.looking != nil {
+			sw.w.Stop()
+			sw.looking = nil
+		}
+		sw.reset()
+		return
+	}
+	sel, stall := selectionOf(target), e.cfg.AutoSwitch.Stall.D()
+	every, watched := checkEvery(e.cfg, target.Server)
+	same := sw.looking != nil && *sw.looking == sel && sw.watched == watched && sw.every == every
+	if same && sw.gen == gen && sw.stall == stall {
+		return
+	}
+	if !same {
+		sw.reset()
+	}
+	sw.looking, sw.gen, sw.stall, sw.watched, sw.every = &sel, gen, stall, watched, every
+	if watched {
+		sw.w.Start(stall)
+	} else {
+		sw.w.Stop()
+	}
+	sw.schedule()
+}
+
+// reset forgets the checks of a server that's no longer looked after.
+func (sw *switcher) reset() {
+	sw.failures, sw.passes, sw.calmUntil = 0, 0, time.Time{}
+	if sw.next != nil {
+		sw.next.Stop()
+		sw.next = nil
+	}
+	sw.confirming = false
+}
+
+// after makes the next check due in d.
+func (sw *switcher) after(d time.Duration) {
+	if sw.next != nil {
+		sw.next.Stop()
+	}
+	sw.confirming = false
+	sw.next = time.AfterFunc(d, func() {
+		select {
+		case sw.due <- struct{}{}:
+		default:
+		}
+	})
+}
+
+// schedule makes the next timed check due, unless one is already, or
+// running.
+func (sw *switcher) schedule() {
+	if sw.every > 0 && sw.looking != nil && sw.next == nil && !sw.checking && !sw.scanning {
+		sw.after(max(sw.every, time.Until(sw.quietUntil)))
+	}
+}
+
+// trouble starts a check of the server when a connection to it ran into t.
+func (sw *switcher) trouble(ctx context.Context, o runOptions, inst *core.Instance, gen int, t engine.Trouble) {
+	now := time.Now()
+	if sw.checking || sw.scanning || sw.confirming || now.Before(sw.calmUntil) || now.Before(sw.quietUntil) {
+		return
+	}
+	sw.start(ctx, o, inst, gen, t.String())
+}
+
+// start checks the server in use through inst, the running instance
+// (generation gen), because of why ("": it was due).
+func (sw *switcher) start(ctx context.Context, o runOptions, inst *core.Instance, gen int, why string) {
 	if sw.checking || sw.scanning || inst == nil {
 		return
 	}
@@ -125,13 +264,15 @@ func (sw *switcher) tick(ctx context.Context, o runOptions, inst *core.Instance,
 	}
 	target, ok := o.autoTarget(e)
 	if !ok {
-		sw.failures = 0
 		return
 	}
-	if time.Since(sw.lastCheck) < e.cfg.AutoSwitch.Interval.D() {
-		return
+	switch {
+	case why != "":
+		fmt.Printf("%s auto-switch: %s through %s; checking it\n", now(), why, clean(target.String()))
+	case sw.failures > 0:
+		fmt.Printf("%s auto-switch: checking %s again\n", now(), clean(target.String()))
 	}
-	sw.lastCheck, sw.checking = time.Now(), true
+	sw.checking, sw.troubled = true, why != ""
 	limit := e.cfg.AutoSwitch.Timeout.D()
 	stall := min(2*e.cfg.Ping.Timeout.D(), limit)
 	url := e.cfg.Ping.DownloadURL
@@ -141,9 +282,18 @@ func (sw *switcher) tick(ctx context.Context, o runOptions, inst *core.Instance,
 	}()
 }
 
+// again runs the check that's due.
+func (sw *switcher) again(ctx context.Context, o runOptions, inst *core.Instance, gen int) {
+	sw.next, sw.confirming = nil, false
+	sw.start(ctx, o, inst, gen, "")
+	sw.schedule()
+}
+
 // check takes a check's result and starts a scan if it's time to switch.
 func (sw *switcher) check(ctx context.Context, o runOptions, r checkResult, gen int) {
 	sw.checking = false
+	// Timed checks go on whatever this one found, unless a scan starts.
+	defer sw.schedule()
 	if r.gen != gen {
 		return
 	}
@@ -154,18 +304,36 @@ func (sw *switcher) check(ctx context.Context, o runOptions, r checkResult, gen 
 	if r.err == nil {
 		if sw.failures > 0 {
 			fmt.Printf("%s auto-switch: %s works again\n", now(), clean(r.target.String()))
+		} else if sw.troubled {
+			// Trouble that keeps turning out to be nothing is listened to
+			// less and less.
+			calm := min(autoCalm<<min(sw.passes, 4), autoCalmMax)
+			sw.passes++
+			sw.calmUntil = time.Now().Add(calm)
+			fmt.Printf("%s auto-switch: %s works; ignoring trouble for %s\n", now(), clean(r.target.String()), calm)
 		}
 		sw.failures = 0
 		return
 	}
 	sw.failures++
+	sw.passes = 0
 	need := e.cfg.AutoSwitch.Failures
 	fmt.Printf("%s auto-switch: check through %s failed (%d/%d): %s\n",
 		now(), clean(r.target.String()), min(sw.failures, need), need, shortErr(r.err))
-	if sw.failures < need || time.Now().Before(sw.quietUntil) {
+	if sw.failures < need {
+		sw.after(autoRetry)
+		sw.confirming = true
+		return
+	}
+	if time.Now().Before(sw.quietUntil) {
 		return
 	}
 	sw.scanning = true
+	// Nothing to look after while the scan's test instances take over
+	// Xray's process-wide state.
+	sw.w.Stop()
+	sw.looking = nil
+	sw.reset()
 	go func() { sw.scanned <- scan(ctx, e, o, r.target, sw.avoid()) }()
 }
 
@@ -220,7 +388,7 @@ func (sw *switcher) apply(r scanResult, cur *autoPick) *autoPick {
 	sw.failed[selectionOf(r.from)] = time.Now()
 	if !r.ok {
 		sw.quietUntil = time.Now().Add(autoQuiet)
-		fmt.Printf("%s auto-switch: none of %d other servers works; staying on %s, trying again in %s\n",
+		fmt.Printf("%s auto-switch: none of %d other servers works; staying on %s, ignoring trouble for %s\n",
 			now(), r.tested, clean(r.from.String()), autoQuiet)
 		return cur
 	}
