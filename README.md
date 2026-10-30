@@ -241,21 +241,36 @@ forces a reload.
 
 ### Auto-switching
 
-After `use --fastest`, the running service keeps checking the server it
-picked: every `auto_switch.interval` (1 minute) it downloads
-`ping.download_url` through it. When that fails `auto_switch.failures` (2)
-times in a row, because the download stalls (a censor started cutting
-connections to the server) or takes longer than `auto_switch.timeout`
+After `use --fastest`, the running service watches its own connections to
+the server it picked, and tests the server only when they show trouble:
+
+- data stops in the middle of a TLS record for `auto_switch.stall` (10s):
+  the censor's ~16 KB freeze leaves connections exactly like that, while a
+  working server always finishes a record it started;
+- the server doesn't answer a TLS handshake within `auto_switch.stall`;
+- a connection is reset, or the server closes it mid-record;
+- the server can't be reached.
+
+A request that's simply waiting for an answer (long polls, idle
+connections) doesn't count, and nothing is downloaded while traffic flows
+fine. On trouble, it downloads `ping.download_url` through the server. When
+that fails `auto_switch.failures` (2) times in a row (10 seconds apart),
+because the download stalls or takes longer than `auto_switch.timeout`
 (15s), it tests the other servers like `use --fastest` and switches to the
 fastest working one. With `use --fastest -g group`, it stays within that
-subscription. A server that stopped working is left out for 15 minutes; if
-nothing else works, it stays put and tries again 5 minutes later. The log
-shows each step (`auto-switch: ...`), and `status` and the tray mark the
-server `auto`.
+subscription. If the server turns out fine, further trouble is ignored for
+a minute, doubling up to 10 minutes while it keeps turning out fine. A
+server that stopped working is left out for 15 minutes; if nothing else
+works, it stays put and ignores trouble for 5 minutes. The log shows each
+step (`auto-switch: ...`), and `status` and the tray mark the server
+`auto`.
+
+Only TCP connections are watched: servers on QUIC-based transports
+(Hysteria, XHTTP over HTTP/3) aren't switched away from.
 
 Picking a server any other way (`use 3`, the tray's server list) turns
 auto-switching off. Pools aren't checked; they have their own health check.
-`auto_switch.interval: 0` disables it. Without root, the switch is saved
+`auto_switch.enabled: false` disables it. Without root, the switch is saved
 to `state.json`, so `list` shows the new server; the TUN service can't
 write there, so it keeps the switch in memory until it restarts or you
 pick a server.

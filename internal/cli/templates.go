@@ -58,13 +58,17 @@ ping:
   # How fast it arrives ranks "ping" and "use --fastest". Empty disables.
   download_url: https://speed.cloudflare.com/__down?bytes=262144
 
-# After "use --fastest", a running proxy-router downloads ping.download_url
-# through the server it picked every interval. After "failures" failed checks
-# in a row (the download stalls, or takes longer than timeout), it tests the
-# other servers (of the --group given, if any) and switches to the fastest
-# working one. Picking a server by name turns this off; interval: 0 disables.
+# After "use --fastest", a running proxy-router watches its connections to the
+# server it picked. When one shows trouble (data stops mid-transfer or a
+# handshake goes unanswered for "stall", a connection is reset, or the server
+# can't be reached), it downloads ping.download_url through the server. After
+# "failures" failed downloads in a row (the download stalls, or takes longer
+# than timeout), it tests the other servers (of the --group given, if any)
+# and switches to the fastest working one. Nothing is tested while traffic
+# flows fine. Picking a server by name turns this off; enabled: false too.
 auto_switch:
-  interval: 1m
+  enabled: true
+  stall: 10s
   failures: 2
   timeout: 15s
 

@@ -97,7 +97,7 @@ func TestAutoPickFollowsTheUsersSelection(t *testing.T) {
 	}
 }
 
-// Auto-switching is off for --server, for interval 0, and for pools.
+// Auto-switching is off for --server, when disabled, and for pools.
 func TestAutoTargetSkips(t *testing.T) {
 	st := &config.State{Subscriptions: []*config.Subscription{{Name: "sub", Servers: []*share.Server{
 		{Name: "a"}, {Name: "pool", Pool: &share.Pool{}},
@@ -108,11 +108,11 @@ func TestAutoTargetSkips(t *testing.T) {
 	if _, ok := (runOptions{server: "a"}).autoTarget(env); ok {
 		t.Error("auto-switching a --server run")
 	}
-	cfg.AutoSwitch.Interval = 0
+	cfg.AutoSwitch.Enabled = false
 	if _, ok := (runOptions{}).autoTarget(env); ok {
-		t.Error("auto-switching with interval 0")
+		t.Error("auto-switching while disabled")
 	}
-	cfg.AutoSwitch.Interval = config.Duration(time.Minute)
+	cfg.AutoSwitch.Enabled = true
 	st.SelectAuto(st.Entries()[1], "")
 	if _, ok := (runOptions{}).autoTarget(env); ok {
 		t.Error("checking a pool")
