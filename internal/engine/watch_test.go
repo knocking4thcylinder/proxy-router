@@ -70,8 +70,10 @@ func watchPair(t *testing.T, stall time.Duration) (*watchedConn, *net.TCPConn, <
 	trouble := make(chan Trouble, 4)
 	wc := newWatchedConn(c, stall, func(tr Trouble) { trouble <- tr })
 	t.Cleanup(func() { wc.Close(); s.Close() })
-	// Read like a proxy does, until the connection ends.
+	// Read like a proxy does, until the connection ends; the server reads
+	// what it's sent (or closing it would reset the connection).
 	go func() { _, _ = io.Copy(io.Discard, wc) }()
+	go func() { _, _ = io.Copy(io.Discard, s) }()
 	return wc, s.(*net.TCPConn), trouble
 }
 
@@ -145,6 +147,54 @@ func TestWatchedConn(t *testing.T) {
 		s.SetLinger(0)
 		s.Close()
 		expectTrouble(t, trouble, "cut", "was cut after 0 KB")
+	})
+	// The server's TLS 1.3 flight, as records.
+	flight := append(append(record(22, 90), record(20, 1)...), record(23, 2500)...)
+	hello := []byte{22, 3, 1, 0, 1, 0}
+	t.Run("rejected after the request", func(t *testing.T) {
+		wc, s, trouble := watchPair(t, stall)
+		wc.Write(hello)
+		s.Write(flight)
+		time.Sleep(10 * time.Millisecond)
+		wc.Write(record(23, 53))  // Finished
+		wc.Write(record(23, 120)) // the request
+		// Session tickets, a close_notify, and goodbye.
+		s.Write(append(append(record(23, 180), record(23, 180)...), record(23, 19)...))
+		time.Sleep(10 * time.Millisecond) // the server has read it all
+		s.Close()
+		expectTrouble(t, trouble, "cut", "right after the handshake (account rejected?)")
+	})
+	t.Run("rejected before the request", func(t *testing.T) {
+		wc, s, trouble := watchPair(t, stall)
+		wc.Write(hello)
+		s.Write(flight)
+		time.Sleep(10 * time.Millisecond) // the server has read it all
+		s.Close()
+		expectTrouble(t, trouble, "cut", "right after the handshake")
+	})
+	t.Run("closed after an answer", func(t *testing.T) {
+		wc, s, trouble := watchPair(t, stall)
+		wc.Write(hello)
+		s.Write(flight)
+		time.Sleep(10 * time.Millisecond)
+		wc.Write(record(23, 53))
+		wc.Write(record(23, 120))
+		s.Write(append(record(23, 180), record(23, 4000)...))
+		time.Sleep(10 * time.Millisecond) // the server has read it all
+		s.Close()
+		expectNoTrouble(t, trouble, 3*stall)
+	})
+	t.Run("closed after idling", func(t *testing.T) {
+		wc, s, trouble := watchPair(t, stall)
+		wc.Write(hello)
+		s.Write(flight)
+		time.Sleep(10 * time.Millisecond)
+		wc.Write(record(23, 53))
+		time.Sleep(2 * stall) // a server's idle timeout
+		s.Write(record(23, 19))
+		time.Sleep(10 * time.Millisecond) // the server has read it all
+		s.Close()
+		expectNoTrouble(t, trouble, 3*stall)
 	})
 	t.Run("closed here", func(t *testing.T) {
 		wc, s, trouble := watchPair(t, stall)

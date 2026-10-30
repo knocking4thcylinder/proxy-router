@@ -276,8 +276,8 @@ stopped carrying traffic. Selecting a server by name turns this off.`,
 				return err
 			}
 			fmt.Printf("using %s\n", clean(entry.String()))
-			if fastest && e.cfg.AutoSwitch.Enabled && entry.Server.Pool == nil {
-				fmt.Println("while running, proxy-router checks it when its connections show trouble and switches to the fastest working server if it fails")
+			if fastest && e.cfg.AutoSwitch.Enabled && e.cfg.Ping.DownloadURL != "" && entry.Server.Pool == nil {
+				fmt.Printf("while running, proxy-router checks it %s and switches to the fastest working server if it fails\n", howChecked(e.cfg, entry.Server))
 			}
 			return nil
 		},

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,8 @@ import (
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport/internet"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
 // Watching the server in use: instead of testing it on a timer, the
@@ -28,10 +31,14 @@ import (
 //     REALITY, TLS, and what Vision copies through directly. Connections
 //     that turn out not to be TLS are only watched for the rest.)
 //   - it's reset, or the server closes it in the middle of a record;
+//   - the server closes it right after the TLS handshake, before any real
+//     answer to the client's request: how servers turn away a revoked,
+//     expired or blocked key;
 //   - it can't be opened.
 //
 // Requests that are simply waiting for an answer (long polls, idle
-// keep-alives) sit between records, so they don't count.
+// keep-alives) sit between records, so they don't count. QUIC sockets
+// (Hysteria) are watched as watch_quic.go says.
 
 // Trouble is what a watched connection ran into.
 type Trouble struct {
@@ -138,6 +145,60 @@ func (w *Watcher) watches(ctx context.Context) bool {
 	return false
 }
 
+// Coverage is how much of a server's trouble the Watcher can see.
+type Coverage int
+
+const (
+	// Unwatched: its connections can't be followed (XHTTP over HTTP/3,
+	// mKCP, WireGuard), so only a check on a timer notices trouble.
+	Unwatched Coverage = iota
+	// PartlyWatched: QUIC (Hysteria). A server that stops answering is
+	// seen as soon as the client sends, but during a download the client
+	// only acknowledges, so a freeze then goes unseen until it sends again.
+	PartlyWatched
+	// Watched: TCP, followed record by record.
+	Watched
+)
+
+// WatchCoverage says how much of s's trouble the Watcher can see. Pools
+// aren't watched at all.
+func WatchCoverage(s *share.Server) Coverage {
+	if s.Pool != nil {
+		return Unwatched
+	}
+	var ob struct {
+		Protocol       string `json:"protocol"`
+		StreamSettings struct {
+			Network     string `json:"network"`
+			Security    string `json:"security"`
+			TLSSettings struct {
+				ALPN []string `json:"alpn"`
+			} `json:"tlsSettings"`
+		} `json:"streamSettings"`
+	}
+	if err := json.Unmarshal(s.Outbound, &ob); err != nil {
+		return Unwatched
+	}
+	st := ob.StreamSettings
+	switch {
+	case ob.Protocol == "hysteria" || st.Network == "hysteria":
+		return PartlyWatched
+	case ob.Protocol == "wireguard":
+		return Unwatched
+	}
+	switch st.Network {
+	case "kcp", "mkcp", "quic":
+		return Unwatched
+	case "xhttp", "splithttp":
+		// Xray's XHTTP speaks HTTP/3 when h3 is the only ALPN, and opens
+		// its QUIC connection its own way.
+		if st.Security == "tls" && len(st.TLSSettings.ALPN) == 1 && st.TLSSettings.ALPN[0] == "h3" {
+			return Unwatched
+		}
+	}
+	return Watched
+}
+
 type watchDialer struct {
 	base *internet.DefaultSystemDialer
 	w    *Watcher
@@ -145,18 +206,28 @@ type watchDialer struct {
 
 func (d *watchDialer) Dial(ctx context.Context, src xnet.Address, dest xnet.Destination, sockopt *internet.SocketConfig) (net.Conn, error) {
 	gen, stall, on := d.w.current()
-	// UDP transports (QUIC) need their packet connection as it is.
-	if !on || dest.Network != xnet.Network_TCP || !d.w.watches(ctx) {
+	if !on || !d.w.watches(ctx) {
 		return d.base.Dial(ctx, src, dest, sockopt)
 	}
+	report := func(t Trouble) { d.w.report(gen, t) }
 	conn, err := d.base.Dial(ctx, src, dest, sockopt)
-	if err != nil {
-		if ctx.Err() == nil {
-			d.w.report(gen, Trouble{Kind: "dial", Detail: fmt.Sprintf("can't connect to %s: %s", dest.NetAddr(), shortError(err))})
+	switch {
+	case err != nil:
+		if dest.Network == xnet.Network_TCP && ctx.Err() == nil {
+			report(Trouble{Kind: "dial", Detail: fmt.Sprintf("can't connect to %s: %s", dest.NetAddr(), shortError(err))})
 		}
 		return nil, err
+	case dest.Network == xnet.Network_TCP:
+		return newWatchedConn(conn, stall, report), nil
 	}
-	return newWatchedConn(conn, stall, func(t Trouble) { d.w.report(gen, t) }), nil
+	// UDP: QUIC transports take only Xray's own wrapper, around the
+	// socket itself (see watchedPacketConn).
+	if pw, ok := conn.(*internet.PacketConnWrapper); ok {
+		if udp, ok := pw.PacketConn.(*net.UDPConn); ok {
+			return &internet.PacketConnWrapper{PacketConn: newWatchedPacketConn(udp, stall, report), Dest: pw.Dest}, nil
+		}
+	}
+	return conn, nil
 }
 
 func (d *watchDialer) DestIpAddress() net.IP { return d.base.DestIpAddress() }
@@ -173,11 +244,22 @@ type watchedConn struct {
 	// got counts bytes received, to say where a connection stopped.
 	got int64
 	// hello: a TLS handshake was sent and awaits the server's answer.
-	hello  bool
-	wrote  bool
-	timer  *time.Timer
-	closed bool
+	hello bool
+	wrote bool
+	// tls: the connection began with a TLS handshake. requested is when
+	// the client first wrote after the server's answer to it (finishing
+	// the handshake, then its request), and gotThen what had come by then.
+	tls       bool
+	requested time.Time
+	gotThen   int64
+	timer     *time.Timer
+	closed    bool
 }
+
+// rejectBytes is the most a server sends after the handshake and still
+// counts as turning the client away: session tickets and a close_notify,
+// not an answer.
+const rejectBytes = 1024
 
 func newWatchedConn(c net.Conn, stall time.Duration, report func(Trouble)) *watchedConn {
 	return &watchedConn{Conn: c, report: report, stall: stall, records: &recordReader{}}
@@ -207,13 +289,31 @@ func (c *watchedConn) Read(p []byte) (int, error) {
 		}
 	case errors.Is(err, net.ErrClosed):
 	case errors.Is(err, io.EOF):
-		if mid {
+		switch {
+		case mid:
 			c.troubleLocked("cut", fmt.Sprintf("the server closed a connection mid-transfer after %s", kb(c.got)))
+		case c.rejectedLocked():
+			c.troubleLocked("cut", "the server closed a connection right after the handshake (account rejected?)")
 		}
 	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.ETIMEDOUT), errors.Is(err, syscall.EPIPE):
 		c.troubleLocked("cut", fmt.Sprintf("a connection was cut after %s: %s", kb(c.got), shortError(err)))
 	}
 	return n, err
+}
+
+// rejectedLocked reports whether the server, closing the connection now,
+// is turning the client away: the TLS handshake got an answer, and then
+// the server hung up before sending back anything more than bookkeeping,
+// promptly. Connections that carried data, or idled for a while, end
+// normally.
+func (c *watchedConn) rejectedLocked() bool {
+	switch {
+	case !c.tls || c.got == 0:
+		return false
+	case c.requested.IsZero():
+		return true
+	}
+	return c.got-c.gotThen <= rejectBytes && time.Since(c.requested) < c.stall
 }
 
 // armLocked (re)starts the stall timer: data has to keep coming until the
@@ -233,9 +333,11 @@ func (c *watchedConn) Write(p []byte) (int, error) {
 	if !c.wrote && len(p) > 0 {
 		c.wrote = true
 		if len(p) >= 3 && p[0] == 22 && p[1] == 3 && c.got == 0 && !c.closed {
-			c.hello = true
+			c.hello, c.tls = true, true
 			c.armLocked()
 		}
+	} else if c.tls && c.got > 0 && c.requested.IsZero() && len(p) > 0 {
+		c.requested, c.gotThen = time.Now(), c.got
 	}
 	c.mu.Unlock()
 	return c.Conn.Write(p)

@@ -109,9 +109,10 @@ type Config struct {
 		Failures int `yaml:"failures"`
 		// A check fails if ping.download_url takes longer than this.
 		Timeout Duration `yaml:"timeout"`
-		// Interval is from when the server was checked on a timer. It's
-		// still read so older files load, and 0 still turns this off.
-		Interval *Duration `yaml:"interval"`
+		// How often a server whose connections can't be watched (QUIC,
+		// mKCP, WireGuard: UDP) is checked instead. 0 turns auto-switching
+		// off, as when every server was checked this way.
+		Interval Duration `yaml:"interval"`
 	} `yaml:"auto_switch"`
 
 	// Destinations that always use the system's own routing: never proxied
@@ -156,6 +157,7 @@ func defaults() *Config {
 	c.Ping.DownloadURL = "https://speed.cloudflare.com/__down?bytes=262144"
 	c.AutoSwitch.Enabled = true
 	c.AutoSwitch.Stall = Duration(10 * time.Second)
+	c.AutoSwitch.Interval = Duration(time.Minute)
 	c.AutoSwitch.Failures = 2
 	c.AutoSwitch.Timeout = Duration(15 * time.Second)
 	c.SystemRoute = []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48", "domain:ts.net"}
@@ -207,11 +209,13 @@ func (c *Config) validateAutoSwitch() error {
 	if u := c.Ping.DownloadURL; u != "" && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 		return errors.New("ping.download_url must be an http(s) URL")
 	}
-	if iv := c.AutoSwitch.Interval; iv != nil && *iv == 0 {
+	if c.AutoSwitch.Interval == 0 {
 		c.AutoSwitch.Enabled = false
 	}
 	a := c.AutoSwitch
 	switch {
+	case a.Interval != 0 && a.Interval.D() < 15*time.Second:
+		return errors.New("auto_switch.interval must be at least 15s (or 0 to disable)")
 	case a.Stall.D() < 2*time.Second:
 		return errors.New("auto_switch.stall must be at least 2s")
 	case a.Failures < 1:

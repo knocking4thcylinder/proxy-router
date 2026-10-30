@@ -118,3 +118,52 @@ func TestAutoTargetSkips(t *testing.T) {
 		t.Error("checking a pool")
 	}
 }
+
+// TCP servers are only watched; Hysteria is watched and checked every
+// autoFallback intervals; XHTTP over HTTP/3 only on the timer.
+func TestSwitcherFollowsWhatItCanWatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	var servers []*share.Server
+	for _, link := range []string{
+		"vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?type=tcp&security=tls&sni=a#tcp",
+		"hysteria2://pass@1.2.3.4:443/?sni=a#hy2",
+		"vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?type=xhttp&security=tls&sni=a&alpn=h3#h3",
+	} {
+		s, err := share.ParseLink(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		servers = append(servers, s)
+	}
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: servers}}
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	cfg, _ := config.Load(dir)
+	iv := cfg.AutoSwitch.Interval.D()
+	for i, want := range []struct {
+		watched bool
+		every   time.Duration
+		how     string
+	}{
+		{true, 0, "when its connections show trouble"},
+		{true, autoFallback * iv, "when its connections show trouble, and every 5m0s"},
+		{false, iv, "every 1m0s (its connections can't be watched)"},
+	} {
+		st.SelectAuto(st.Entries()[i], "")
+		if err := st.Save(); err != nil {
+			t.Fatal(err)
+		}
+		sw.follow(runOptions{}, 0)
+		if sw.watched != want.watched || sw.every != want.every || (sw.next != nil) != (want.every > 0) {
+			t.Errorf("%s: watched %v, every %s, timer %v; want %v, %s", servers[i].Name, sw.watched, sw.every, sw.next != nil, want.watched, want.every)
+		}
+		if how := howChecked(cfg, servers[i]); how != want.how {
+			t.Errorf("%s: %q; want %q", servers[i].Name, how, want.how)
+		}
+	}
+}

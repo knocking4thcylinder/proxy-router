@@ -249,7 +249,20 @@ the server it picked, and tests the server only when they show trouble:
   working server always finishes a record it started;
 - the server doesn't answer a TLS handshake within `auto_switch.stall`;
 - a connection is reset, or the server closes it mid-record;
+- the server hangs up right after the handshake, before answering the
+  request: how servers turn away a revoked, expired or blocked key;
 - the server can't be reached.
+
+Hysteria (QUIC) is encrypted further, but two things still show: a QUIC
+handshake left unanswered for `auto_switch.stall`, and a server that sends
+nothing back for that long while the client keeps sending (a working
+server acknowledges every packet within milliseconds). During a download
+the client only acknowledges, so a freeze there shows once it sends again
+(the next request, or a new handshake after QUIC's 30s idle timeout); as a
+fallback, Hysteria servers are also checked every 5 × `auto_switch.interval`
+(5 minutes). Servers whose connections can't be watched (XHTTP over HTTP/3,
+mKCP, WireGuard) are checked every `auto_switch.interval` (1 minute)
+instead.
 
 A request that's simply waiting for an answer (long polls, idle
 connections) doesn't count, and nothing is downloaded while traffic flows
@@ -265,12 +278,9 @@ works, it stays put and ignores trouble for 5 minutes. The log shows each
 step (`auto-switch: ...`), and `status` and the tray mark the server
 `auto`.
 
-Only TCP connections are watched: servers on QUIC-based transports
-(Hysteria, XHTTP over HTTP/3) aren't switched away from.
-
 Picking a server any other way (`use 3`, the tray's server list) turns
 auto-switching off. Pools aren't checked; they have their own health check.
-`auto_switch.enabled: false` disables it. Without root, the switch is saved
+`auto_switch.enabled: false` (or `interval: 0`) disables it. Without root, the switch is saved
 to `state.json`, so `list` shows the new server; the TUN service can't
 write there, so it keeps the switch in memory until it restarts or you
 pick a server.

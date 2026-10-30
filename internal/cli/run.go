@@ -668,7 +668,7 @@ func run(ctx context.Context, o runOptions) error {
 			refresh()
 		case t := <-watch.Trouble():
 			sw.trouble(ctx, o, inst, gen, t)
-		case <-sw.retry:
+		case <-sw.due:
 			sw.again(ctx, o, inst, gen)
 		case r := <-sw.checked:
 			sw.check(ctx, o, r, gen)
@@ -767,8 +767,8 @@ func modTimes(paths []string) string {
 func printStatus(e *env, o runOptions) {
 	st := describeRun(e, o, "", "")
 	fmt.Printf("server: %s\n", st.Server)
-	if st.Auto {
-		fmt.Println("auto:   checked when its connections show trouble; replaced by the fastest working server when it fails")
+	if target, ok := o.autoTarget(e); ok {
+		fmt.Printf("auto:   checked %s; replaced by the fastest working server when it fails\n", howChecked(e.cfg, target.Server))
 	}
 	if st.TUN != "" {
 		fmt.Printf("tun:    %s (all traffic; proxy-router's own connections leave via %s)\n", st.TUN, st.Via)

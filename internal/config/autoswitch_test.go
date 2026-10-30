@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Auto-switching is on by default. Files from when the server was checked
+// Auto-switching is on by default. Files from when every server was checked
 // on a timer still load; their "interval: 0" still turns it off.
 func TestAutoSwitchConfig(t *testing.T) {
 	cases := []struct {
@@ -29,7 +29,9 @@ func TestAutoSwitchConfig(t *testing.T) {
 			t.Errorf("%q: enabled %v, stall %s; want %v, %s", c.yaml, a.Enabled, a.Stall.D(), c.enabled, c.stall)
 		}
 	}
-	if _, err := loadYAML(t, "auto_switch:\n  stall: 1s\n"); err == nil {
-		t.Error("accepted a 1s stall")
+	for _, bad := range []string{"auto_switch:\n  stall: 1s\n", "auto_switch:\n  interval: 5s\n"} {
+		if _, err := loadYAML(t, bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
