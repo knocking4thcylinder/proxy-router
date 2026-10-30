@@ -31,8 +31,10 @@ type runStatus struct {
 	Via     string `json:"via,omitempty"`
 	Note    string `json:"note,omitempty"`
 	Server  string `json:"server,omitempty"`
-	Socks   string `json:"socks,omitempty"`
-	HTTP    string `json:"http,omitempty"`
+	// Auto: the server is replaced when it stops working ("use --fastest").
+	Auto  bool   `json:"auto,omitempty"`
+	Socks string `json:"socks,omitempty"`
+	HTTP  string `json:"http,omitempty"`
 }
 
 var processStart = time.Now()
@@ -70,13 +72,12 @@ func describeRun(e *env, o runOptions, state, waiting string) runStatus {
 		Socks: e.cfg.Listen.Socks, HTTP: e.cfg.Listen.HTTP,
 		Server: "(none)",
 	}
-	if o.server != "" {
-		if en, err := e.state.Find(o.server); err == nil {
-			st.Server = en.String()
-		}
+	if en, _ := o.serverOverride(e); en != nil {
+		st.Server = en.String()
 	} else if cur, ok := e.state.Current(); ok {
 		st.Server = cur.String()
 	}
+	st.Auto = o.autoSwitching(e)
 	if o.tunName != "" {
 		st.Mode, st.TUN = "tun", o.tunName
 		st.Via, _ = netif.Physical(o.tunName)

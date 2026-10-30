@@ -52,6 +52,21 @@ ping:
   # Max simultaneous tests per server IP. Providers often put dozens of
   # "servers" behind one entry point that drops bursts of connections.
   per_endpoint: 2
+  # Downloaded through each server after the latency request. Censors often
+  # let a connection to a server start and cut it after ~16 KB, which the
+  # latency request never notices: a server whose download stalls fails.
+  # How fast it arrives ranks "ping" and "use --fastest". Empty disables.
+  download_url: https://speed.cloudflare.com/__down?bytes=262144
+
+# After "use --fastest", a running proxy-router downloads ping.download_url
+# through the server it picked every interval. After "failures" failed checks
+# in a row (the download stalls, or takes longer than timeout), it tests the
+# other servers (of the --group given, if any) and switches to the fastest
+# working one. Picking a server by name turns this off; interval: 0 disables.
+auto_switch:
+  interval: 1m
+  failures: 2
+  timeout: 15s
 
 # Destinations that always use the system's own routing: never proxied, never
 # pinned to an interface, and never sent into the TUN. Keeps Tailscale (and

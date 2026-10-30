@@ -50,6 +50,9 @@ type runOptions struct {
 	// forwards to, and tunLogin the per-run login it uses there.
 	tunListen string
 	tunLogin  engine.Account
+	// pick is where auto-switching moved when it couldn't save that to
+	// state.json.
+	pick *autoPick
 }
 
 func runCmd() *cobra.Command {
@@ -124,35 +127,16 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	var iface string
-	var mark int
-	if o.tunName != "" {
-		// Our own traffic must leave through the real uplink, or it would
-		// loop back into the TUN.
-		if iface, err = netif.Physical(o.tunName); err != nil {
-			return nil, nil, nil, err
-		}
-		mark = tun.SocketMark()
-	} else {
-		iface, _ = e.outboundInterface()
+	own, err := e.ownOptions(o)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: iface,
-		TUNListen: o.tunListen, TUNAccount: o.tunLogin}
-	if iface != "" || e.cfg.ResolveLocally {
-		// Resolve server hostnames here: in TUN mode the system resolver may
-		// be routed into the TUN, and with resolve_locally Xray's DNS goes
-		// through the proxy, which can't help find the proxy itself.
-		plan.Resolve = e.resolver(iface, mark)
+	plan := engine.Plan{Config: e.cfg, Rules: rules, State: e.state, Interface: own.Interface,
+		Resolve: own.Resolve, TUNListen: o.tunListen, TUNAccount: o.tunLogin}
+	if plan.Server, err = o.serverOverride(e); err != nil {
+		return nil, nil, nil, err
 	}
-	if o.server != "" {
-		entry, err := e.state.Find(o.server)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		plan.Server = &entry
-	}
-	geo := engine.PingOptions{Interface: iface, Config: e.cfg, Resolve: plan.Resolve, Mark: mark}
-	if err := e.ensureGeo(rules, plan.Server, geo); err != nil {
+	if err := e.ensureGeo(rules, plan.Server, own); err != nil {
 		return nil, nil, nil, err
 	}
 	xc, notes, err := engine.Build(plan)
@@ -161,9 +145,52 @@ func buildCurrentNotes(o runOptions) (*env, map[string]any, []string, error) {
 	}
 	if o.tunName != "" {
 		// The kill switch recognizes proxy-router's own connections by it.
-		engine.MarkSockets(xc, mark)
+		engine.MarkSockets(xc, own.Mark)
 	}
 	return e, xc, notes, nil
+}
+
+// ownOptions sets up proxy-router's own connections to servers like the
+// running proxy's: the interface and, in TUN mode, the socket mark they
+// leave with, and how server names are looked up.
+func (e *env) ownOptions(o runOptions) (engine.PingOptions, error) {
+	var iface string
+	var mark int
+	if o.tunName != "" {
+		// Our own traffic must leave through the real uplink, or it would
+		// loop back into the TUN.
+		var err error
+		if iface, err = netif.Physical(o.tunName); err != nil {
+			return engine.PingOptions{}, err
+		}
+		mark = tun.SocketMark()
+	} else {
+		iface, _ = e.outboundInterface()
+	}
+	own := engine.PingOptions{Interface: iface, Config: e.cfg, Mark: mark}
+	if iface != "" || e.cfg.ResolveLocally {
+		// Resolve server hostnames here: in TUN mode the system resolver may
+		// be routed into the TUN, and with resolve_locally Xray's DNS goes
+		// through the proxy, which can't help find the proxy itself.
+		own.Resolve = e.resolver(iface, mark)
+	}
+	return own, nil
+}
+
+// serverOverride is the server this run uses instead of the selected one:
+// --server, or where auto-switching moved (nil: the selected one).
+func (o runOptions) serverOverride(e *env) (*config.Entry, error) {
+	if o.server != "" {
+		entry, err := e.state.Find(o.server)
+		if err != nil {
+			return nil, err
+		}
+		return &entry, nil
+	}
+	if entry, ok := o.pick.entry(e.state); ok {
+		return &entry, nil
+	}
+	return nil, nil
 }
 
 func (e *env) rulesPath(o runOptions) string {
@@ -555,19 +582,32 @@ func run(ctx context.Context, o runOptions) error {
 		updates = t.C
 	}
 
-	reload := func(reason string) {
+	// gen counts main instances, so a health check that went through one
+	// that has since been replaced is ignored.
+	gen := 0
+	sw := newSwitcher()
+	autoTicker := time.NewTicker(autoTick)
+	defer autoTicker.Stop()
+
+	// reload rebuilds the config and restarts the main instance if it
+	// changed, or always with force.
+	reload := func(reason string, force bool) {
 		_, next, err := buildCurrent(o)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: not reloading: %v\n", reason, err)
-			return
+			if !force {
+				return
+			}
+			_ = json.Unmarshal(raw, &next)
 		}
 		nextRaw, _ := json.Marshal(next)
-		if bytes.Equal(raw, nextRaw) {
+		if bytes.Equal(raw, nextRaw) && !force {
 			return
 		}
 		// Ports must be free before the new instance can bind them.
 		stop(inst)
 		inst = nil
+		gen++
 		newInst, err := start(next)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: new config failed, keeping the old one: %v\n", reason, err)
@@ -592,7 +632,7 @@ func run(ctx context.Context, o runOptions) error {
 			return nil
 		case sig := <-sigs:
 			if sig == syscall.SIGHUP {
-				reload("SIGHUP")
+				reload("SIGHUP", false)
 				continue
 			}
 			fmt.Println("\nstopping")
@@ -603,22 +643,32 @@ func run(ctx context.Context, o runOptions) error {
 				if o.tunName != "" {
 					syncTUN()
 				}
-				reload("files or network changed")
+				reload("files or network changed", false)
 			}
 		case changed := <-refreshed:
 			refreshing = false
 			if changed {
 				stamps = snapshot()
-				reload("subscriptions updated")
+				reload("subscriptions updated", false)
 			}
 		case <-tunSync:
 			if err := tun.Sync(tunOpts); err != nil {
 				fmt.Fprintln(os.Stderr, "TUN:", err)
 			}
 		case <-reresolve.C:
-			reload("server addresses changed")
+			reload("server addresses changed", false)
 		case <-updates:
 			refresh()
+		case <-autoTicker.C:
+			sw.tick(ctx, o, inst, gen)
+		case r := <-sw.checked:
+			sw.check(ctx, o, r, gen)
+		case r := <-sw.scanned:
+			o.pick = sw.apply(r, o.pick)
+			// Always restart: the scan's test instances took over Xray's
+			// process-wide state from the running one.
+			reload("auto-switch", true)
+			stamps = snapshot()
 		}
 	}
 	return fatal
@@ -708,6 +758,9 @@ func modTimes(paths []string) string {
 func printStatus(e *env, o runOptions) {
 	st := describeRun(e, o, "", "")
 	fmt.Printf("server: %s\n", st.Server)
+	if st.Auto {
+		fmt.Printf("auto:   checked every %s; replaced by the fastest working server when it fails\n", e.cfg.AutoSwitch.Interval.D())
+	}
 	if st.TUN != "" {
 		fmt.Printf("tun:    %s (all traffic; proxy-router's own connections leave via %s)\n", st.TUN, st.Via)
 	} else if st.Note != "" {

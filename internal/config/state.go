@@ -48,6 +48,10 @@ type Subscription struct {
 type Selection struct {
 	Group string `json:"group"`
 	Name  string `json:"name"`
+	// Auto: picked by "use --fastest"; a running proxy-router switches to
+	// the fastest working server of AutoGroup ("" = all) when it fails.
+	Auto      bool   `json:"auto,omitempty"`
+	AutoGroup string `json:"auto_group,omitempty"`
 }
 
 // Entry is a server with its position in the combined list.
@@ -139,6 +143,12 @@ func (s *State) Current() (Entry, bool) {
 
 func (s *State) Select(e Entry) {
 	s.Selected = &Selection{Group: e.Group, Name: e.Server.Name}
+}
+
+// SelectAuto selects e and lets a running proxy-router replace it with
+// another server of group ("" = all) when it stops working.
+func (s *State) SelectAuto(e Entry, group string) {
+	s.Selected = &Selection{Group: e.Group, Name: e.Server.Name, Auto: true, AutoGroup: group}
 }
 
 // FindAll resolves a query to every matching server: "*" (all), an index,
