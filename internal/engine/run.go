@@ -20,6 +20,7 @@ import (
 	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/platform/filesystem"
+	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/transport/internet"
 
@@ -120,6 +121,10 @@ type PingOptions struct {
 	// ExitURL, when set, is fetched through each server after the latency
 	// test; its body (e.g. a country code) is reported as Exit.
 	ExitURL string
+	// DownloadURL, when set, is downloaded through each server after the
+	// latency test. A server whose transfer stalls fails, and Speed is
+	// how fast it arrived.
+	DownloadURL string
 	// OnProgress is called after each server (or pool member) finishes.
 	// Calls are serialized; the callback should return promptly.
 	OnProgress func(PingProgress)
@@ -140,6 +145,9 @@ type PingResult struct {
 	Err     error
 	// Exit is what ExitURL returned through the server, e.g. "DE".
 	Exit string
+	// Speed is how fast DownloadURL arrived, in bytes per second; 0 when
+	// it wasn't measured.
+	Speed float64
 	// For pools: how many members answered, out of how many.
 	Alive, Members int
 }
@@ -205,7 +213,7 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 			ep <- struct{}{}
 			defer func() { <-ep }()
 		}
-		d, exit, err := pingOne(ctx, j.server, o)
+		d, exit, speed, err := pingOne(ctx, j.server, o)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -213,7 +221,7 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		if err == nil {
 			r.Alive++
 			if r.Err != nil || r.Latency == 0 || d < r.Latency {
-				r.Latency, r.Exit, r.Err = d, exit, nil
+				r.Latency, r.Exit, r.Speed, r.Err = d, exit, speed, nil
 			}
 		} else if r.Latency == 0 {
 			r.Err = err
@@ -262,11 +270,11 @@ type discardLog struct{}
 
 func (discardLog) Handle(xlog.Message) {}
 
-func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, error) {
+func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, float64, error) {
 	url, timeout := o.URL, o.Timeout
 	inst, transport, err := startThrough(s, o, url)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	defer inst.Close()
 
@@ -277,19 +285,30 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", err
+		return 0, "", 0, err
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 500 {
-		return 0, "", fmt.Errorf("HTTP %s", resp.Status)
+		return 0, "", 0, fmt.Errorf("HTTP %s", resp.Status)
 	}
 	latency := time.Since(start)
+
+	var speed float64
+	if o.DownloadURL != "" {
+		// A stall is a few timeouts without data; the whole download gets
+		// more, so a slow but working server still finishes.
+		dl, err := Download(ctx, &http.Client{Transport: transport}, o.DownloadURL, timeout, 4*timeout)
+		if err != nil {
+			return 0, "", 0, err
+		}
+		speed = dl.Speed()
+	}
 
 	exit := ""
 	if o.ExitURL != "" {
@@ -304,7 +323,112 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 			}
 		}
 	}
-	return latency, exit, nil
+	return latency, exit, speed, nil
+}
+
+// Downloaded is the outcome of Download.
+type Downloaded struct {
+	Bytes int64
+	Took  time.Duration
+	// Unmeasured: the URL didn't answer 200 (the test site refusing, not
+	// the server failing), so nothing was measured.
+	Unmeasured bool
+}
+
+// Speed is in bytes per second.
+func (d Downloaded) Speed() float64 {
+	if d.Unmeasured || d.Took <= 0 {
+		return 0
+	}
+	return float64(d.Bytes) / d.Took.Seconds()
+}
+
+// ErrStalled is returned by Download when data stops arriving.
+var ErrStalled = errors.New("stalled")
+
+// Download fetches url with client and times it. Censors often let a
+// connection to a proxy start and then cut it after ~16 KB, which a short
+// request like the latency test never notices: Download fails with
+// ErrStalled when nothing arrives for stall, and with a timeout when the
+// whole transfer takes longer than limit. Its size is the url's to say
+// (e.g. speed.cloudflare.com/__down?bytes=...), capped at 64 MB.
+func Download(ctx context.Context, client *http.Client, url string, stall, limit time.Duration) (Downloaded, error) {
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, errDownloadSlow)
+	defer cancel()
+	stalled := false
+	var mu sync.Mutex
+	timer := time.AfterFunc(stall, func() {
+		mu.Lock()
+		stalled = true
+		mu.Unlock()
+		cancel()
+	})
+	defer timer.Stop()
+	var d Downloaded
+	fail := func(err error) (Downloaded, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case stalled:
+			return d, fmt.Errorf("download %w after %s (connection cut, likely blocked)", ErrStalled, kb(d.Bytes))
+		case errors.Is(context.Cause(ctx), errDownloadSlow):
+			return d, fmt.Errorf("download too slow: %s in %s", kb(d.Bytes), limit)
+		}
+		return d, fmt.Errorf("download: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return d, err
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return fail(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Downloaded{Unmeasured: true}, nil
+	}
+	buf := make([]byte, 32<<10)
+	body := io.LimitReader(resp.Body, 64<<20)
+	for {
+		n, err := body.Read(buf)
+		if n > 0 {
+			d.Bytes += int64(n)
+			timer.Reset(stall)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fail(err)
+		}
+	}
+	d.Took = time.Since(start)
+	return d, nil
+}
+
+var errDownloadSlow = errors.New("download took too long")
+
+func kb(n int64) string { return fmt.Sprintf("%d KB", (n+512)/1024) }
+
+// CheckOutbound downloads url through the outbound tagged tag of a
+// running instance, as Download does, to see whether the server it uses
+// still carries traffic.
+func CheckOutbound(ctx context.Context, inst *core.Instance, tag, url string, stall, limit time.Duration) (Downloaded, error) {
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dest, err := xnet.ParseDestination("tcp:" + addr)
+			if err != nil {
+				return nil, err
+			}
+			return core.Dial(session.SetForcedOutboundTagToContext(ctx, tag), inst, dest)
+		},
+	}
+	defer transport.CloseIdleConnections()
+	return Download(ctx, &http.Client{Transport: transport}, url, stall, limit)
 }
 
 // ProxyClient returns an HTTP client whose connections go through s, set

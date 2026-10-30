@@ -89,7 +89,24 @@ type Config struct {
 		// Max simultaneous tests against one server IP. Providers often
 		// put many "servers" behind one entry point that drops bursts.
 		PerEndpoint int `yaml:"per_endpoint"`
+		// Downloaded through each server after the latency test: a server
+		// whose transfer stalls fails (censors cutting connections after
+		// ~16 KB), and how fast it arrives ranks "use --fastest". Empty
+		// disables.
+		DownloadURL string `yaml:"download_url"`
 	} `yaml:"ping"`
+
+	// After "use --fastest", a running proxy-router keeps checking the
+	// server it picked and switches to the fastest working one when it
+	// stops carrying traffic.
+	AutoSwitch struct {
+		// How often the server is checked. 0 disables auto-switching.
+		Interval Duration `yaml:"interval"`
+		// Failed checks in a row before switching.
+		Failures int `yaml:"failures"`
+		// A check fails if ping.download_url takes longer than this.
+		Timeout Duration `yaml:"timeout"`
+	} `yaml:"auto_switch"`
 
 	// Destinations that always use the system's own routing: never proxied
 	// and never pinned to an interface. Keeps Tailscale and other VPNs'
@@ -130,6 +147,10 @@ func defaults() *Config {
 	c.Ping.URL = "https://www.gstatic.com/generate_204"
 	c.Ping.Timeout = Duration(5 * time.Second)
 	c.Ping.PerEndpoint = 2
+	c.Ping.DownloadURL = "https://speed.cloudflare.com/__down?bytes=262144"
+	c.AutoSwitch.Interval = Duration(time.Minute)
+	c.AutoSwitch.Failures = 2
+	c.AutoSwitch.Timeout = Duration(15 * time.Second)
 	c.SystemRoute = []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48", "domain:ts.net"}
 	c.Fragment = Fragment{Packets: "tlshello", Length: Range{50, 100}, Delay: Range{10, 20}, MaxSplit: Range{3, 6}}
 	c.Mux = Mux{Concurrency: 8, XUDPConcurrency: 16, XUDPProxyUDP443: "reject"}
@@ -161,6 +182,9 @@ func Load(dir string) (*Config, error) {
 	if err := c.validateTweaks(); err != nil {
 		return nil, fmt.Errorf("config.yaml: %w", err)
 	}
+	if err := c.validateAutoSwitch(); err != nil {
+		return nil, fmt.Errorf("config.yaml: %w", err)
+	}
 	if confined.on && (!filepath.IsLocal(c.Rules) || strings.HasPrefix(c.Rules, "~")) {
 		return nil, fmt.Errorf("config.yaml: rules: the TUN service only reads rules files inside %s, not %q", dir, c.Rules)
 	}
@@ -170,6 +194,22 @@ func Load(dir string) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func (c *Config) validateAutoSwitch() error {
+	if u := c.Ping.DownloadURL; u != "" && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+		return errors.New("ping.download_url must be an http(s) URL")
+	}
+	a := c.AutoSwitch
+	switch {
+	case a.Interval != 0 && a.Interval.D() < 15*time.Second:
+		return errors.New("auto_switch.interval must be at least 15s (or 0 to disable)")
+	case a.Failures < 1:
+		return errors.New("auto_switch.failures must be at least 1")
+	case a.Timeout.D() < time.Second:
+		return errors.New("auto_switch.timeout must be at least 1s")
+	}
+	return nil
 }
 
 // Dir is the directory the config was loaded from.

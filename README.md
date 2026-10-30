@@ -40,7 +40,7 @@ go build -o proxy-router .
 ```sh
 proxy-router sub add 'https://panel.example.com/api/sub/TOKEN'
 proxy-router list                # servers, * = selected
-proxy-router ping                # real latency through every server
+proxy-router ping                # real latency and download speed through every server
 proxy-router use --fastest       # or: use 3 / use "Germany" / use "My VPN/🇩🇪 Germany"
 proxy-router start               # background service: SOCKS5 on :10808, HTTP on :10809
 proxy-router start --tun         # or capture all traffic (asks for sudo)
@@ -172,8 +172,8 @@ Quitting the tray leaves the service running.
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
-| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy` |
-| `ping [server...] [-g group] [--exit] [-q]` | live latency tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
+| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy`; `--fastest` picks the fastest download and [switches automatically](#auto-switching) |
+| `ping [server...] [-g group] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
 | `restart` | restart it (picks up a rebuilt binary) |
@@ -206,13 +206,25 @@ any unique part of the name. After `group/`, only that group's servers
 match, so another subscription can't take over the name.
 
 `ping` prints each result as it finishes, with an animated progress counter
-and elapsed time in a terminal. The final table is sorted fastest first;
-`*` marks the selected server. Live progress goes to stderr, so redirecting
+and elapsed time in a terminal. After the latency request it downloads
+`ping.download_url` (256 KB from speed.cloudflare.com) through each server.
+A server whose download stalls fails with `download stalled after 16 KB
+(connection cut, likely blocked)`: censors often let a connection to a
+server start and then cut it after ~16 KB, so a short request (and an
+ordinary ping) says the server works while nothing loads through it. The
+final table is sorted by download speed, fastest first; `*` marks the
+selected server. The speed is how fast that short download arrived,
+connection setup included: it ranks servers by how quickly pages load, and
+is lower than a long download through the same server would reach. Live progress goes to stderr, so redirecting
 stdout saves just the final table. Use `--quiet` (`-q`) to skip progress.
 With `--exit`, countries appear as `Finland (FI)`; `unknown (lookup failed)`
 means the latency test worked but the separate country lookup did not.
 Pools have a separate `POOL` column showing how many members responded;
-their latency and exit come from the fastest responding member.
+their latency, speed and exit come from the fastest responding member.
+
+`use --fastest` picks the server the download arrived fastest through. It
+picks a pool only if no single server works: a pool's own health check is
+a short request, which can't see a member that connects and then stalls.
 
 `ping` (and `use --fastest`) always connect to servers directly. In TUN
 mode they go around the TUN, past the kill switch, instead of through the
@@ -226,6 +238,27 @@ While the service (or `run`) is active it picks up changes by itself:
 
 It only restarts when the generated config actually changed. `kill -HUP`
 forces a reload.
+
+### Auto-switching
+
+After `use --fastest`, the running service keeps checking the server it
+picked: every `auto_switch.interval` (1 minute) it downloads
+`ping.download_url` through it. When that fails `auto_switch.failures` (2)
+times in a row, because the download stalls (a censor started cutting
+connections to the server) or takes longer than `auto_switch.timeout`
+(15s), it tests the other servers like `use --fastest` and switches to the
+fastest working one. With `use --fastest -g group`, it stays within that
+subscription. A server that stopped working is left out for 15 minutes; if
+nothing else works, it stays put and tries again 5 minutes later. The log
+shows each step (`auto-switch: ...`), and `status` and the tray mark the
+server `auto`.
+
+Picking a server any other way (`use 3`, the tray's server list) turns
+auto-switching off. Pools aren't checked; they have their own health check.
+`auto_switch.interval: 0` disables it. Without root, the switch is saved
+to `state.json`, so `list` shows the new server; the TUN service can't
+write there, so it keeps the switch in memory until it restarts or you
+pick a server.
 
 ## Routing rules
 
@@ -280,7 +313,7 @@ Everything is in `~/.config/proxy-router/` (override with `--dir` or
 `$PROXY_ROUTER_HOME`, which is ignored under sudo). Root only uses it if
 it's yours and nobody else can write to it or the directories above it:
 
-- `config.yaml`: listen addresses, interface binding, log level, update interval, User-Agent, geo URLs, ping URL
+- `config.yaml`: listen addresses, interface binding, log level, update interval, User-Agent, geo URLs, ping and download test URLs, auto-switching
 - `routing.yaml`: routing rules
 - `state.json`: subscriptions, cached servers, selected server (managed by the CLI, mode 0600)
 - `assets/`: geo files

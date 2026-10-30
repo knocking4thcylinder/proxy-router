@@ -221,7 +221,13 @@ func useCmd() *cobra.Command {
 		Long: `Select the server used by the "proxy" outbound.
 
 <server> can be the index from "list", the exact name, "group/name", or a
-unique part of the name. A running "proxy-router run" switches automatically.`,
+unique part of the name. A running "proxy-router run" switches automatically.
+
+--fastest downloads a test file through every server (ping.download_url)
+and picks the one it arrives fastest through. A running proxy-router then
+keeps checking that server (auto_switch in config.yaml) and moves to the
+fastest working one, within --group if given, when it stops carrying
+traffic. Selecting a server by name turns this off.`,
 		ValidArgsFunction: completeSelectedServer,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
@@ -247,17 +253,12 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 					fmt.Fprintln(os.Stderr, note)
 				}
 				results := engine.Ping(cmd.Context(), entries, opts)
-				best := -1
-				for i, r := range results {
-					if r.Err == nil && (best < 0 || r.Latency < results[best].Latency) {
-						best = i
-					}
-				}
-				if best < 0 {
+				best, ok := pickFastest(results)
+				if !ok {
 					return fmt.Errorf("no server responded")
 				}
-				entry = results[best].Entry
-				fmt.Printf("fastest: %s (%s)\n", clean(entry.String()), results[best].Latency.Round(time.Millisecond))
+				entry = best.Entry
+				fmt.Printf("fastest: %s (%s)\n", clean(entry.String()), pingSummary(best))
 			case len(args) == 1:
 				if entry, err = e.state.FindInGroup(args[0], group); err != nil {
 					return err
@@ -265,15 +266,22 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 			default:
 				return fmt.Errorf("give a server or --fastest")
 			}
-			e.state.Select(entry)
+			if fastest {
+				e.state.SelectAuto(entry, group)
+			} else {
+				e.state.Select(entry)
+			}
 			if err := e.state.Save(); err != nil {
 				return err
 			}
 			fmt.Printf("using %s\n", clean(entry.String()))
+			if fastest && e.cfg.AutoSwitch.Interval > 0 && entry.Server.Pool == nil {
+				fmt.Printf("while running, proxy-router checks it every %s and switches to the fastest working server when it fails\n", e.cfg.AutoSwitch.Interval.D())
+			}
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&fastest, "fastest", false, "ping all servers and pick the fastest")
+	cmd.Flags().BoolVar(&fastest, "fastest", false, "test all servers, pick the fastest, and switch automatically when it fails")
 	cmd.Flags().StringVarP(&group, "group", "g", "", "only select from this subscription (or manual)")
 	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
@@ -288,7 +296,7 @@ func pingCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:               "ping [server...]",
-		Short:             "Measure real latency (full HTTP request) through servers; all by default",
+		Short:             "Measure real latency and download speed through servers; all by default",
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
@@ -351,6 +359,7 @@ func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
 		Timeout:     e.cfg.Ping.Timeout.D(),
 		Parallel:    parallel,
 		PerEndpoint: e.cfg.Ping.PerEndpoint,
+		DownloadURL: e.cfg.Ping.DownloadURL,
 		Config:      e.cfg,
 	}
 	if own := e.ownTUN(); own != "" {
@@ -372,6 +381,52 @@ func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
 	iface, note := e.outboundInterface()
 	o.Interface, o.Resolve = iface, e.resolverIf(iface)
 	return o, note
+}
+
+// pickFastest picks the best working result: the fastest download, else (no
+// download measured) the lowest latency. A pool only if no single server
+// works: its health check is a short request, which can't see a member
+// that connects and then stalls, so it may keep using one.
+func pickFastest(results []engine.PingResult) (engine.PingResult, bool) {
+	best, found := engine.PingResult{}, false
+	for _, r := range results {
+		if r.Err == nil && (!found || better(r, best)) {
+			best, found = r, true
+		}
+	}
+	return best, found
+}
+
+// better reports whether a should be picked over b (both working).
+func better(a, b engine.PingResult) bool {
+	if ap, bp := a.Entry.Server.Pool != nil, b.Entry.Server.Pool != nil; ap != bp {
+		return bp
+	}
+	if (a.Speed > 0) != (b.Speed > 0) {
+		return a.Speed > 0
+	}
+	if a.Speed > 0 && a.Speed != b.Speed {
+		return a.Speed > b.Speed
+	}
+	return a.Latency < b.Latency
+}
+
+// pingSummary is "4.2 Mbit/s, 120ms", or just the latency.
+func pingSummary(r engine.PingResult) string {
+	lat := r.Latency.Round(time.Millisecond).String()
+	if r.Speed > 0 {
+		return speedText(r.Speed) + ", " + lat
+	}
+	return lat
+}
+
+// speedText formats bytes per second as megabits, like speed tests do.
+func speedText(bps float64) string {
+	mbit := bps * 8 / 1e6
+	if mbit < 10 {
+		return fmt.Sprintf("%.1f Mbit/s", mbit)
+	}
+	return fmt.Sprintf("%.0f Mbit/s", mbit)
 }
 
 func (e *env) resolverIf(iface string) engine.Resolver {

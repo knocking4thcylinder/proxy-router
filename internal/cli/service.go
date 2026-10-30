@@ -600,6 +600,9 @@ func printRunStatus(st runStatus) {
 		return
 	}
 	fmt.Printf("server:  %s\n", st.Server)
+	if st.Auto {
+		fmt.Println("auto:    switches to the fastest working server when this one fails")
+	}
 	switch {
 	case st.TUN != "":
 		fmt.Printf("tun:     %s (all traffic; own connections via %s)\n", st.TUN, st.Via)

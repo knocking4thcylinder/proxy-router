@@ -29,7 +29,11 @@ func pingWithProgress(ctx context.Context, entries []config.Entry, opts engine.P
 	if os.Getenv("TERM") != "dumb" {
 		p.width = pingTerminalWidth(out)
 	}
-	fmt.Fprintf(out, "Testing %d servers (HTTP request through each proxy)", len(entries))
+	what := "HTTP request"
+	if opts.DownloadURL != "" {
+		what += " and download"
+	}
+	fmt.Fprintf(out, "Testing %d servers (%s through each proxy)", len(entries), what)
 	if exit {
 		fmt.Fprint(out, "; checking exit countries")
 	}
@@ -74,6 +78,9 @@ func (p *pingDisplay) update(u engine.PingProgress) {
 		p.clear()
 		r := u.Result
 		fmt.Fprintf(p.out, "[%d/%d] %-4s #%d %s | %s", p.done, p.total, status, r.Entry.Index, pingText(r.Entry.Server.Name), pingLatency(r))
+		if r.Err == nil && r.Speed > 0 {
+			fmt.Fprintf(p.out, " | %s", speedText(r.Speed))
+		}
 		if r.Members > 0 {
 			fmt.Fprintf(p.out, " | %d/%d alive", r.Alive, r.Members)
 		}
@@ -113,6 +120,7 @@ func (p *pingDisplay) draw() {
 }
 
 func writePingResults(out io.Writer, results []engine.PingResult, current int, exit bool) error {
+	speed := slices.ContainsFunc(results, func(r engine.PingResult) bool { return r.Speed > 0 })
 	slices.SortStableFunc(results, func(a, b engine.PingResult) int {
 		switch {
 		case a.Err != nil && b.Err != nil:
@@ -121,6 +129,8 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 			return 1
 		case b.Err != nil:
 			return -1
+		case speed && a.Speed != b.Speed:
+			return cmp.Compare(b.Speed, a.Speed)
 		}
 		return cmp.Compare(a.Latency, b.Latency)
 	})
@@ -128,6 +138,9 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "Results (fastest first; * selected)")
 	header := "\t#\tNAME\tGROUP\tLATENCY"
+	if speed {
+		header += "\tSPEED"
+	}
 	if pool {
 		header += "\tPOOL"
 	}
@@ -141,6 +154,13 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 			mark = "*"
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, pingText(r.Entry.Server.Name), pingText(r.Entry.Group), pingLatency(r))
+		if speed {
+			sp := "-"
+			if r.Err == nil && r.Speed > 0 {
+				sp = speedText(r.Speed)
+			}
+			fmt.Fprintf(tw, "\t%s", sp)
+		}
 		if pool {
 			members := "-"
 			if r.Members > 0 {
@@ -154,7 +174,7 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 		fmt.Fprintln(tw)
 	}
 	if pool {
-		fmt.Fprintln(tw, "\nPools show the latency and exit of their fastest responding member.")
+		fmt.Fprintln(tw, "\nPools show the latency, speed and exit of their fastest responding member.")
 	}
 	return tw.Flush()
 }

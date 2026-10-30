@@ -301,6 +301,9 @@ func (t *tray) model() trayModel {
 		if strings.HasPrefix(server, "#") {
 			_, server, _ = strings.Cut(server, " ")
 		}
+		if st.Auto {
+			server += " (auto)"
+		}
 		m.details = append(m.details, "Server: "+server)
 		if st.TUN != "" {
 			m.details = append(m.details, "All traffic ("+st.TUN+")")
