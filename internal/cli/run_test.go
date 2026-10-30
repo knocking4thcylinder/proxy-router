@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -54,5 +56,43 @@ func TestApplyRefreshed(t *testing.T) {
 	applyRefreshed(newer)
 	if newer.Subscriptions[0].Servers[0].Name != "user" {
 		t.Errorf("the user's newer refresh was overridden")
+	}
+}
+
+// A service invocation must never recursively launch another service.
+func TestRunDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		attached bool
+	}{
+		{"default", nil, false},
+		{"tun", []string{"--tun", "--no-update", "--server", "Germany", "--rules", "rules.yaml", "--system-proxy", "-vv", "--force"}, false},
+		{"foreground", []string{"--tun", "--foreground"}, true},
+		{"service", []string{"--tun", "--service"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attached, background := 0, 0
+			cmd := newRunCmd(func(_ context.Context, o runOptions) error { attached++; return nil }, func(o startOptions, restart bool) error {
+				background++
+				if restart {
+					t.Error("run requested restart")
+				}
+				if tc.name == "tun" {
+					want := []string{"--force", "-vv", "--rules", "rules.yaml", "--server", "Germany", "--system-proxy", "--no-update"}
+					if !o.tun || !slices.Equal(o.runArgs(), want) {
+						t.Errorf("options lost: %+v, args %v", o, o.runArgs())
+					}
+				}
+				return nil
+			})
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if tc.attached && (attached != 1 || background != 0) || !tc.attached && (background != 1 || attached != 0) {
+				t.Errorf("attached=%d background=%d", attached, background)
+			}
+		})
 	}
 }

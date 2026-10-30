@@ -129,27 +129,16 @@ func listCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries := filterGroup(e.state.Entries(), group)
+			entries, err := e.state.GroupEntries(group)
+			if err != nil {
+				return err
+			}
 			if len(entries) == 0 {
 				fmt.Println("no servers; add a subscription with `proxy-router sub add <url>` or a link with `proxy-router add <link>`")
 				return nil
 			}
-			cur, hasCur := e.state.Current()
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "\t#\tNAME\tGROUP\tPROTOCOL\tADDRESS")
-			for _, en := range entries {
-				mark := ""
-				if hasCur && en.Index == cur.Index {
-					mark = "*"
-				}
-				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\t%s\n", mark, en.Index, clean(en.Server.Name), clean(en.Group), clean(describe(en.Server)), clean(address(en.Server)))
-				if verbose {
-					for _, w := range en.Server.Warnings {
-						fmt.Fprintf(tw, "\t\t  ! %s\t\t\t\n", clean(w))
-					}
-				}
-			}
-			return tw.Flush()
+			cur, _ := e.state.Current()
+			return writeServerList(cmd.OutOrStdout(), entries, cur.Index, verbose)
 		},
 	}
 	cmd.Flags().StringVarP(&group, "group", "g", "", "only list this subscription (or manual)")
@@ -158,11 +147,36 @@ func listCmd() *cobra.Command {
 	return cmd
 }
 
-func filterGroup(entries []config.Entry, group string) []config.Entry {
-	if group == "" {
-		return entries
+func writeServerList(w io.Writer, entries []config.Entry, current int, verbose bool) error {
+	for start := 0; start < len(entries); {
+		end := start + 1
+		for end < len(entries) && entries[end].Group == entries[start].Group {
+			end++
+		}
+		if start > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%s (%d servers)\n", clean(entries[start].Group), end-start)
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "\t#\tNAME\tPROTOCOL\tADDRESS")
+		for _, en := range entries[start:end] {
+			mark := ""
+			if en.Index == current {
+				mark = "*"
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", mark, en.Index, clean(en.Server.Name), clean(describe(en.Server)), clean(address(en.Server)))
+			if verbose {
+				for _, warning := range en.Server.Warnings {
+					fmt.Fprintf(tw, "\t\t  ! %s\n", clean(warning))
+				}
+			}
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		start = end
 	}
-	return slices.DeleteFunc(entries, func(e config.Entry) bool { return e.Group != group })
+	return nil
 }
 
 // describe summarises protocol/transport/security, e.g. "vless+xhttp+reality".
@@ -220,7 +234,10 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 				if len(args) > 0 {
 					return fmt.Errorf("--fastest takes no server argument")
 				}
-				entries := filterGroup(e.state.Entries(), group)
+				entries, err := e.state.GroupEntries(group)
+				if err != nil {
+					return err
+				}
 				if len(entries) == 0 {
 					return fmt.Errorf("no servers to test")
 				}
@@ -242,7 +259,7 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 				entry = results[best].Entry
 				fmt.Printf("fastest: %s (%s)\n", clean(entry.String()), results[best].Latency.Round(time.Millisecond))
 			case len(args) == 1:
-				if entry, err = e.state.Find(args[0]); err != nil {
+				if entry, err = e.state.FindInGroup(args[0], group); err != nil {
 					return err
 				}
 			default:
@@ -257,7 +274,7 @@ unique part of the name. A running "proxy-router run" switches automatically.`,
 		},
 	}
 	cmd.Flags().BoolVar(&fastest, "fastest", false, "ping all servers and pick the fastest")
-	cmd.Flags().StringVarP(&group, "group", "g", "", "with --fastest, only consider this subscription")
+	cmd.Flags().StringVarP(&group, "group", "g", "", "only select from this subscription (or manual)")
 	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
 }
@@ -278,12 +295,15 @@ func pingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var entries []config.Entry
-			if len(args) == 0 {
-				entries = filterGroup(e.state.Entries(), group)
+			entries, err := e.state.GroupEntries(group)
+			if err != nil {
+				return err
+			}
+			if len(args) > 0 {
+				entries = nil
 			}
 			for _, a := range args {
-				en, err := e.state.Find(a)
+				en, err := e.state.FindInGroup(a, group)
 				if err != nil {
 					return err
 				}

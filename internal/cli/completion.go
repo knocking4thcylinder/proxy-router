@@ -147,8 +147,9 @@ func completionState() *config.State {
 	return state
 }
 
-func completeServers(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return completeServerEntries(args, toComplete, false)
+func completeServers(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	group, _ := cmd.Flags().GetString("group")
+	return completeServerEntries(args, toComplete, false, group)
 }
 
 func completeSelectedServer(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -163,22 +164,25 @@ func completeManualServer(_ *cobra.Command, args []string, toComplete string) ([
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return completeServerEntries(nil, toComplete, true)
+	return completeServerEntries(nil, toComplete, true, "")
 }
 
-func completeServerEntries(args []string, toComplete string, manualOnly bool) ([]string, cobra.ShellCompDirective) {
+func completeServerEntries(args []string, toComplete string, manualOnly bool, group string) ([]string, cobra.ShellCompDirective) {
 	state := completionState()
 	if state == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	entries := state.Entries()
+	entries, err := state.GroupEntries(group)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 	names := make(map[string]int)
 	for _, entry := range entries {
 		names[entry.Server.Name]++
 	}
 	used := make(map[int]bool)
 	for _, arg := range args {
-		if entry, err := state.Find(arg); err == nil {
+		if entry, err := state.FindInGroup(arg, group); err == nil {
 			used[entry.Index] = true
 		}
 	}

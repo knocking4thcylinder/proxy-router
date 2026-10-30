@@ -77,8 +77,8 @@ Xray outbound delivered through a JSON subscription.
 Traffic is routed with rules from a YAML file (routing.yaml by default).
 
 "proxy-router start" runs it in the background and at every login (boot,
-in TUN mode); "stop", "restart", "status" and "logs" control it. "run"
-runs it in the foreground instead.`,
+in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also starts in the background;
+"run --foreground" stays attached to the terminal.`,
 		Version:       version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,

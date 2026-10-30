@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -528,4 +530,50 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("unexpected body %q", got)
 		}
 	})
+}
+
+// Geo files are fetched through the server, following redirects like
+// GitHub's release links.
+func TestDownloadAssetThroughServer(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/stall" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
+			}
+			return
+		}
+		if r.URL.Path == "/latest/geoip.dat" {
+			http.Redirect(w, r, "/v1/geoip.dat", http.StatusFound)
+			return
+		}
+		io.WriteString(w, "geo data")
+	}))
+	defer target.Close()
+	port := freePort(t, false)
+	startServer(t, map[string]any{"protocol": "vless", "port": port, "settings": map[string]any{
+		"clients": []any{map[string]any{"id": testUUID}}, "decryption": "none",
+	}})
+	s, err := share.ParseLink(fmt.Sprintf("vless://%s@127.0.0.1:%d?encryption=none#test", testUUID, port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := target.URL + "/latest/geoip.dat"
+	client, stop, err := ProxyClient(s, PingOptions{}, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	dir := t.TempDir()
+	if n, err := DownloadAsset(context.Background(), client, url, dir, "geoip.dat"); err != nil || n != int64(len("geo data")) {
+		t.Fatalf("got %d, %v", n, err)
+	}
+	// An unresponsive proxy/target must fail without replacing a good file.
+	client.Transport.(*http.Transport).ResponseHeaderTimeout = 20 * time.Millisecond
+	if _, err := DownloadAsset(context.Background(), client, target.URL+"/stall", dir, "geoip.dat"); err == nil {
+		t.Fatal("stalled response succeeded")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "geoip.dat")); err != nil || string(data) != "geo data" {
+		t.Fatalf("previous asset was changed: %q, %v", data, err)
+	}
 }

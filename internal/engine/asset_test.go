@@ -33,11 +33,11 @@ func TestDownloadAsset(t *testing.T) {
 	defer srv.Close()
 	dir := filepath.Join(t.TempDir(), "assets")
 
-	if n, err := DownloadAsset(context.Background(), srv.URL+"/ok", dir, "geoip.dat"); err != nil || n != 1000 {
+	if n, err := DownloadAsset(context.Background(), nil, srv.URL+"/ok", dir, "geoip.dat"); err != nil || n != 1000 {
 		t.Fatalf("ok: %d, %v", n, err)
 	}
 	for _, path := range []string{"/declared", "/streamed", "/empty"} {
-		if _, err := DownloadAsset(context.Background(), srv.URL+path, dir, "geosite.dat"); err == nil {
+		if _, err := DownloadAsset(context.Background(), nil, srv.URL+path, dir, "geosite.dat"); err == nil {
 			t.Errorf("%s: no error", path)
 		}
 	}

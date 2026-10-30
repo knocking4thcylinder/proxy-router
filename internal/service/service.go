@@ -29,7 +29,7 @@ const (
 )
 
 // ErrUnsupported is returned on systems without a supported service manager.
-var ErrUnsupported = errors.New("background service isn't supported on this system; use \"proxy-router run\"")
+var ErrUnsupported = errors.New("background service isn't supported on this system; use \"proxy-router run --foreground\"")
 
 // Scope says who runs the service.
 type Scope string

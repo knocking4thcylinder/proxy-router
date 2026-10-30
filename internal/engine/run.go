@@ -115,6 +115,8 @@ type PingOptions struct {
 	Config *config.Config
 	// Resolve, when set, pins server addresses like Plan.Resolve.
 	Resolve Resolver
+	// Mark is the socket mark for outgoing connections, see MarkSockets.
+	Mark int
 	// ExitURL, when set, is fetched through each server after the latency
 	// test; its body (e.g. a country code) is reported as Exit.
 	ExitURL string
@@ -262,52 +264,15 @@ func (discardLog) Handle(xlog.Message) {}
 
 func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, error) {
 	url, timeout := o.URL, o.Timeout
-	obs, err := s.Outbounds("proxy")
-	if err != nil {
-		return 0, "", err
-	}
-	if o.Config != nil {
-		obs, _ = ApplyTweaks(obs, o.Config)
-	}
-	if o.Resolve != nil {
-		PinAddresses(obs, o.Resolve)
-	}
-	obs = BindInterface(obs, o.Interface)
-	xc := map[string]any{
-		"log":       map[string]any{"loglevel": "none", "access": "none"},
-		"outbounds": obs,
-	}
-	if o.Config != nil && o.Config.ResolveLocally {
-		hosts := hostnames(obs)
-		if u, err := neturl.Parse(url); err == nil {
-			hosts = append(hosts, u.Hostname())
-		}
-		xc["dns"] = o.Config.LocalDNS(hosts)
-		// The server's name and the test host resolve outside the tunnel.
-		xc["outbounds"] = append(obs, BindInterface([]map[string]any{{"tag": "direct", "protocol": "freedom"}}, o.Interface)...)
-		xc["routing"] = map[string]any{"rules": []any{
-			map[string]any{"inboundTag": []string{config.DirectDNSTag}, "outboundTag": "direct"},
-			map[string]any{"network": "tcp,udp", "outboundTag": "proxy"},
-		}}
-	}
-	inst, err := Start(xc)
+	inst, transport, err := startThrough(s, o, url)
 	if err != nil {
 		return 0, "", err
 	}
 	defer inst.Close()
 
 	client := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				dest, err := xnet.ParseDestination("tcp:" + addr)
-				if err != nil {
-					return nil, err
-				}
-				return core.Dial(ctx, inst, dest)
-			},
-		},
+		Timeout:       timeout,
+		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -342,18 +307,91 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	return latency, exit, nil
 }
 
+// ProxyClient returns an HTTP client whose connections go through s, set
+// up like the running proxy's outbound (o's tweaks, pinning, interface and
+// mark), and a func that stops it. url is what will be fetched: with
+// resolve_locally its host is resolved outside the tunnel. A pool goes
+// through its first member.
+func ProxyClient(s *share.Server, o PingOptions, url string) (*http.Client, func(), error) {
+	inst, transport, err := startThrough(s, o, url)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &http.Client{Transport: transport}, func() {
+		transport.CloseIdleConnections()
+		inst.Close()
+	}, nil
+}
+
+// startThrough starts an Xray instance with only s's outbounds, and returns
+// a transport whose connections go through it.
+func startThrough(s *share.Server, o PingOptions, url string) (*core.Instance, *http.Transport, error) {
+	obs, err := s.Outbounds("proxy")
+	if err != nil {
+		return nil, nil, err
+	}
+	if o.Config != nil {
+		obs, _ = ApplyTweaks(obs, o.Config)
+	}
+	if o.Resolve != nil {
+		PinAddresses(obs, o.Resolve)
+	}
+	obs = BindInterface(obs, o.Interface)
+	xc := map[string]any{
+		"log":       map[string]any{"loglevel": "none", "access": "none"},
+		"outbounds": obs,
+	}
+	if o.Config != nil && o.Config.ResolveLocally {
+		hosts := hostnames(obs)
+		if u, err := neturl.Parse(url); err == nil {
+			hosts = append(hosts, u.Hostname())
+		}
+		xc["dns"] = o.Config.LocalDNS(hosts)
+		// The server's name and the test host resolve outside the tunnel.
+		xc["outbounds"] = append(obs, BindInterface([]map[string]any{{"tag": "direct", "protocol": "freedom"}}, o.Interface)...)
+		xc["routing"] = map[string]any{"rules": []any{
+			map[string]any{"inboundTag": []string{config.DirectDNSTag}, "outboundTag": "direct"},
+			map[string]any{"network": "tcp,udp", "outboundTag": "proxy"},
+		}}
+	}
+	MarkSockets(xc, o.Mark)
+	inst, err := Start(xc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return inst, &http.Transport{
+		DisableKeepAlives: true,
+		// core.Dial returns a logical connection before the proxy has
+		// connected. Bound the TLS handshake and response wait so a dead
+		// pool member doesn't consume the whole asset download timeout.
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dest, err := xnet.ParseDestination("tcp:" + addr)
+			if err != nil {
+				return nil, err
+			}
+			return core.Dial(ctx, inst, dest)
+		},
+	}, nil
+}
+
 // maxAsset caps geo file downloads (geoip.dat is around 20 MB).
 var maxAsset int64 = 256 << 20
 
-// DownloadAsset fetches url into dir/name atomically.
-func DownloadAsset(ctx context.Context, url, dir, name string) (int64, error) {
+// DownloadAsset fetches url into dir/name atomically, with client (nil:
+// http.DefaultClient).
+func DownloadAsset(ctx context.Context, client *http.Client, url, dir, name string) (int64, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
