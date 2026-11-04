@@ -61,6 +61,11 @@ func openInDir(dir, path string) (*os.File, error) {
 	return os.OpenInRoot(dir, rel)
 }
 
+// startMu serializes Xray instance creation. Starting an instance writes
+// Xray's package-level system dialer state, which isn't safe to do from
+// several goroutines at once; the probes themselves still run in parallel.
+var startMu sync.Mutex
+
 // Start builds and starts an Xray instance from a JSON-able config.
 func Start(cfg map[string]any) (inst *core.Instance, err error) {
 	defer recoverXray(&err)
@@ -68,6 +73,8 @@ func Start(cfg map[string]any) (inst *core.Instance, err error) {
 	if err != nil {
 		return nil, err
 	}
+	startMu.Lock()
+	defer startMu.Unlock()
 	inst, err = core.StartInstance("json", data)
 	if err != nil {
 		return nil, fmt.Errorf("xray: %w", err)
@@ -96,7 +103,9 @@ func Validate(cfg map[string]any) (err error) {
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}
+	startMu.Lock()
 	inst, err := core.New(pb)
+	startMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}
@@ -130,30 +139,55 @@ type PingOptions struct {
 	OnProgress func(PingProgress)
 }
 
+// PingPhase says which pass a progress update comes from.
+type PingPhase int
+
+const (
+	// PhaseLatency is the reachability pass: every server gets a short
+	// request, so results appear as soon as each one answers.
+	PhaseLatency PingPhase = iota
+	// PhaseSpeed downloads DownloadURL through the servers that answered.
+	PhaseSpeed
+)
+
 // PingProgress contains a snapshot of an entry and overall probe progress.
 type PingProgress struct {
 	Result           PingResult
 	Completed, Total int
-	// EntryDone means all members of this entry have finished testing.
+	// EntryDone means all members of this entry have finished this phase.
 	EntryDone bool
+	// Phase is PhaseLatency for reachability results and PhaseSpeed for
+	// download-speed updates. Speed updates never set EntryDone.
+	Phase PingPhase
 }
 
 // PingResult is the outcome of a latency test.
 type PingResult struct {
 	Entry   config.Entry
 	Latency time.Duration
-	Err     error
+	// Err means the latency probe failed: the server is unreachable.
+	Err error
 	// Exit is what ExitURL returned through the server, e.g. "DE".
 	Exit string
 	// Speed is how fast DownloadURL arrived, in bytes per second; 0 when
 	// it wasn't measured.
 	Speed float64
+	// SpeedErr is why DownloadURL didn't arrive. The server still answered
+	// the latency probe (Err is nil), so this is not a dead server: it may
+	// carry ordinary traffic even though the speed test stalled.
+	SpeedErr error
 	// For pools: how many members answered, out of how many.
 	Alive, Members int
 }
 
 // Ping measures a full HTTP request through each server ("real delay":
 // includes the proxy handshake), testing up to `parallel` at once.
+//
+// It runs in two passes. The latency pass tests every server first, so a
+// list fills in as servers answer instead of waiting for each download.
+// The speed pass then downloads DownloadURL through the servers that
+// answered. A failed download is reported as SpeedErr, not Err: the
+// server is reachable even when the speed test site is blocked for it.
 // It silences Xray's global logger, so don't use it next to a running proxy.
 func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResult {
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
@@ -184,6 +218,14 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		}
 		return endpoints[key]
 	}
+	acquire := func(addr string) func() {
+		if o.PerEndpoint <= 0 {
+			return func() {}
+		}
+		ep := endpointSem(addr)
+		ep <- struct{}{}
+		return func() { <-ep }
+	}
 
 	// Pools are tested member by member; each job is one server.
 	type job struct {
@@ -206,22 +248,23 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		remaining[i] = 1
 	}
 
+	// The latency pass. bestMember is the member the speed pass will use:
+	// for a pool, the one that answered fastest.
+	bestMember := make([]*share.Server, len(entries))
 	completed := 0
 	run := func(j job) {
-		if o.PerEndpoint > 0 {
-			ep := endpointSem(j.server.Address)
-			ep <- struct{}{}
-			defer func() { <-ep }()
-		}
-		d, exit, speed, err := pingOne(ctx, j.server, o)
+		release := acquire(j.server.Address)
+		d, exit, err := pingLatency(ctx, j.server, o)
+		release()
 
 		mu.Lock()
 		defer mu.Unlock()
 		r := &results[j.result]
 		if err == nil {
 			r.Alive++
-			if r.Err != nil || r.Latency == 0 || d < r.Latency {
-				r.Latency, r.Exit, r.Speed, r.Err = d, exit, speed, nil
+			if r.Latency == 0 || d < r.Latency {
+				r.Latency, r.Exit, r.Err = d, exit, nil
+				bestMember[j.result] = j.server
 			}
 		} else if r.Latency == 0 {
 			r.Err = err
@@ -231,20 +274,67 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		if o.OnProgress != nil {
 			o.OnProgress(PingProgress{
 				Result: *r, Completed: completed, Total: len(jobs),
-				EntryDone: remaining[j.result] == 0,
+				EntryDone: remaining[j.result] == 0, Phase: PhaseLatency,
 			})
 		}
 	}
 	// A fixed set of workers: a provider's pool can have any number of
 	// members, and each test starts an Xray instance.
-	queue := make(chan job)
+	runJobs(jobs, o.Parallel, run)
+
+	// The speed pass. Only servers that answered the latency pass are
+	// downloaded through, so a blocked speed test site can't make a
+	// reachable server look dead.
+	if o.DownloadURL == "" || ctx.Err() != nil {
+		return results
+	}
+	type speedJob struct {
+		result int
+		server *share.Server
+	}
+	var speeds []speedJob
+	for i := range entries {
+		if results[i].Err == nil && bestMember[i] != nil {
+			speeds = append(speeds, speedJob{i, bestMember[i]})
+		}
+	}
+	done := 0
+	download := func(j speedJob) {
+		release := acquire(j.server.Address)
+		speed, err := pingSpeed(ctx, j.server, o)
+		release()
+
+		mu.Lock()
+		defer mu.Unlock()
+		r := &results[j.result]
+		if err != nil {
+			if r.Speed == 0 {
+				r.SpeedErr = err
+			}
+		} else {
+			r.Speed, r.SpeedErr = speed, nil
+		}
+		done++
+		if o.OnProgress != nil {
+			o.OnProgress(PingProgress{
+				Result: *r, Completed: done, Total: len(speeds), Phase: PhaseSpeed,
+			})
+		}
+	}
+	runJobs(speeds, o.Parallel, download)
+	return results
+}
+
+// runJobs runs fn for every job with at most parallel workers.
+func runJobs[T any](jobs []T, parallel int, fn func(T)) {
+	queue := make(chan T)
 	var wg sync.WaitGroup
-	for range min(max(o.Parallel, 1), maxPingParallel, max(len(jobs), 1)) {
+	for range min(max(parallel, 1), maxPingParallel, max(len(jobs), 1)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := range queue {
-				run(j)
+				fn(j)
 			}
 		}()
 	}
@@ -253,7 +343,6 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	}
 	close(queue)
 	wg.Wait()
-	return results
 }
 
 // ControlSockets runs ctl on every socket Xray opens in this process,
@@ -270,11 +359,12 @@ type discardLog struct{}
 
 func (discardLog) Handle(xlog.Message) {}
 
-func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, float64, error) {
+// pingLatency measures the request and, when asked, the exit country.
+func pingLatency(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, error) {
 	url, timeout := o.URL, o.Timeout
 	inst, transport, err := startThrough(s, o, url)
 	if err != nil {
-		return 0, "", 0, err
+		return 0, "", err
 	}
 	defer inst.Close()
 
@@ -285,30 +375,19 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, "", 0, err
+		return 0, "", err
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", 0, err
+		return 0, "", err
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	resp.Body.Close()
 	if resp.StatusCode >= 500 {
-		return 0, "", 0, fmt.Errorf("HTTP %s", resp.Status)
+		return 0, "", fmt.Errorf("HTTP %s", resp.Status)
 	}
 	latency := time.Since(start)
-
-	var speed float64
-	if o.DownloadURL != "" {
-		// A stall is a few timeouts without data; the whole download gets
-		// more, so a slow but working server still finishes.
-		dl, err := Download(ctx, &http.Client{Transport: transport}, o.DownloadURL, timeout, 4*timeout)
-		if err != nil {
-			return 0, "", 0, err
-		}
-		speed = dl.Speed()
-	}
 
 	exit := ""
 	if o.ExitURL != "" {
@@ -323,7 +402,23 @@ func pingOne(ctx context.Context, s *share.Server, o PingOptions) (time.Duration
 			}
 		}
 	}
-	return latency, exit, speed, nil
+	return latency, exit, nil
+}
+
+// pingSpeed downloads o.DownloadURL through s and reports the speed.
+func pingSpeed(ctx context.Context, s *share.Server, o PingOptions) (float64, error) {
+	inst, transport, err := startThrough(s, o, o.DownloadURL)
+	if err != nil {
+		return 0, err
+	}
+	defer inst.Close()
+	// A stall is a few timeouts without data; the whole download gets
+	// more, so a slow but working server still finishes.
+	dl, err := Download(ctx, &http.Client{Transport: transport}, o.DownloadURL, o.Timeout, 4*o.Timeout)
+	if err != nil {
+		return 0, err
+	}
+	return dl.Speed(), nil
 }
 
 // Downloaded is the outcome of Download.
@@ -353,7 +448,7 @@ var ErrStalled = errors.New("stalled")
 // whole transfer takes longer than limit. Its size is the url's to say
 // (e.g. speed.cloudflare.com/__down?bytes=...), capped at 64 MB.
 func Download(ctx context.Context, client *http.Client, url string, stall, limit time.Duration) (Downloaded, error) {
-	ctx, cancel := context.WithTimeoutCause(ctx, limit, errDownloadSlow)
+	ctx, cancel := context.WithTimeoutCause(ctx, limit, ErrTooSlow)
 	defer cancel()
 	stalled := false
 	var mu sync.Mutex
@@ -371,8 +466,8 @@ func Download(ctx context.Context, client *http.Client, url string, stall, limit
 		switch {
 		case stalled:
 			return d, fmt.Errorf("download %w after %s (connection cut, likely blocked)", ErrStalled, kb(d.Bytes))
-		case errors.Is(context.Cause(ctx), errDownloadSlow):
-			return d, fmt.Errorf("download too slow: %s in %s", kb(d.Bytes), limit)
+		case errors.Is(context.Cause(ctx), ErrTooSlow):
+			return d, fmt.Errorf("download %w: %s in %s", ErrTooSlow, kb(d.Bytes), limit)
 		}
 		return d, fmt.Errorf("download: %w", err)
 	}
@@ -409,7 +504,9 @@ func Download(ctx context.Context, client *http.Client, url string, stall, limit
 	return d, nil
 }
 
-var errDownloadSlow = errors.New("download took too long")
+// ErrTooSlow is returned by Download when the whole transfer takes longer
+// than the limit.
+var ErrTooSlow = errors.New("download too slow")
 
 func kb(n int64) string { return fmt.Sprintf("%d KB", (n+512)/1024) }
 

@@ -152,6 +152,7 @@ func TestMenuLabel(t *testing.T) {
 		"de_1":                     "de__1",
 		"    Server: g/\x1b[31mx‮": "    Server: g/x",
 		"a\nb":                     "a b",
+		"🇨🇭 x":                     "🇨🇭 x\u2003\u2003",
 	} {
 		if got := menuLabel(in); got != want {
 			t.Errorf("menuLabel(%q) = %q, want %q", in, got, want)

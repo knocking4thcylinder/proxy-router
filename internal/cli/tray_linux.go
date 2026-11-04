@@ -18,6 +18,15 @@ import (
 
 const trayUsesTemplate = false
 
+// trayOpensPanelOnTap is false on Linux: a left click opens the menu there,
+// and the panel has its own menu item.
+const trayOpensPanelOnTap = false
+
+// iconLabelPad goes after the label of an item with an icon: KDE leaves
+// the icon out when it sizes the menu, running long labels into a
+// submenu's arrow.
+const iconLabelPad = "\u2003\u2003"
+
 // trayAvailable checks that something shows tray icons: a
 // StatusNotifierWatcher on the session bus. There's none in SteamOS's
 // Gaming Mode, over SSH, or on GNOME without the AppIndicator extension.
@@ -39,9 +48,15 @@ func trayAvailable() error {
 
 // menuLabel strips control and bidi characters from s, keeping its
 // indent, and escapes underscores, which DBus menus take as mnemonics.
+// Labels with a flag get some padding: Qt measures flag emoji narrower
+// than it draws them, running the text into a submenu's arrow.
 func menuLabel(s string) string {
 	text := strings.TrimLeft(s, " ")
-	return s[:len(s)-len(text)] + strings.ReplaceAll(safetext.Clean(text, 100), "_", "__")
+	label := s[:len(s)-len(text)] + strings.ReplaceAll(safetext.Clean(text, 100), "_", "__")
+	if strings.IndexFunc(label, isRegional) >= 0 {
+		label += "\u2003\u2003"
+	}
+	return label
 }
 
 // elevated runs argv as root with pkexec, which asks for the password in
@@ -114,6 +129,34 @@ func openFolder(dir string) {
 	if err := exec.Command("xdg-open", dir).Start(); err != nil {
 		notify("Couldn't open "+dir, err.Error())
 	}
+}
+
+// copyText puts s on the clipboard with whichever tool there is, or
+// through KDE's Klipper, which the Steam Deck has without the others.
+func copyText(s string) error {
+	var tools [][]string
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		tools = append(tools, []string{"wl-copy"})
+	}
+	if os.Getenv("DISPLAY") != "" {
+		tools = append(tools, []string{"xclip", "-selection", "clipboard"}, []string{"xsel", "--clipboard", "--input"})
+	}
+	for _, argv := range tools {
+		if _, err := exec.LookPath(argv[0]); err != nil {
+			continue
+		}
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Stdin = strings.NewReader(s)
+		return cmd.Run()
+	}
+	conn, err := dbus.SessionBus()
+	if err == nil {
+		err = conn.Object("org.kde.klipper", "/klipper").Call("org.kde.klipper.klipper.setClipboardContents", 0, s).Err
+	}
+	if err != nil {
+		return fmt.Errorf("no clipboard tool: install wl-clipboard or xclip (%v)", err)
+	}
+	return nil
 }
 
 func notify(title, body string) {

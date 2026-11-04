@@ -140,6 +140,40 @@ func TestPingResultsAreReadableAndSorted(t *testing.T) {
 	}
 }
 
+func TestPingResultsShowSpeedFailuresWithoutMarkingServersDead(t *testing.T) {
+	entry := func(index int, name string) config.Entry {
+		return config.Entry{Index: index, Group: "ALL VPN", Server: &share.Server{Name: name}}
+	}
+	results := []engine.PingResult{
+		{Entry: entry(1, "stalled"), Latency: 50 * time.Millisecond, SpeedErr: engine.ErrStalled},
+		{Entry: entry(2, "slow"), Latency: 80 * time.Millisecond, SpeedErr: fmt.Errorf("download %w: 3 KB in 15s", engine.ErrTooSlow)},
+		{Entry: entry(3, "measured"), Latency: 300 * time.Millisecond, Speed: 1e6},
+		{Entry: entry(4, "unmeasured"), Latency: 20 * time.Millisecond},
+	}
+	var out bytes.Buffer
+	if err := writePingResults(&out, results, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{"SPEED", "stalled", "too slow", "8.0 Mbit/s", "A failed speed test doesn't mean the server is down"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "failed: stalled") || strings.Contains(text, "failed: too slow") {
+		t.Errorf("speed failures look like dead servers: %s", text)
+	}
+	order := []string{"measured", "unmeasured", "stalled", "slow"}
+	last := -1
+	for _, name := range order {
+		i := strings.Index(text, name)
+		if i <= last {
+			t.Fatalf("%s out of order in:\n%s", name, text)
+		}
+		last = i
+	}
+}
+
 func TestPingTerminalProgressStaysOnOneLine(t *testing.T) {
 	var out bytes.Buffer
 	p := pingDisplay{out: &out, total: 110, width: 40, start: time.Now()}

@@ -99,6 +99,9 @@ in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also star
 		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
 		trayCmd(),
 	)
+	if c := panelCmd(); c != nil {
+		root.AddCommand(c)
+	}
 	_ = root.RegisterFlagCompletionFunc("dir", completeDirectories)
 	root.SetArgs(args)
 	root.InitDefaultCompletionCmd()

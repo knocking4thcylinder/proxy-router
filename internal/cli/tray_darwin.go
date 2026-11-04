@@ -19,6 +19,14 @@ import (
 
 const trayUsesTemplate = true
 
+// trayOpensPanelOnTap opens the panel on a left click, as menu bar apps do;
+// the menu stays on the right click.
+const trayOpensPanelOnTap = true
+
+// iconLabelPad goes after the label of an item with an icon; macOS sizes
+// menus right without it.
+const iconLabelPad = ""
+
 func trayAvailable() error { return nil }
 
 // menuLabel strips control and bidi characters from s, keeping its indent.
@@ -76,6 +84,12 @@ func openFolder(dir string) {
 	if err := exec.Command("open", dir).Start(); err != nil {
 		notify("Couldn't open "+dir, err.Error())
 	}
+}
+
+func copyText(s string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
 }
 
 func notify(title, body string) {
