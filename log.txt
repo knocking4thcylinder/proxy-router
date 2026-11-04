@@ -1,0 +1,1331 @@
+2026/10/14 11:32:29.516128 [Warning] core: Xray 26.3.27 started
+2026/10/14 11:32:29.521240 [Info] app/dns: DNS: created localhost client
+2026/10/14 11:32:29.521723 [Info] app/dns: DNS: created DOH client for https://1.1.1.1/dns-query, with h2c false
+2026/10/14 11:32:29.522168 [Info] app/dns: DNS: created DOH client for https://8.8.8.8/dns-query, with h2c false
+2026/10/14 11:32:29.522551 [Info] app/dns: DNS: created DOH client for https://1.1.1.1/dns-query, with h2c false
+2026/10/14 11:32:29.522872 [Info] app/dns: DNS: created DOH client for https://8.8.8.8/dns-query, with h2c false
+2026/10/14 11:32:29.526186 [Info] transport/internet/tcp: listening TCP on 127.0.0.1:52156
+2026/10/14 11:32:29.526324 [Info] transport/internet/udp: listening UDP on 127.0.0.1:52156
+2026/10/14 11:32:29.526361 [Info] transport/internet/tcp: listening TCP on 127.0.0.1:10808
+2026/10/14 11:32:29.526449 [Info] transport/internet/udp: listening UDP on 127.0.0.1:10808
+2026/10/14 11:32:29.526478 [Info] transport/internet/tcp: listening TCP on 127.0.0.1:10809
+2026/10/14 11:32:29.526916 [Warning] core: Xray 26.3.27 started
+2026/10/14 11:32:29.527500 [Info] app/observatory/burst: perform one-time health check for tags [proxy~bridge proxy~bridge-2 proxy~bridge-3 proxy~bridge-4 proxy~bridge-5]
+2026/10/14 11:32:29.529936 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-2] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:29.529941 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-5] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:29.529942 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:29.529943 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-3] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:29.529950 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-4] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:29.530252 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:29.530259 [Info] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:29.530260 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:29.530261 [Info] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:29.530267 [Info] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:29.606664 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 188.120.229.91:443
+2026/10/14 11:32:29.609133 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 155.212.162.214:443
+2026/10/14 11:32:29.609646 from tcp:169.254.10.2:52173 accepted tcp:1.1.1.1:443 [tun-device >> main]
+2026/10/14 11:32:29.609646 [Info] [3829816358] proxy/tun: processing from tcp:169.254.10.2:52173 to tcp:1.1.1.1:443
+2026/10/14 11:32:29.609669 [Info] [3829816358] app/dispatcher: default route for tcp:1.1.1.1:443
+2026/10/14 11:32:29.609672 [Info] [3829816358] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.610528 [Info] [312031034] proxy/socks: TCP Connect request to tcp:1.1.1.1:443
+2026/10/14 11:32:29.610611 [Info] [312031034] app/dispatcher: sniffed domain: one.one.one.one
+2026/10/14 11:32:29.610675 from tcp:127.0.0.1:52174 accepted tcp:1.1.1.1:443 [tun -> proxy~bridge]
+2026/10/14 11:32:29.610674 [Info] app/router: least load: no qualified outbound
+2026/10/14 11:32:29.610687 [Info] app/router: fallback to [proxy~bridge], due to empty tag returned
+2026/10/14 11:32:29.610692 [Info] [312031034] app/dispatcher: taking detour [proxy~bridge] for [tcp:one.one.one.one:443]
+2026/10/14 11:32:29.610695 [Info] [312031034] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:29.611007 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 188.120.237.35:443
+2026/10/14 11:32:29.621494 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 157.22.193.73:443
+2026/10/14 11:32:29.621686 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 212.109.221.152:443
+server: #1 ALL VPN/Авто
+tun:    utun99 (all traffic; proxy-router's own connections leave via en0)
+rules:  /Users/k4c/.config/proxy-router/routing.yaml
+socks5: 127.0.0.1:10808
+http:   127.0.0.1:10809
+2026/10/14 11:32:29.653403 [Info] [312031034] proxy/vless/outbound: tunneling request to tcp:1.1.1.1:443 via 188.120.229.91:443
+updating 1 subscription(s)...
+2026/10/14 11:32:29.686047 [Info] [3829816358] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 1.1.1.1:443: connection reset by peer
+2026/10/14 11:32:29.688110 [Info] [2920403401] proxy/tun: processing from tcp:169.254.10.2:52176 to tcp:1.1.1.1:443
+2026/10/14 11:32:29.688119 [Info] [2920403401] app/dispatcher: default route for tcp:1.1.1.1:443
+2026/10/14 11:32:29.688121 [Info] [2920403401] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.688133 from tcp:169.254.10.2:52176 accepted tcp:1.1.1.1:443 [tun-device >> main]
+2026/10/14 11:32:29.688542 [Info] [4045295721] proxy/socks: TCP Connect request to tcp:1.1.1.1:443
+2026/10/14 11:32:29.688615 [Info] [4045295721] app/dispatcher: sniffed domain: one.one.one.one
+2026/10/14 11:32:29.688637 [Info] [4045295721] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:one.one.one.one:443]
+2026/10/14 11:32:29.688641 [Info] [4045295721] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:29.688653 from tcp:127.0.0.1:52177 accepted tcp:1.1.1.1:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:29.731239 [Info] [4045295721] proxy/vless/outbound: tunneling request to tcp:1.1.1.1:443 via 212.109.221.152:443
+2026/10/14 11:32:29.737677 [Info] [312031034] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: connection ends > proxy/vless/outbound: failed to transfer response payload > write tcp 127.0.0.1:52156->127.0.0.1:52174: write: broken pipe
+2026/10/14 11:32:29.767279 [Info] [2714477281] proxy/tun: processing from tcp:169.254.10.2:52179 to tcp:54.188.216.21:443
+2026/10/14 11:32:29.767286 [Info] [2714477281] app/dispatcher: default route for tcp:54.188.216.21:443
+2026/10/14 11:32:29.767294 [Info] [2714477281] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.767304 from tcp:169.254.10.2:52179 accepted tcp:54.188.216.21:443 [tun-device >> main]
+2026/10/14 11:32:29.769324 [Info] [513822157] proxy/socks: TCP Connect request to tcp:54.188.216.21:443
+2026/10/14 11:32:29.770193 [Info] [513822157] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:54.188.216.21:443]
+2026/10/14 11:32:29.770198 [Info] [513822157] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:29.770208 from tcp:127.0.0.1:52180 accepted tcp:54.188.216.21:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:29.820704 [Info] [513822157] proxy/vless/outbound: tunneling request to tcp:54.188.216.21:443 via 188.120.237.35:443
+2026/10/14 11:32:29.835755 [Info] [2849936288] proxy/tun: processing from tcp:169.254.10.2:52182 to tcp:74.125.131.132:443
+2026/10/14 11:32:29.836531 [Info] [2849936288] app/dispatcher: default route for tcp:74.125.131.132:443
+2026/10/14 11:32:29.836543 [Info] [2849936288] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.836564 from tcp:169.254.10.2:52182 accepted tcp:74.125.131.132:443 [tun-device >> main]
+2026/10/14 11:32:29.837826 [Info] [1896195394] proxy/socks: TCP Connect request to tcp:74.125.131.132:443
+2026/10/14 11:32:29.838496 from tcp:169.254.10.2:52184 accepted tcp:153.76.164.102:443 [tun-device >> main]
+2026/10/14 11:32:29.838646 [Info] [83094404] proxy/tun: processing from tcp:169.254.10.2:52184 to tcp:153.76.164.102:443
+2026/10/14 11:32:29.838655 [Info] [83094404] app/dispatcher: default route for tcp:153.76.164.102:443
+2026/10/14 11:32:29.838659 [Info] [83094404] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.839136 [Info] [3655477175] proxy/tun: processing from tcp:169.254.10.2:52186 to tcp:17.57.146.137:5223
+2026/10/14 11:32:29.839146 [Info] [3655477175] app/dispatcher: default route for tcp:17.57.146.137:5223
+2026/10/14 11:32:29.839150 [Info] [3655477175] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.839155 from tcp:169.254.10.2:52186 accepted tcp:17.57.146.137:5223 [tun-device >> main]
+2026/10/14 11:32:29.840797 [Info] [3253971685] proxy/socks: TCP Connect request to tcp:153.76.164.102:443
+2026/10/14 11:32:29.840814 [Info] [1896195394] app/dispatcher: sniffed domain: lh3.googleusercontent.com
+2026/10/14 11:32:29.840816 [Info] [2103685473] proxy/socks: TCP Connect request to tcp:17.57.146.137:5223
+2026/10/14 11:32:29.840869 [Info] [1896195394] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:lh3.googleusercontent.com:443]
+2026/10/14 11:32:29.840880 [Info] [1896195394] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:29.840909 from tcp:127.0.0.1:52183 accepted tcp:74.125.131.132:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:29.840981 [Info] [2103685473] app/dispatcher: sniffed domain: courier.push.apple.com
+2026/10/14 11:32:29.840988 [Info] [2103685473] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:courier.push.apple.com:5223]
+2026/10/14 11:32:29.840993 [Info] [2103685473] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:29.841025 from tcp:127.0.0.1:52187 accepted tcp:17.57.146.137:5223 [tun -> proxy~bridge-3]
+2026/10/14 11:32:29.841871 [Info] [3253971685] app/dispatcher: sniffed domain: sub.alvsub.cc
+2026/10/14 11:32:29.841878 [Info] [3253971685] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:sub.alvsub.cc:443]
+2026/10/14 11:32:29.841883 [Info] [3253971685] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:29.841896 from tcp:127.0.0.1:52185 accepted tcp:153.76.164.102:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:29.845875 [Info] [2458644522] proxy/tun: processing from tcp:169.254.10.2:52191 to tcp:17.242.179.27:443
+2026/10/14 11:32:29.845880 [Info] [2458644522] app/dispatcher: default route for tcp:17.242.179.27:443
+2026/10/14 11:32:29.845882 [Info] [2458644522] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:29.845888 from tcp:169.254.10.2:52191 accepted tcp:17.242.179.27:443 [tun-device >> main]
+2026/10/14 11:32:29.846605 [Info] [1933587454] proxy/socks: TCP Connect request to tcp:17.242.179.27:443
+2026/10/14 11:32:29.846718 [Info] [1933587454] app/dispatcher: sniffed domain: gs-loc.apple.com
+2026/10/14 11:32:29.846737 [Info] [1933587454] app/dispatcher: taking detour [proxy~bridge] for [tcp:gs-loc.apple.com:443]
+2026/10/14 11:32:29.846739 [Info] [1933587454] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:29.846780 from tcp:127.0.0.1:52192 accepted tcp:17.242.179.27:443 [tun -> proxy~bridge]
+2026/10/14 11:32:29.911696 [Info] [3253971685] proxy/vless/outbound: tunneling request to tcp:153.76.164.102:443 via 188.120.237.35:443
+2026/10/14 11:32:29.914072 [Info] [2103685473] proxy/vless/outbound: tunneling request to tcp:17.57.146.137:5223 via 157.22.193.73:443
+2026/10/14 11:32:29.914471 [Info] [1933587454] proxy/vless/outbound: tunneling request to tcp:17.242.179.27:443 via 188.120.229.91:443
+2026/10/14 11:32:29.920355 [Info] [1896195394] proxy/vless/outbound: tunneling request to tcp:74.125.131.132:443 via 155.212.162.214:443
+2026/10/14 11:32:30.354047 [Info] [794887164] proxy/tun: processing from tcp:169.254.10.2:52194 to tcp:172.217.113.4:443
+2026/10/14 11:32:30.354069 [Info] [999967834] proxy/tun: processing from tcp:169.254.10.2:52195 to tcp:172.217.113.4:443
+2026/10/14 11:32:30.354074 [Info] [794887164] app/dispatcher: default route for tcp:172.217.113.4:443
+2026/10/14 11:32:30.354079 [Info] [999967834] app/dispatcher: default route for tcp:172.217.113.4:443
+2026/10/14 11:32:30.354109 [Info] [794887164] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:30.354115 [Info] [999967834] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:30.354053 from tcp:169.254.10.2:52194 accepted tcp:172.217.113.4:443 [tun-device >> main]
+2026/10/14 11:32:30.354123 from tcp:169.254.10.2:52195 accepted tcp:172.217.113.4:443 [tun-device >> main]
+2026/10/14 11:32:30.355214 [Info] [2466946527] proxy/socks: TCP Connect request to tcp:172.217.113.4:443
+2026/10/14 11:32:30.355452 [Info] [1123220809] proxy/socks: TCP Connect request to tcp:172.217.113.4:443
+2026/10/14 11:32:30.359864 [Info] [1123220809] app/dispatcher: sniffed domain: play.googleapis.com
+2026/10/14 11:32:30.359915 [Info] [1123220809] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:play.googleapis.com:443]
+2026/10/14 11:32:30.359921 [Info] [1123220809] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:30.359933 from tcp:127.0.0.1:52197 accepted tcp:172.217.113.4:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:30.361055 [Info] [2466946527] app/dispatcher: sniffed domain: play.googleapis.com
+2026/10/14 11:32:30.361084 [Info] [2466946527] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:play.googleapis.com:443]
+2026/10/14 11:32:30.361090 [Info] [2466946527] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:30.361101 from tcp:127.0.0.1:52196 accepted tcp:172.217.113.4:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:30.397816 [Info] [2466946527] proxy/vless/outbound: tunneling request to tcp:172.217.113.4:443 via 157.22.193.73:443
+2026/10/14 11:32:30.398030 [Info] [1123220809] proxy/vless/outbound: tunneling request to tcp:172.217.113.4:443 via 157.22.193.73:443
+2026/10/14 11:32:30.727863 [Info] [371705188] proxy/tun: processing from tcp:169.254.10.2:52200 to tcp:142.251.155.4:443
+2026/10/14 11:32:30.727876 from tcp:169.254.10.2:52200 accepted tcp:142.251.155.4:443 [tun-device >> main]
+2026/10/14 11:32:30.727885 [Info] [371705188] app/dispatcher: default route for tcp:142.251.155.4:443
+2026/10/14 11:32:30.727889 [Info] [371705188] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:30.730471 [Info] [3089976710] proxy/socks: TCP Connect request to tcp:142.251.155.4:443
+2026/10/14 11:32:30.730752 [Info] [3089976710] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:142.251.155.4:443]
+2026/10/14 11:32:30.730770 [Info] [3089976710] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:30.730779 from tcp:127.0.0.1:52201 accepted tcp:142.251.155.4:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:30.787282 [Info] [3089976710] proxy/vless/outbound: tunneling request to tcp:142.251.155.4:443 via 155.212.162.214:443
+2026/10/14 11:32:31.916465 [Info] [916668730] proxy/tun: processing from tcp:169.254.10.2:52203 to tcp:35.186.224.24:443
+2026/10/14 11:32:31.916513 [Info] [916668730] app/dispatcher: default route for tcp:35.186.224.24:443
+2026/10/14 11:32:31.916520 [Info] [916668730] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:31.916537 from tcp:169.254.10.2:52203 accepted tcp:35.186.224.24:443 [tun-device >> main]
+2026/10/14 11:32:31.918452 [Info] [1443805547] proxy/socks: TCP Connect request to tcp:35.186.224.24:443
+2026/10/14 11:32:31.918533 [Info] [1443805547] app/dispatcher: sniffed domain: spclient.wg.spotify.com
+2026/10/14 11:32:31.918865 from tcp:127.0.0.1:52204 accepted tcp:35.186.224.24:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:31.918867 [Info] [1443805547] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:spclient.wg.spotify.com:443]
+2026/10/14 11:32:31.918892 [Info] [1443805547] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:31.957013 [Info] [1443805547] proxy/vless/outbound: tunneling request to tcp:35.186.224.24:443 via 157.22.193.73:443
+2026/10/14 11:32:32.317381 [Info] [1417502126] proxy/tun: processing from udp:169.254.10.2:27036 to udp:192.168.64.255:27036
+2026/10/14 11:32:32.317408 [Info] [1417502126] app/dispatcher: default route for udp:192.168.64.255:27036
+2026/10/14 11:32:32.317412 from udp:169.254.10.2:27036 accepted udp:192.168.64.255:27036 [tun-device >> main]
+2026/10/14 11:32:32.317459 [Info] [1417502126] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:32.321419 [Info] [1722638626] proxy/socks: client UDP connection from udp:127.0.0.1:56156
+2026/10/14 11:32:32.321471 [Info] [1722638626] transport/internet/udp: establishing new connection for udp:192.168.64.255:27036
+2026/10/14 11:32:32.321602 [Info] [1722638626] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [udp:192.168.64.255:27036]
+2026/10/14 11:32:32.321628 from udp:127.0.0.1:56156 accepted udp:192.168.64.255:27036 [tun -> direct]
+2026/10/14 11:32:32.322139 [Info] [1722638626] proxy/freedom: connection opened to udp:192.168.64.255:27036, local endpoint [::]:59067, remote endpoint 192.168.64.255:27036
+2026/10/14 11:32:32.535508 [Info] [3429000397] proxy/tun: processing from udp:169.254.10.2:57621 to udp:192.168.64.255:57621
+2026/10/14 11:32:32.535516 from udp:169.254.10.2:57621 accepted udp:192.168.64.255:57621 [tun-device >> main]
+2026/10/14 11:32:32.535518 [Info] [3429000397] app/dispatcher: default route for udp:192.168.64.255:57621
+2026/10/14 11:32:32.535530 [Info] [3429000397] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:32.537578 [Info] [3277817873] proxy/socks: client UDP connection from udp:127.0.0.1:64934
+2026/10/14 11:32:32.537586 [Info] [3277817873] transport/internet/udp: establishing new connection for udp:192.168.64.255:57621
+2026/10/14 11:32:32.537610 [Info] [3277817873] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [udp:192.168.64.255:57621]
+2026/10/14 11:32:32.537631 from udp:127.0.0.1:64934 accepted udp:192.168.64.255:57621 [tun -> direct]
+2026/10/14 11:32:32.537830 [Info] [3277817873] proxy/freedom: connection opened to udp:192.168.64.255:57621, local endpoint [::]:55223, remote endpoint 192.168.64.255:57621
+2026/10/14 11:32:32.718437 [Info] [3540179317] proxy/tun: processing from tcp:169.254.10.2:52210 to tcp:100.125.35.85:11434
+2026/10/14 11:32:32.718449 from tcp:169.254.10.2:52210 accepted tcp:100.125.35.85:11434 [tun-device >> main]
+2026/10/14 11:32:32.718456 [Info] [3540179317] app/dispatcher: default route for tcp:100.125.35.85:11434
+2026/10/14 11:32:32.718461 [Info] [3540179317] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:32.720658 [Info] [883329540] proxy/socks: TCP Connect request to tcp:100.125.35.85:11434
+2026/10/14 11:32:32.720810 [Info] [883329540] app/dispatcher: sniffed domain: 100.125.35.85
+2026/10/14 11:32:32.720831 [Info] [883329540] app/dispatcher: Hit route rule: [system_route_via_tun] so taking detour [block] for [tcp:100.125.35.85:11434]
+2026/10/14 11:32:32.720832 from tcp:127.0.0.1:52211 accepted tcp:100.125.35.85:11434 [tun -> block]
+2026/10/14 11:32:33.591735 [Info] [1452693097] proxy/tun: processing from udp:169.254.10.2:65136 to udp:1.1.1.1:53
+2026/10/14 11:32:33.591752 [Info] [1452693097] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:32:33.591755 [Info] [1452693097] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:33.591745 from udp:169.254.10.2:65136 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:32:33.593482 [Info] [3334039681] proxy/socks: client UDP connection from udp:127.0.0.1:56835
+2026/10/14 11:32:33.593492 [Info] [3334039681] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:32:33.593534 [Info] [3334039681] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:32:33.593555 from udp:127.0.0.1:56835 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:32:33.593806 [Info] [3334039681] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:32:33.595917 [Info] [263516250] proxy/tun: processing from udp:169.254.10.2:64710 to udp:1.0.0.1:53
+2026/10/14 11:32:33.595931 [Info] [263516250] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:32:33.595935 [Info] [263516250] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:33.595952 from udp:169.254.10.2:64710 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:32:33.597721 [Info] [3631258449] proxy/socks: client UDP connection from udp:127.0.0.1:58972
+2026/10/14 11:32:33.597731 [Info] [3631258449] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:32:33.597786 [Info] [3631258449] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:32:33.597791 [Info] [3631258449] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:32:33.597796 from udp:127.0.0.1:58972 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:32:35.750371 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-2] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:35.750419 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:35.788071 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 188.120.237.35:443
+2026/10/14 11:32:37.058247 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-5] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:37.058265 [Info] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:37.105878 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 212.109.221.152:443
+ALL VPN: fetch https://sub.alvsub.cc/…: Get "https://sub.alvsub.cc/ZYcqT9Nf_NSPZ_ad": net/http: TLS handshake timeout (keeping 110 cached servers)
+2026/10/14 11:32:42.941045 [Info] [2589163933] proxy/tun: processing from tcp:192.168.31.118:52045 to tcp:192.168.1.1:5000
+2026/10/14 11:32:42.941093 [Info] [2589163933] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:32:42.941366 from tcp:192.168.31.118:52045 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:32:42.941384 [Info] [2589163933] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:42.943539 [Info] [3867604002] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:32:42.944785 [Info] [3867604002] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:32:42.944804 [Info] [3867604002] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:32:42.944814 [Info] [3867604002] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:32:42.944819 from tcp:127.0.0.1:52222 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:32:44.348576 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:44.348664 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:44.393379 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 188.120.229.91:443
+2026/10/14 11:32:45.094295 [Info] [2057352857] proxy/tun: processing from tcp:169.254.10.2:52225 to tcp:23.216.134.29:80
+2026/10/14 11:32:45.094305 from tcp:169.254.10.2:52225 accepted tcp:23.216.134.29:80 [tun-device >> main]
+2026/10/14 11:32:45.094322 [Info] [2057352857] app/dispatcher: default route for tcp:23.216.134.29:80
+2026/10/14 11:32:45.094347 [Info] [2057352857] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:45.096116 [Info] [2979575304] proxy/socks: TCP Connect request to tcp:23.216.134.29:80
+2026/10/14 11:32:45.140398 [Info] [2979575304] app/dispatcher: sniffed domain: steamconnecttest.com
+2026/10/14 11:32:45.140480 [Info] [2979575304] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:steamconnecttest.com:80]
+2026/10/14 11:32:45.140496 [Info] [2979575304] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:45.140505 from tcp:127.0.0.1:52226 accepted tcp:23.216.134.29:80 [tun -> proxy~bridge-5]
+2026/10/14 11:32:45.182402 [Info] [2979575304] proxy/vless/outbound: tunneling request to tcp:23.216.134.29:80 via 212.109.221.152:443
+2026/10/14 11:32:46.785394 [Info] [1577467435] proxy/tun: processing from tcp:169.254.10.2:52228 to tcp:8.6.112.0:443
+2026/10/14 11:32:46.785403 [Info] [1577467435] app/dispatcher: default route for tcp:8.6.112.0:443
+2026/10/14 11:32:46.785405 [Info] [1577467435] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:46.785408 [Info] [2476996240] proxy/tun: processing from tcp:169.254.10.2:52229 to tcp:8.47.69.0:443
+2026/10/14 11:32:46.785409 [Info] [2476996240] app/dispatcher: default route for tcp:8.47.69.0:443
+2026/10/14 11:32:46.785410 [Info] [2476996240] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:46.785449 from tcp:169.254.10.2:52228 accepted tcp:8.6.112.0:443 [tun-device >> main]
+2026/10/14 11:32:46.785457 from tcp:169.254.10.2:52229 accepted tcp:8.47.69.0:443 [tun-device >> main]
+2026/10/14 11:32:46.790470 [Info] [3570421954] proxy/socks: TCP Connect request to tcp:8.6.112.0:443
+2026/10/14 11:32:46.790632 [Info] [3570421954] app/dispatcher: sniffed domain: models.opencode.ai
+2026/10/14 11:32:46.790662 from tcp:127.0.0.1:52230 accepted tcp:8.6.112.0:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:46.790669 [Info] [3570421954] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:models.opencode.ai:443]
+2026/10/14 11:32:46.790675 [Info] [3570421954] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:46.790718 [Info] [3237492131] proxy/socks: TCP Connect request to tcp:8.47.69.0:443
+2026/10/14 11:32:46.790826 [Info] [2476996240] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 8.47.69.0:443: connection reset by peer
+2026/10/14 11:32:46.790883 [Info] [3237492131] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:8.47.69.0:443]
+2026/10/14 11:32:46.790886 [Info] [3237492131] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:46.790891 from tcp:127.0.0.1:52231 accepted tcp:8.47.69.0:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:46.832826 [Info] [3237492131] proxy/vless/outbound: tunneling request to tcp:8.47.69.0:443 via 188.120.237.35:443
+2026/10/14 11:32:46.846592 [Info] [3570421954] proxy/vless/outbound: tunneling request to tcp:8.6.112.0:443 via 155.212.162.214:443
+2026/10/14 11:32:47.169321 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-4] for [tcp:www.gstatic.com:80]
+2026/10/14 11:32:47.169348 [Info] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:47.221069 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 155.212.162.214:443
+2026/10/14 11:32:47.944589 [Info] [2406867518] proxy/tun: processing from tcp:169.254.10.2:52235 to tcp:192.168.1.1:5000
+2026/10/14 11:32:47.944599 from tcp:169.254.10.2:52235 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:32:47.944603 [Info] [2406867518] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:32:47.944625 [Info] [2406867518] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:47.946605 [Info] [636914549] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:32:47.946792 [Info] [636914549] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:32:47.946810 from tcp:127.0.0.1:52236 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:32:47.946809 [Info] [636914549] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:32:47.946819 [Info] [636914549] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:32:48.619172 [Info] [4246261194] proxy/tun: processing from tcp:169.254.10.2:52238 to tcp:160.79.104.10:443
+2026/10/14 11:32:48.619204 [Info] [4246261194] app/dispatcher: default route for tcp:160.79.104.10:443
+2026/10/14 11:32:48.619211 [Info] [4246261194] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:48.619199 from tcp:169.254.10.2:52238 accepted tcp:160.79.104.10:443 [tun-device >> main]
+2026/10/14 11:32:48.621534 [Info] [2005782316] proxy/socks: TCP Connect request to tcp:160.79.104.10:443
+2026/10/14 11:32:48.621822 [Info] [2005782316] app/dispatcher: sniffed domain: bridge.claudeusercontent.com
+2026/10/14 11:32:48.621932 [Info] [2005782316] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:bridge.claudeusercontent.com:443]
+2026/10/14 11:32:48.621945 [Info] [2005782316] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:48.621974 from tcp:127.0.0.1:52239 accepted tcp:160.79.104.10:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:48.656544 [Info] [2005782316] proxy/vless/outbound: tunneling request to tcp:160.79.104.10:443 via 155.212.162.214:443
+2026/10/14 11:32:51.913308 [Info] [10027716] proxy/tun: processing from tcp:169.254.10.2:52243 to tcp:35.186.224.24:443
+2026/10/14 11:32:51.913349 [Info] [10027716] app/dispatcher: default route for tcp:35.186.224.24:443
+2026/10/14 11:32:51.913352 [Info] [10027716] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:51.913355 [Info] [3945177339] proxy/tun: processing from udp:169.254.10.2:52889 to udp:35.186.224.24:443
+2026/10/14 11:32:51.913363 from tcp:169.254.10.2:52243 accepted tcp:35.186.224.24:443 [tun-device >> main]
+2026/10/14 11:32:51.913375 from udp:169.254.10.2:52889 accepted udp:35.186.224.24:443 [tun-device >> main]
+2026/10/14 11:32:51.913399 [Info] [3945177339] app/dispatcher: default route for udp:35.186.224.24:443
+2026/10/14 11:32:51.913410 [Info] [3945177339] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:51.915214 [Info] [3850904743] proxy/socks: TCP Connect request to tcp:35.186.224.24:443
+2026/10/14 11:32:51.915353 [Info] [3850904743] app/dispatcher: sniffed domain: apresolve.spotify.com
+2026/10/14 11:32:51.915471 [Info] [3850904743] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:apresolve.spotify.com:443]
+2026/10/14 11:32:51.915492 [Info] [3850904743] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:51.915495 from tcp:127.0.0.1:52244 accepted tcp:35.186.224.24:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:51.916872 [Info] [2110645960] proxy/socks: client UDP connection from udp:127.0.0.1:53436
+2026/10/14 11:32:51.916888 [Info] [2110645960] transport/internet/udp: establishing new connection for udp:35.186.224.24:443
+2026/10/14 11:32:51.917219 [Info] [2110645960] app/dispatcher: sniffed domain: apresolve.spotify.com
+2026/10/14 11:32:51.917277 [Info] [2110645960] app/dispatcher: taking detour [proxy~bridge-4] for [udp:apresolve.spotify.com:443]
+2026/10/14 11:32:51.917295 from udp:127.0.0.1:53436 accepted udp:35.186.224.24:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:51.917322 [Info] [2110645960] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:51.954073 [Info] [3850904743] proxy/vless/outbound: tunneling request to tcp:35.186.224.24:443 via 212.109.221.152:443
+2026/10/14 11:32:51.964890 [Info] [2110645960] proxy/vless/outbound: tunneling request to udp:35.186.224.24:443 via 155.212.162.214:443
+2026/10/14 11:32:51.965051 [Info] [2110645960] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:32:51.965082 [Info] [2110645960] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:32:52.100665 [Info] [3515999991] proxy/tun: processing from tcp:169.254.10.2:52248 to tcp:104.199.65.9:4070
+2026/10/14 11:32:52.100686 from tcp:169.254.10.2:52248 accepted tcp:104.199.65.9:4070 [tun-device >> main]
+2026/10/14 11:32:52.100691 [Info] [3515999991] app/dispatcher: default route for tcp:104.199.65.9:4070
+2026/10/14 11:32:52.100698 [Info] [3515999991] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:52.102618 [Info] [1195152776] proxy/socks: TCP Connect request to tcp:104.199.65.9:4070
+2026/10/14 11:32:52.104852 [Info] [1195152776] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:104.199.65.9:4070]
+2026/10/14 11:32:52.104870 from tcp:127.0.0.1:52249 accepted tcp:104.199.65.9:4070 [tun -> proxy~bridge-3]
+2026/10/14 11:32:52.104890 [Info] [1195152776] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:52.141975 [Info] [1195152776] proxy/vless/outbound: tunneling request to tcp:104.199.65.9:4070 via 157.22.193.73:443
+2026/10/14 11:32:52.217530 [Info] [2110645960] transport/internet/udp: establishing new connection for udp:35.186.224.24:443
+2026/10/14 11:32:52.418888 [Info] [2110645960] app/dispatcher: taking detour [proxy~bridge-2] for [udp:35.186.224.24:443]
+2026/10/14 11:32:52.418925 [Info] [2110645960] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:52.418908 from udp:127.0.0.1:53436 accepted udp:35.186.224.24:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:52.454555 [Info] [2110645960] proxy/vless/outbound: tunneling request to udp:35.186.224.24:443 via 188.120.237.35:443
+2026/10/14 11:32:52.454817 [Info] [2110645960] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:32:52.454832 [Info] [2110645960] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:32:52.822678 [Info] [2110645960] transport/internet/udp: establishing new connection for udp:35.186.224.24:443
+2026/10/14 11:32:52.953358 [Info] [835061609] proxy/tun: processing from udp:169.254.10.2:56848 to udp:192.144.20.19:54977
+2026/10/14 11:32:52.953382 [Info] [835061609] app/dispatcher: default route for udp:192.144.20.19:54977
+2026/10/14 11:32:52.953386 from udp:169.254.10.2:56848 accepted udp:192.144.20.19:54977 [tun-device >> main]
+2026/10/14 11:32:52.953389 [Info] [835061609] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:52.964570 [Info] [371433252] proxy/tun: processing from tcp:169.254.10.2:52253 to tcp:192.168.1.1:5000
+2026/10/14 11:32:52.964585 from tcp:169.254.10.2:52253 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:32:52.964593 [Info] [371433252] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:32:52.964600 [Info] [371433252] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:52.996400 [Info] [786283458] proxy/socks: client UDP connection from udp:127.0.0.1:59536
+2026/10/14 11:32:52.996425 [Info] [786283458] transport/internet/udp: establishing new connection for udp:192.144.20.19:54977
+2026/10/14 11:32:52.996751 [Info] [786283458] app/dispatcher: taking detour [proxy~bridge] for [udp:192.144.20.19:54977]
+2026/10/14 11:32:52.996765 [Info] [786283458] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:52.996815 from udp:127.0.0.1:59536 accepted udp:192.144.20.19:54977 [tun -> proxy~bridge]
+2026/10/14 11:32:52.997636 [Info] [2030833419] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:32:52.998199 [Info] [2030833419] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:32:52.998214 [Info] [2030833419] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:32:52.998225 [Info] [2030833419] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:32:52.998227 from tcp:127.0.0.1:52254 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:32:53.022997 [Info] [2110645960] app/dispatcher: taking detour [proxy~bridge-5] for [udp:35.186.224.24:443]
+2026/10/14 11:32:53.023022 from udp:127.0.0.1:53436 accepted udp:35.186.224.24:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:53.023024 [Info] [2110645960] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:53.042258 [Info] [786283458] proxy/vless/outbound: tunneling request to udp:192.144.20.19:54977 via 188.120.229.91:443
+2026/10/14 11:32:53.066173 [Info] [2110645960] proxy/vless/outbound: tunneling request to udp:35.186.224.24:443 via 212.109.221.152:443
+2026/10/14 11:32:53.066435 [Info] [2110645960] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:32:53.066466 [Info] [2110645960] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:32:53.329990 [Info] [379642702] proxy/tun: processing from tcp:169.254.10.2:52258 to tcp:140.82.121.6:443
+2026/10/14 11:32:53.330029 [Info] [379642702] app/dispatcher: default route for tcp:140.82.121.6:443
+2026/10/14 11:32:53.330038 [Info] [1827705265] proxy/tun: processing from tcp:169.254.10.2:52259 to tcp:140.82.121.6:443
+2026/10/14 11:32:53.330043 [Info] [379642702] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:53.330048 [Info] [1827705265] app/dispatcher: default route for tcp:140.82.121.6:443
+2026/10/14 11:32:53.330055 [Info] [1827705265] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:53.329998 from tcp:169.254.10.2:52258 accepted tcp:140.82.121.6:443 [tun-device >> main]
+2026/10/14 11:32:53.330069 from tcp:169.254.10.2:52259 accepted tcp:140.82.121.6:443 [tun-device >> main]
+2026/10/14 11:32:53.332720 [Info] [1836298055] proxy/socks: TCP Connect request to tcp:140.82.121.6:443
+2026/10/14 11:32:53.332904 [Info] [1836298055] app/dispatcher: sniffed domain: api.github.com
+2026/10/14 11:32:53.332918 [Info] [471699803] proxy/socks: TCP Connect request to tcp:140.82.121.6:443
+2026/10/14 11:32:53.332943 [Info] [1836298055] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:api.github.com:443]
+2026/10/14 11:32:53.332952 [Info] [1836298055] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:53.332987 from tcp:127.0.0.1:52260 accepted tcp:140.82.121.6:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:53.333164 [Info] [471699803] app/dispatcher: sniffed domain: api.github.com
+2026/10/14 11:32:53.333196 [Info] [471699803] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:api.github.com:443]
+2026/10/14 11:32:53.333204 [Info] [471699803] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:53.333228 from tcp:127.0.0.1:52261 accepted tcp:140.82.121.6:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:53.375417 [Info] [1836298055] proxy/vless/outbound: tunneling request to tcp:140.82.121.6:443 via 212.109.221.152:443
+2026/10/14 11:32:53.375442 [Info] [471699803] proxy/vless/outbound: tunneling request to tcp:140.82.121.6:443 via 212.109.221.152:443
+2026/10/14 11:32:53.541447 [Info] [933698777] proxy/tun: processing from tcp:169.254.10.2:52264 to tcp:35.186.224.33:443
+2026/10/14 11:32:53.541461 [Info] [933698777] app/dispatcher: default route for tcp:35.186.224.33:443
+2026/10/14 11:32:53.541464 [Info] [933698777] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:53.541487 from tcp:169.254.10.2:52264 accepted tcp:35.186.224.33:443 [tun-device >> main]
+2026/10/14 11:32:53.543148 [Info] [1962802381] proxy/socks: TCP Connect request to tcp:35.186.224.33:443
+2026/10/14 11:32:53.543336 [Info] [1962802381] app/dispatcher: sniffed domain: gew1-dealer.g2.spotify.com
+2026/10/14 11:32:53.543422 [Info] [1962802381] app/dispatcher: taking detour [proxy~bridge] for [tcp:gew1-dealer.g2.spotify.com:443]
+2026/10/14 11:32:53.543432 [Info] [1962802381] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:53.543444 from tcp:127.0.0.1:52265 accepted tcp:35.186.224.33:443 [tun -> proxy~bridge]
+2026/10/14 11:32:53.580991 [Info] [1962802381] proxy/vless/outbound: tunneling request to tcp:35.186.224.33:443 via 188.120.229.91:443
+2026/10/14 11:32:53.595262 [Info] [245197473] proxy/tun: processing from tcp:169.254.10.2:52267 to tcp:95.100.107.161:443
+2026/10/14 11:32:53.595282 [Info] [245197473] app/dispatcher: default route for tcp:95.100.107.161:443
+2026/10/14 11:32:53.595289 [Info] [245197473] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:53.595291 from tcp:169.254.10.2:52267 accepted tcp:95.100.107.161:443 [tun-device >> main]
+2026/10/14 11:32:53.597383 [Info] [1223805578] proxy/socks: TCP Connect request to tcp:95.100.107.161:443
+2026/10/14 11:32:53.650310 [Info] [1223805578] app/dispatcher: sniffed domain: api.steampowered.com
+2026/10/14 11:32:53.650389 [Info] [1223805578] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:api.steampowered.com:443]
+2026/10/14 11:32:53.650399 [Info] [1223805578] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:53.650406 from tcp:127.0.0.1:52268 accepted tcp:95.100.107.161:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:53.683077 [Info] [1223805578] proxy/vless/outbound: tunneling request to tcp:95.100.107.161:443 via 157.22.193.73:443
+2026/10/14 11:32:53.769801 [Info] [1359777076] proxy/tun: processing from tcp:169.254.10.2:52270 to tcp:35.186.224.26:443
+2026/10/14 11:32:53.769825 [Info] [1359777076] app/dispatcher: default route for tcp:35.186.224.26:443
+2026/10/14 11:32:53.769841 [Info] [1359777076] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:53.769835 from tcp:169.254.10.2:52270 accepted tcp:35.186.224.26:443 [tun-device >> main]
+2026/10/14 11:32:53.771401 [Info] [2304514860] proxy/socks: TCP Connect request to tcp:35.186.224.26:443
+2026/10/14 11:32:53.771547 [Info] [2304514860] app/dispatcher: sniffed domain: gew1-spclient.spotify.com
+2026/10/14 11:32:53.771635 [Info] [2304514860] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:gew1-spclient.spotify.com:443]
+2026/10/14 11:32:53.771641 [Info] [2304514860] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:53.771644 from tcp:127.0.0.1:52271 accepted tcp:35.186.224.26:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:53.806543 [Info] [2304514860] proxy/vless/outbound: tunneling request to tcp:35.186.224.26:443 via 157.22.193.73:443
+2026/10/14 11:32:54.027265 [Info] [2110645960] transport/internet/udp: establishing new connection for udp:35.186.224.24:443
+2026/10/14 11:32:54.102364 [Info] [3680603777] proxy/tun: processing from tcp:169.254.10.2:52273 to tcp:155.133.252.69:27020
+2026/10/14 11:32:54.102381 [Info] [3680603777] app/dispatcher: default route for tcp:155.133.252.69:27020
+2026/10/14 11:32:54.102385 [Info] [3680603777] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.102409 from tcp:169.254.10.2:52273 accepted tcp:155.133.252.69:27020 [tun-device >> main]
+2026/10/14 11:32:54.102689 [Info] [2665618104] proxy/tun: processing from tcp:169.254.10.2:52274 to tcp:162.254.198.68:27018
+2026/10/14 11:32:54.102707 [Info] [2665618104] app/dispatcher: default route for tcp:162.254.198.68:27018
+2026/10/14 11:32:54.102711 [Info] [2665618104] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.102714 [Info] [2323261634] proxy/tun: processing from tcp:169.254.10.2:52275 to tcp:162.254.198.68:27022
+2026/10/14 11:32:54.102716 [Info] [2323261634] app/dispatcher: default route for tcp:162.254.198.68:27022
+2026/10/14 11:32:54.102721 from tcp:169.254.10.2:52274 accepted tcp:162.254.198.68:27018 [tun-device >> main]
+2026/10/14 11:32:54.102724 from tcp:169.254.10.2:52275 accepted tcp:162.254.198.68:27022 [tun-device >> main]
+2026/10/14 11:32:54.102749 [Info] [2323261634] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.104595 [Info] [2963808307] proxy/socks: TCP Connect request to tcp:155.133.252.69:27020
+2026/10/14 11:32:54.104667 [Info] [3638119747] proxy/socks: TCP Connect request to tcp:162.254.198.68:27018
+2026/10/14 11:32:54.104745 [Info] [3765601926] proxy/socks: TCP Connect request to tcp:162.254.198.68:27022
+2026/10/14 11:32:54.153182 [Info] [3638119747] app/dispatcher: sniffed domain: cmp1-sto1.steamserver.net
+2026/10/14 11:32:54.153195 [Info] [2963808307] app/dispatcher: sniffed domain: cmp2-sto2.steamserver.net
+2026/10/14 11:32:54.153271 [Info] [3638119747] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:cmp1-sto1.steamserver.net:27018]
+2026/10/14 11:32:54.153276 [Info] [2963808307] app/dispatcher: taking detour [proxy~bridge] for [tcp:cmp2-sto2.steamserver.net:27020]
+2026/10/14 11:32:54.153280 [Info] [2963808307] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:54.153283 [Info] [3638119747] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:54.153303 from tcp:127.0.0.1:52276 accepted tcp:155.133.252.69:27020 [tun -> proxy~bridge]
+2026/10/14 11:32:54.153324 from tcp:127.0.0.1:52277 accepted tcp:162.254.198.68:27018 [tun -> proxy~bridge-4]
+2026/10/14 11:32:54.154973 [Info] [4105097728] proxy/tun: processing from tcp:169.254.10.2:52281 to tcp:162.254.198.69:443
+2026/10/14 11:32:54.154985 [Info] [4105097728] app/dispatcher: default route for tcp:162.254.198.69:443
+2026/10/14 11:32:54.154988 [Info] [4105097728] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.154989 from tcp:169.254.10.2:52281 accepted tcp:162.254.198.69:443 [tun-device >> main]
+2026/10/14 11:32:54.156273 [Info] [3765601926] app/dispatcher: sniffed domain: cmp1-sto1.steamserver.net
+2026/10/14 11:32:54.156327 [Info] [3765601926] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:cmp1-sto1.steamserver.net:27022]
+2026/10/14 11:32:54.156332 [Info] [3765601926] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:54.156333 from tcp:127.0.0.1:52278 accepted tcp:162.254.198.68:27022 [tun -> proxy~bridge-5]
+2026/10/14 11:32:54.158689 [Info] [3754161577] proxy/socks: TCP Connect request to tcp:162.254.198.69:443
+2026/10/14 11:32:54.194446 [Info] [2963808307] proxy/vless/outbound: tunneling request to tcp:155.133.252.69:27020 via 188.120.229.91:443
+2026/10/14 11:32:54.200090 [Info] [3638119747] proxy/vless/outbound: tunneling request to tcp:162.254.198.68:27018 via 155.212.162.214:443
+2026/10/14 11:32:54.200358 [Info] [3765601926] proxy/vless/outbound: tunneling request to tcp:162.254.198.68:27022 via 212.109.221.152:443
+2026/10/14 11:32:54.202655 [Info] [3754161577] app/dispatcher: sniffed domain: cmp2-sto1.steamserver.net
+2026/10/14 11:32:54.202748 [Info] [3754161577] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:cmp2-sto1.steamserver.net:443]
+2026/10/14 11:32:54.202756 [Info] [3754161577] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:54.202766 from tcp:127.0.0.1:52282 accepted tcp:162.254.198.69:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:54.227641 [Info] [2110645960] app/dispatcher: taking detour [proxy~bridge-5] for [udp:35.186.224.24:443]
+2026/10/14 11:32:54.227665 [Info] [2110645960] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:54.227653 from udp:127.0.0.1:53436 accepted udp:35.186.224.24:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:54.241653 [Info] [3754161577] proxy/vless/outbound: tunneling request to tcp:162.254.198.69:443 via 212.109.221.152:443
+2026/10/14 11:32:54.272170 [Info] [2110645960] proxy/vless/outbound: tunneling request to udp:35.186.224.24:443 via 212.109.221.152:443
+2026/10/14 11:32:54.272370 [Info] [2110645960] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:32:54.272398 [Info] [2110645960] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:32:54.375410 from tcp:169.254.10.2:52286 accepted tcp:155.133.252.69:27018 [tun-device >> main]
+2026/10/14 11:32:54.375411 [Info] [1924304689] proxy/tun: processing from tcp:169.254.10.2:52286 to tcp:155.133.252.69:27018
+2026/10/14 11:32:54.375434 [Info] [1924304689] app/dispatcher: default route for tcp:155.133.252.69:27018
+2026/10/14 11:32:54.375438 [Info] [1924304689] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.377115 [Info] [2241622142] proxy/socks: TCP Connect request to tcp:155.133.252.69:27018
+2026/10/14 11:32:54.402284 [Info] [2241622142] app/dispatcher: sniffed domain: cmp2-sto2.steamserver.net
+2026/10/14 11:32:54.402396 [Info] [2241622142] app/dispatcher: taking detour [proxy~bridge] for [tcp:cmp2-sto2.steamserver.net:27018]
+2026/10/14 11:32:54.402407 [Info] [2241622142] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:54.402412 from tcp:127.0.0.1:52287 accepted tcp:155.133.252.69:27018 [tun -> proxy~bridge]
+2026/10/14 11:32:54.445579 [Info] [2241622142] proxy/vless/outbound: tunneling request to tcp:155.133.252.69:27018 via 188.120.229.91:443
+2026/10/14 11:32:54.452661 [Info] [2371041622] proxy/tun: processing from tcp:169.254.10.2:52289 to tcp:155.133.250.4:27021
+2026/10/14 11:32:54.452679 [Info] [2371041622] app/dispatcher: default route for tcp:155.133.250.4:27021
+2026/10/14 11:32:54.452686 [Info] [2371041622] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:54.452691 from tcp:169.254.10.2:52289 accepted tcp:155.133.250.4:27021 [tun-device >> main]
+2026/10/14 11:32:54.454869 [Info] [3652544172] proxy/socks: TCP Connect request to tcp:155.133.250.4:27021
+2026/10/14 11:32:54.504767 [Info] [3652544172] app/dispatcher: sniffed domain: cmp1-fra1.steamserver.net
+2026/10/14 11:32:54.504856 [Info] [3652544172] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:cmp1-fra1.steamserver.net:27021]
+2026/10/14 11:32:54.504864 [Info] [3652544172] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:54.504874 from tcp:127.0.0.1:52290 accepted tcp:155.133.250.4:27021 [tun -> proxy~bridge-3]
+2026/10/14 11:32:54.543030 [Info] [3652544172] proxy/vless/outbound: tunneling request to tcp:155.133.250.4:27021 via 157.22.193.73:443
+2026/10/14 11:32:55.023174 [Info] [3308301723] proxy/tun: processing from tcp:169.254.10.2:52292 to tcp:172.65.90.22:443
+2026/10/14 11:32:55.023197 [Info] [3308301723] app/dispatcher: default route for tcp:172.65.90.22:443
+2026/10/14 11:32:55.023204 [Info] [3308301723] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.023222 from tcp:169.254.10.2:52292 accepted tcp:172.65.90.22:443 [tun-device >> main]
+2026/10/14 11:32:55.023430 [Info] [3291528835] proxy/tun: processing from tcp:169.254.10.2:52293 to tcp:172.65.90.23:443
+2026/10/14 11:32:55.023448 [Info] [3291528835] app/dispatcher: default route for tcp:172.65.90.23:443
+2026/10/14 11:32:55.023454 [Info] [3291528835] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.023615 from tcp:169.254.10.2:52293 accepted tcp:172.65.90.23:443 [tun-device >> main]
+2026/10/14 11:32:55.023823 [Info] [14500691] proxy/tun: processing from tcp:169.254.10.2:52294 to tcp:172.65.90.21:443
+2026/10/14 11:32:55.023835 [Info] [14500691] app/dispatcher: default route for tcp:172.65.90.21:443
+2026/10/14 11:32:55.023841 [Info] [14500691] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.023846 [Info] [581894961] proxy/tun: processing from tcp:169.254.10.2:52295 to tcp:172.65.90.20:443
+2026/10/14 11:32:55.023851 [Info] [581894961] app/dispatcher: default route for tcp:172.65.90.20:443
+2026/10/14 11:32:55.023855 [Info] [581894961] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.023892 from tcp:169.254.10.2:52294 accepted tcp:172.65.90.21:443 [tun-device >> main]
+2026/10/14 11:32:55.023989 from tcp:169.254.10.2:52295 accepted tcp:172.65.90.20:443 [tun-device >> main]
+2026/10/14 11:32:55.031655 [Info] [514743748] proxy/socks: TCP Connect request to tcp:172.65.90.22:443
+2026/10/14 11:32:55.031920 [Info] [1368178862] proxy/socks: TCP Connect request to tcp:172.65.90.23:443
+2026/10/14 11:32:55.031936 [Info] [514743748] app/dispatcher: sniffed domain: opencode.ai
+2026/10/14 11:32:55.032060 [Info] [514743748] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:opencode.ai:443]
+2026/10/14 11:32:55.032072 [Info] [514743748] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.032076 [Info] [3291528835] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.23:443: connection reset by peer
+2026/10/14 11:32:55.032165 from tcp:127.0.0.1:52296 accepted tcp:172.65.90.22:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.032171 from tcp:127.0.0.1:52297 accepted tcp:172.65.90.23:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:55.032195 [Info] [1368178862] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:172.65.90.23:443]
+2026/10/14 11:32:55.032200 [Info] [1368178862] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:55.033158 [Info] [78201338] proxy/socks: TCP Connect request to tcp:172.65.90.21:443
+2026/10/14 11:32:55.033255 [Info] [14500691] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.21:443: connection reset by peer
+2026/10/14 11:32:55.033317 [Info] [78201338] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:172.65.90.21:443]
+2026/10/14 11:32:55.033324 [Info] [78201338] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:55.033329 from tcp:127.0.0.1:52298 accepted tcp:172.65.90.21:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:55.033357 [Info] [3632329398] proxy/socks: TCP Connect request to tcp:172.65.90.20:443
+2026/10/14 11:32:55.033499 [Info] [581894961] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.20:443: connection reset by peer
+2026/10/14 11:32:55.033555 [Info] [3632329398] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.20:443]
+2026/10/14 11:32:55.033565 [Info] [3632329398] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.033577 from tcp:127.0.0.1:52299 accepted tcp:172.65.90.20:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.041946 from tcp:169.254.10.2:52304 accepted tcp:172.65.90.22:443 [tun-device >> main]
+2026/10/14 11:32:55.041961 from tcp:169.254.10.2:52305 accepted tcp:172.65.90.23:443 [tun-device >> main]
+2026/10/14 11:32:55.042088 [Info] [2239458339] proxy/tun: processing from tcp:169.254.10.2:52305 to tcp:172.65.90.23:443
+2026/10/14 11:32:55.042098 [Info] [1333745560] proxy/tun: processing from tcp:169.254.10.2:52304 to tcp:172.65.90.22:443
+2026/10/14 11:32:55.042102 [Info] [1333745560] app/dispatcher: default route for tcp:172.65.90.22:443
+2026/10/14 11:32:55.042106 [Info] [2239458339] app/dispatcher: default route for tcp:172.65.90.23:443
+2026/10/14 11:32:55.042110 [Info] [2239458339] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.042113 [Info] [1333745560] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.042116 [Info] [1391277504] proxy/tun: processing from tcp:169.254.10.2:52306 to tcp:172.65.90.21:443
+2026/10/14 11:32:55.042119 [Info] [1391277504] app/dispatcher: default route for tcp:172.65.90.21:443
+2026/10/14 11:32:55.042205 [Info] [1391277504] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.042211 [Info] [3544121596] proxy/tun: processing from tcp:169.254.10.2:52307 to tcp:172.65.90.20:443
+2026/10/14 11:32:55.042218 [Info] [3544121596] app/dispatcher: default route for tcp:172.65.90.20:443
+2026/10/14 11:32:55.042222 [Info] [3544121596] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.042127 from tcp:169.254.10.2:52306 accepted tcp:172.65.90.21:443 [tun-device >> main]
+2026/10/14 11:32:55.042229 from tcp:169.254.10.2:52307 accepted tcp:172.65.90.20:443 [tun-device >> main]
+2026/10/14 11:32:55.047944 [Info] [431739798] proxy/socks: TCP Connect request to tcp:172.65.90.23:443
+2026/10/14 11:32:55.048025 [Info] [2239458339] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.23:443: connection reset by peer
+2026/10/14 11:32:55.048115 [Info] [1580278202] proxy/socks: TCP Connect request to tcp:172.65.90.22:443
+2026/10/14 11:32:55.048155 [Info] [431739798] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:172.65.90.23:443]
+2026/10/14 11:32:55.048160 [Info] [431739798] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:55.048127 from tcp:127.0.0.1:52308 accepted tcp:172.65.90.23:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:55.048307 [Info] [1580278202] app/dispatcher: sniffed domain: opencode.ai
+2026/10/14 11:32:55.048317 [Info] [1580278202] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:opencode.ai:443]
+2026/10/14 11:32:55.048321 [Info] [1580278202] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:55.048423 from tcp:127.0.0.1:52309 accepted tcp:172.65.90.22:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:55.050022 [Info] [4216316938] proxy/socks: TCP Connect request to tcp:172.65.90.21:443
+2026/10/14 11:32:55.050066 [Info] [1156814589] proxy/socks: TCP Connect request to tcp:172.65.90.20:443
+2026/10/14 11:32:55.050158 [Info] [1391277504] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.21:443: connection reset by peer
+2026/10/14 11:32:55.050254 [Info] [3544121596] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.20:443: connection reset by peer
+2026/10/14 11:32:55.050263 [Info] [4216316938] app/dispatcher: taking detour [proxy~bridge] for [tcp:172.65.90.21:443]
+2026/10/14 11:32:55.050267 [Info] [4216316938] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:55.050284 from tcp:127.0.0.1:52310 accepted tcp:172.65.90.21:443 [tun -> proxy~bridge]
+2026/10/14 11:32:55.050300 from tcp:127.0.0.1:52311 accepted tcp:172.65.90.20:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.050333 [Info] [1156814589] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.20:443]
+2026/10/14 11:32:55.050341 [Info] [1156814589] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.073244 [Info] [78201338] proxy/vless/outbound: tunneling request to tcp:172.65.90.21:443 via 188.120.237.35:443
+2026/10/14 11:32:55.075151 [Info] [1368178862] proxy/vless/outbound: tunneling request to tcp:172.65.90.23:443 via 212.109.221.152:443
+2026/10/14 11:32:55.075220 [Info] [3632329398] proxy/vless/outbound: tunneling request to tcp:172.65.90.20:443 via 155.212.162.214:443
+2026/10/14 11:32:55.075784 [Info] [514743748] proxy/vless/outbound: tunneling request to tcp:172.65.90.22:443 via 155.212.162.214:443
+2026/10/14 11:32:55.089396 [Info] [431739798] proxy/vless/outbound: tunneling request to tcp:172.65.90.23:443 via 157.22.193.73:443
+2026/10/14 11:32:55.091061 [Info] [1156814589] proxy/vless/outbound: tunneling request to tcp:172.65.90.20:443 via 155.212.162.214:443
+2026/10/14 11:32:55.092753 [Info] [1580278202] proxy/vless/outbound: tunneling request to tcp:172.65.90.22:443 via 188.120.237.35:443
+2026/10/14 11:32:55.096367 [Info] [4216316938] proxy/vless/outbound: tunneling request to tcp:172.65.90.21:443 via 188.120.229.91:443
+2026/10/14 11:32:55.142667 [Info] [4274000364] proxy/tun: processing from tcp:169.254.10.2:52317 to tcp:172.65.90.23:443
+2026/10/14 11:32:55.142686 [Info] [4274000364] app/dispatcher: default route for tcp:172.65.90.23:443
+2026/10/14 11:32:55.142692 [Info] [4274000364] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.142929 from tcp:169.254.10.2:52317 accepted tcp:172.65.90.23:443 [tun-device >> main]
+2026/10/14 11:32:55.142939 from tcp:169.254.10.2:52318 accepted tcp:172.65.90.21:443 [tun-device >> main]
+2026/10/14 11:32:55.142942 from tcp:169.254.10.2:52316 accepted tcp:172.65.90.22:443 [tun-device >> main]
+2026/10/14 11:32:55.142944 from tcp:169.254.10.2:52319 accepted tcp:172.65.90.20:443 [tun-device >> main]
+2026/10/14 11:32:55.142945 [Info] [3861835201] proxy/tun: processing from tcp:169.254.10.2:52318 to tcp:172.65.90.21:443
+2026/10/14 11:32:55.142951 [Info] [3861835201] app/dispatcher: default route for tcp:172.65.90.21:443
+2026/10/14 11:32:55.142956 [Info] [3861835201] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.142960 [Info] [1121711743] proxy/tun: processing from tcp:169.254.10.2:52316 to tcp:172.65.90.22:443
+2026/10/14 11:32:55.142963 [Info] [1121711743] app/dispatcher: default route for tcp:172.65.90.22:443
+2026/10/14 11:32:55.142966 [Info] [1121711743] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.142969 [Info] [3299860332] proxy/tun: processing from tcp:169.254.10.2:52319 to tcp:172.65.90.20:443
+2026/10/14 11:32:55.142973 [Info] [3299860332] app/dispatcher: default route for tcp:172.65.90.20:443
+2026/10/14 11:32:55.142975 [Info] [3299860332] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.147367 [Info] [2692058038] proxy/socks: TCP Connect request to tcp:172.65.90.21:443
+2026/10/14 11:32:55.147430 [Info] [3861835201] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.21:443: connection reset by peer
+2026/10/14 11:32:55.147435 [Info] [1701907240] proxy/socks: TCP Connect request to tcp:172.65.90.23:443
+2026/10/14 11:32:55.147542 [Info] [2692058038] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.21:443]
+2026/10/14 11:32:55.147549 [Info] [2692058038] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.147590 [Info] [4274000364] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.23:443: connection reset by peer
+2026/10/14 11:32:55.147598 from tcp:127.0.0.1:52320 accepted tcp:172.65.90.21:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.147652 [Info] [1701907240] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:172.65.90.23:443]
+2026/10/14 11:32:55.147658 [Info] [1701907240] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:55.147666 from tcp:127.0.0.1:52321 accepted tcp:172.65.90.23:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:55.149547 [Info] [332015334] proxy/socks: TCP Connect request to tcp:172.65.90.22:443
+2026/10/14 11:32:55.149744 [Info] [332015334] app/dispatcher: sniffed domain: opencode.ai
+2026/10/14 11:32:55.149901 [Info] [332015334] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:opencode.ai:443]
+2026/10/14 11:32:55.149909 [Info] [332015334] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:32:55.149912 [Info] [914539047] proxy/socks: TCP Connect request to tcp:172.65.90.20:443
+2026/10/14 11:32:55.149941 [Info] [3299860332] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.20:443: connection reset by peer
+2026/10/14 11:32:55.149957 from tcp:127.0.0.1:52322 accepted tcp:172.65.90.22:443 [tun -> proxy~bridge-2]
+2026/10/14 11:32:55.149960 from tcp:127.0.0.1:52323 accepted tcp:172.65.90.20:443 [tun -> proxy~bridge]
+2026/10/14 11:32:55.150044 [Info] [914539047] app/dispatcher: taking detour [proxy~bridge] for [tcp:172.65.90.20:443]
+2026/10/14 11:32:55.150053 [Info] [914539047] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:32:55.184231 [Info] [1701907240] proxy/vless/outbound: tunneling request to tcp:172.65.90.23:443 via 157.22.193.73:443
+2026/10/14 11:32:55.206538 [Info] [914539047] proxy/vless/outbound: tunneling request to tcp:172.65.90.20:443 via 188.120.229.91:443
+2026/10/14 11:32:55.207295 [Info] [332015334] proxy/vless/outbound: tunneling request to tcp:172.65.90.22:443 via 188.120.237.35:443
+2026/10/14 11:32:55.216609 [Info] [2692058038] proxy/vless/outbound: tunneling request to tcp:172.65.90.21:443 via 155.212.162.214:443
+2026/10/14 11:32:55.302332 [Info] [927168379] proxy/tun: processing from tcp:169.254.10.2:52328 to tcp:172.65.90.22:443
+2026/10/14 11:32:55.302355 [Info] [927168379] app/dispatcher: default route for tcp:172.65.90.22:443
+2026/10/14 11:32:55.302362 [Info] [927168379] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.302368 [Info] [2192713687] proxy/tun: processing from tcp:169.254.10.2:52329 to tcp:172.65.90.23:443
+2026/10/14 11:32:55.302372 [Info] [2192713687] app/dispatcher: default route for tcp:172.65.90.23:443
+2026/10/14 11:32:55.302376 [Info] [2192713687] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.302697 from tcp:169.254.10.2:52328 accepted tcp:172.65.90.22:443 [tun-device >> main]
+2026/10/14 11:32:55.302707 from tcp:169.254.10.2:52329 accepted tcp:172.65.90.23:443 [tun-device >> main]
+2026/10/14 11:32:55.303129 from tcp:169.254.10.2:52330 accepted tcp:172.65.90.21:443 [tun-device >> main]
+2026/10/14 11:32:55.303143 from tcp:169.254.10.2:52331 accepted tcp:172.65.90.20:443 [tun-device >> main]
+2026/10/14 11:32:55.303156 [Info] [3121383059] proxy/tun: processing from tcp:169.254.10.2:52330 to tcp:172.65.90.21:443
+2026/10/14 11:32:55.303160 [Info] [3121383059] app/dispatcher: default route for tcp:172.65.90.21:443
+2026/10/14 11:32:55.303163 [Info] [3121383059] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.303167 [Info] [2037932272] proxy/tun: processing from tcp:169.254.10.2:52331 to tcp:172.65.90.20:443
+2026/10/14 11:32:55.303170 [Info] [2037932272] app/dispatcher: default route for tcp:172.65.90.20:443
+2026/10/14 11:32:55.303172 [Info] [2037932272] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:55.310595 [Info] [3361717946] proxy/socks: TCP Connect request to tcp:172.65.90.23:443
+2026/10/14 11:32:55.310839 [Info] [2192713687] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.23:443: connection reset by peer
+2026/10/14 11:32:55.310956 [Info] [3361717946] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.23:443]
+2026/10/14 11:32:55.310967 [Info] [3361717946] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.310972 [Info] [4201671687] proxy/socks: TCP Connect request to tcp:172.65.90.22:443
+2026/10/14 11:32:55.311006 from tcp:127.0.0.1:52332 accepted tcp:172.65.90.23:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.311269 [Info] [4201671687] app/dispatcher: sniffed domain: opencode.ai
+2026/10/14 11:32:55.311348 [Info] [4201671687] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:opencode.ai:443]
+2026/10/14 11:32:55.311365 [Info] [4201671687] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.311368 from tcp:127.0.0.1:52333 accepted tcp:172.65.90.22:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.312871 [Info] [3141408650] proxy/socks: TCP Connect request to tcp:172.65.90.20:443
+2026/10/14 11:32:55.312993 [Info] [2037932272] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.20:443: connection reset by peer
+2026/10/14 11:32:55.313148 [Info] [3141408650] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.20:443]
+2026/10/14 11:32:55.313156 [Info] [3141408650] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.313159 [Info] [1576565334] proxy/socks: TCP Connect request to tcp:172.65.90.21:443
+2026/10/14 11:32:55.313166 from tcp:127.0.0.1:52334 accepted tcp:172.65.90.20:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.313390 [Info] [3121383059] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > read tcp 172.65.90.21:443: connection reset by peer
+2026/10/14 11:32:55.313408 [Info] [1576565334] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:172.65.90.21:443]
+2026/10/14 11:32:55.313414 [Info] [1576565334] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:55.313421 from tcp:127.0.0.1:52335 accepted tcp:172.65.90.21:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:55.352826 [Info] [4201671687] proxy/vless/outbound: tunneling request to tcp:172.65.90.22:443 via 155.212.162.214:443
+2026/10/14 11:32:55.353349 [Info] [3141408650] proxy/vless/outbound: tunneling request to tcp:172.65.90.20:443 via 155.212.162.214:443
+2026/10/14 11:32:55.354550 [Info] [1576565334] proxy/vless/outbound: tunneling request to tcp:172.65.90.21:443 via 155.212.162.214:443
+2026/10/14 11:32:55.354740 [Info] [3361717946] proxy/vless/outbound: tunneling request to tcp:172.65.90.23:443 via 155.212.162.214:443
+2026/10/14 11:32:55.916865 [Info] [2110645960] transport/internet/udp: establishing new connection for udp:35.186.224.24:443
+2026/10/14 11:32:56.117575 [Info] [2110645960] app/dispatcher: taking detour [proxy~bridge-4] for [udp:35.186.224.24:443]
+2026/10/14 11:32:56.117604 [Info] [2110645960] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:32:56.117573 from udp:127.0.0.1:53436 accepted udp:35.186.224.24:443 [tun -> proxy~bridge-4]
+2026/10/14 11:32:56.161733 [Info] [2110645960] proxy/vless/outbound: tunneling request to udp:35.186.224.24:443 via 155.212.162.214:443
+2026/10/14 11:32:56.161961 [Info] [2110645960] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:32:56.161975 [Info] [2110645960] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:32:56.180982 [Info] [3696510042] proxy/tun: processing from tcp:169.254.10.2:52341 to tcp:87.98.162.88:443
+2026/10/14 11:32:56.181002 [Info] [3696510042] app/dispatcher: default route for tcp:87.98.162.88:443
+2026/10/14 11:32:56.180999 from tcp:169.254.10.2:52341 accepted tcp:87.98.162.88:443 [tun-device >> main]
+2026/10/14 11:32:56.181005 [Info] [3696510042] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:56.181980 [Info] [1867731618] proxy/socks: TCP Connect request to tcp:87.98.162.88:443
+2026/10/14 11:32:56.182098 [Info] [1867731618] app/dispatcher: sniffed domain: portcheck.transmissionbt.com
+2026/10/14 11:32:56.182184 [Info] [1867731618] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:portcheck.transmissionbt.com:443]
+2026/10/14 11:32:56.182192 [Info] [1867731618] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:32:56.182210 from tcp:127.0.0.1:52342 accepted tcp:87.98.162.88:443 [tun -> proxy~bridge-5]
+2026/10/14 11:32:56.216825 [Info] [1867731618] proxy/vless/outbound: tunneling request to tcp:87.98.162.88:443 via 212.109.221.152:443
+2026/10/14 11:32:57.407013 [Info] [486809198] proxy/tun: processing from tcp:169.254.10.2:52344 to tcp:35.186.224.24:443
+2026/10/14 11:32:57.407027 from tcp:169.254.10.2:52344 accepted tcp:35.186.224.24:443 [tun-device >> main]
+2026/10/14 11:32:57.407035 [Info] [486809198] app/dispatcher: default route for tcp:35.186.224.24:443
+2026/10/14 11:32:57.407053 [Info] [486809198] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:57.408965 [Info] [2892801678] proxy/socks: TCP Connect request to tcp:35.186.224.24:443
+2026/10/14 11:32:57.409184 [Info] [2892801678] app/dispatcher: sniffed domain: api.spotify.com
+2026/10/14 11:32:57.409281 [Info] [2892801678] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:api.spotify.com:443]
+2026/10/14 11:32:57.409292 [Info] [2892801678] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:32:57.409297 from tcp:127.0.0.1:52345 accepted tcp:35.186.224.24:443 [tun -> proxy~bridge-3]
+2026/10/14 11:32:57.447479 [Info] [2892801678] proxy/vless/outbound: tunneling request to tcp:35.186.224.24:443 via 157.22.193.73:443
+2026/10/14 11:32:57.998483 [Info] [3499522056] proxy/tun: processing from tcp:169.254.10.2:52347 to tcp:192.168.1.1:5000
+2026/10/14 11:32:57.998519 [Info] [3499522056] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:32:57.998526 [Info] [3499522056] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:32:57.998524 from tcp:169.254.10.2:52347 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:32:58.001098 [Info] [547524373] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:32:58.001239 [Info] [547524373] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:32:58.001253 from tcp:127.0.0.1:52348 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:32:58.001255 [Info] [547524373] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:32:58.001267 [Info] [547524373] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:32:58.947506 [Info] [3867604002] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:01.984156 [Info] [2972177582] proxy/tun: processing from tcp:169.254.10.2:52357 to tcp:3.41.202.159:443
+2026/10/14 11:33:01.984207 [Info] [2972177582] app/dispatcher: default route for tcp:3.41.202.159:443
+2026/10/14 11:33:01.984216 [Info] [2972177582] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:01.984248 from tcp:169.254.10.2:52357 accepted tcp:3.41.202.159:443 [tun-device >> main]
+2026/10/14 11:33:01.986227 [Info] [3486125595] proxy/socks: TCP Connect request to tcp:3.41.202.159:443
+2026/10/14 11:33:01.986450 [Info] [3486125595] app/dispatcher: sniffed domain: us.i.posthog.com
+2026/10/14 11:33:01.986546 [Info] [3486125595] app/dispatcher: taking detour [proxy~bridge] for [tcp:us.i.posthog.com:443]
+2026/10/14 11:33:01.986557 from tcp:127.0.0.1:52358 accepted tcp:3.41.202.159:443 [tun -> proxy~bridge]
+2026/10/14 11:33:01.986561 [Info] [3486125595] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:02.030990 [Info] [3486125595] proxy/vless/outbound: tunneling request to tcp:3.41.202.159:443 via 188.120.229.91:443
+2026/10/14 11:33:03.004620 [Info] [435708547] proxy/tun: processing from tcp:169.254.10.2:52360 to tcp:192.168.1.1:5000
+2026/10/14 11:33:03.004643 from tcp:169.254.10.2:52360 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:03.004646 [Info] [435708547] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:03.004664 [Info] [435708547] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:03.015892 [Info] [3383854074] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:03.016091 [Info] [3383854074] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:03.016101 [Info] [3383854074] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:03.016112 from tcp:127.0.0.1:52361 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:03.016141 [Info] [3383854074] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:03.735303 [Info] [116233810] proxy/tun: processing from tcp:169.254.10.2:52363 to tcp:100.125.35.85:11434
+2026/10/14 11:33:03.735337 [Info] [116233810] app/dispatcher: default route for tcp:100.125.35.85:11434
+2026/10/14 11:33:03.735342 [Info] [116233810] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:03.735373 from tcp:169.254.10.2:52363 accepted tcp:100.125.35.85:11434 [tun-device >> main]
+2026/10/14 11:33:03.737528 [Info] [880694132] proxy/socks: TCP Connect request to tcp:100.125.35.85:11434
+2026/10/14 11:33:03.737780 [Info] [880694132] app/dispatcher: sniffed domain: 100.125.35.85
+2026/10/14 11:33:03.737808 [Info] [880694132] app/dispatcher: Hit route rule: [system_route_via_tun] so taking detour [block] for [tcp:100.125.35.85:11434]
+2026/10/14 11:33:03.737878 from tcp:127.0.0.1:52364 accepted tcp:100.125.35.85:11434 [tun -> block]
+2026/10/14 11:33:03.948273 [Info] [636914549] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:06.182118 [Info] [960141382] proxy/tun: processing from tcp:169.254.10.2:52366 to tcp:87.98.162.88:443
+2026/10/14 11:33:06.182144 from tcp:169.254.10.2:52366 accepted tcp:87.98.162.88:443 [tun-device >> main]
+2026/10/14 11:33:06.182161 [Info] [960141382] app/dispatcher: default route for tcp:87.98.162.88:443
+2026/10/14 11:33:06.182174 [Info] [960141382] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:06.183599 [Info] [2583096668] proxy/socks: TCP Connect request to tcp:87.98.162.88:443
+2026/10/14 11:33:06.183897 [Info] [2583096668] app/dispatcher: sniffed domain: portcheck.transmissionbt.com
+2026/10/14 11:33:06.184015 [Info] [2583096668] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:portcheck.transmissionbt.com:443]
+2026/10/14 11:33:06.184034 [Info] [2583096668] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:06.184059 from tcp:127.0.0.1:52367 accepted tcp:87.98.162.88:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:06.230287 [Info] [2583096668] proxy/vless/outbound: tunneling request to tcp:87.98.162.88:443 via 188.120.237.35:443
+2026/10/14 11:33:07.886241 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-5] for [tcp:www.gstatic.com:80]
+2026/10/14 11:33:07.886308 [Info] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:07.958534 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 212.109.221.152:443
+2026/10/14 11:33:08.018865 [Info] [3332780816] proxy/tun: processing from tcp:169.254.10.2:52370 to tcp:192.168.1.1:5000
+2026/10/14 11:33:08.018889 [Info] [3332780816] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:08.018896 [Info] [3332780816] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:08.018894 from tcp:169.254.10.2:52370 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:08.020763 [Info] [619005351] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:08.021054 [Info] [619005351] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:08.021067 [Info] [619005351] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:08.021097 from tcp:127.0.0.1:52371 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:08.021131 [Info] [619005351] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:09.000002 [Info] [2030833419] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:13.028298 [Info] [3586290795] proxy/tun: processing from tcp:169.254.10.2:52374 to tcp:192.168.1.1:5000
+2026/10/14 11:33:13.028325 [Info] [3586290795] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:13.028308 from tcp:169.254.10.2:52374 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:13.028339 [Info] [3586290795] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:13.044626 [Info] [713674349] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:13.044792 [Info] [713674349] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:13.044817 [Info] [713674349] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:13.044848 from tcp:127.0.0.1:52375 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:13.044886 [Info] [713674349] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:14.003064 [Info] [547524373] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:15.050284 [Info] [3867604002] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:18.047791 [Info] [2251431443] proxy/tun: processing from tcp:169.254.10.2:52379 to tcp:192.168.1.1:5000
+2026/10/14 11:33:18.047805 from tcp:169.254.10.2:52379 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:18.047825 [Info] [2251431443] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:18.047863 [Info] [2251431443] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:18.049817 [Info] [416643894] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:18.050182 [Info] [416643894] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:18.050203 [Info] [416643894] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:18.050211 [Info] [416643894] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:18.050232 from tcp:127.0.0.1:52380 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:18.613155 from tcp:169.254.10.2:52382 accepted tcp:17.242.184.19:443 [tun-device >> main]
+2026/10/14 11:33:18.613165 [Info] [53297494] proxy/tun: processing from tcp:169.254.10.2:52382 to tcp:17.242.184.19:443
+2026/10/14 11:33:18.613186 [Info] [53297494] app/dispatcher: default route for tcp:17.242.184.19:443
+2026/10/14 11:33:18.613200 [Info] [53297494] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:18.614186 [Info] [445505146] proxy/socks: TCP Connect request to tcp:17.242.184.19:443
+2026/10/14 11:33:18.614322 [Info] [445505146] app/dispatcher: sniffed domain: gs-loc.apple.com
+2026/10/14 11:33:18.614404 [Info] [445505146] app/dispatcher: taking detour [proxy~bridge] for [tcp:gs-loc.apple.com:443]
+2026/10/14 11:33:18.614423 [Info] [445505146] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:18.614436 from tcp:127.0.0.1:52383 accepted tcp:17.242.184.19:443 [tun -> proxy~bridge]
+2026/10/14 11:33:18.654383 [Info] [445505146] proxy/vless/outbound: tunneling request to tcp:17.242.184.19:443 via 188.120.229.91:443
+2026/10/14 11:33:19.017615 [Info] [3383854074] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:19.594196 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-4] for [tcp:www.gstatic.com:80]
+2026/10/14 11:33:19.594228 [Info] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:19.688956 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 155.212.162.214:443
+2026/10/14 11:33:20.049603 [Info] [636914549] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:20.273121 [Info] [4293109172] proxy/tun: processing from tcp:169.254.10.2:52392 to tcp:142.251.155.4:443
+2026/10/14 11:33:20.273123 from tcp:169.254.10.2:52392 accepted tcp:142.251.155.4:443 [tun-device >> main]
+2026/10/14 11:33:20.273134 [Info] [4293109172] app/dispatcher: default route for tcp:142.251.155.4:443
+2026/10/14 11:33:20.273136 [Info] [4293109172] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:20.283458 [Info] [2332970122] proxy/socks: TCP Connect request to tcp:142.251.155.4:443
+2026/10/14 11:33:20.283558 [Info] [2332970122] app/dispatcher: sniffed domain: www.youtube.com
+2026/10/14 11:33:20.283581 [Info] [2332970122] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:www.youtube.com:443]
+2026/10/14 11:33:20.283587 [Info] [2332970122] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:20.283601 from tcp:127.0.0.1:52393 accepted tcp:142.251.155.4:443 [tun -> proxy~bridge-3]
+2026/10/14 11:33:20.324756 [Info] [2332970122] proxy/vless/outbound: tunneling request to tcp:142.251.155.4:443 via 157.22.193.73:443
+2026/10/14 11:33:20.802782 [Info] [624927236] proxy/tun: processing from tcp:169.254.10.2:52395 to tcp:140.82.121.4:443
+2026/10/14 11:33:20.802790 from tcp:169.254.10.2:52395 accepted tcp:140.82.121.4:443 [tun-device >> main]
+2026/10/14 11:33:20.802795 [Info] [624927236] app/dispatcher: default route for tcp:140.82.121.4:443
+2026/10/14 11:33:20.802800 [Info] [624927236] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:20.822376 [Info] [424081187] proxy/socks: TCP Connect request to tcp:140.82.121.4:443
+2026/10/14 11:33:20.822479 [Info] [424081187] app/dispatcher: sniffed domain: github.com
+2026/10/14 11:33:20.822572 from tcp:127.0.0.1:52396 accepted tcp:140.82.121.4:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:20.822580 [Info] [424081187] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:github.com:443]
+2026/10/14 11:33:20.822598 [Info] [424081187] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:20.857882 [Info] [424081187] proxy/vless/outbound: tunneling request to tcp:140.82.121.4:443 via 188.120.237.35:443
+2026/10/14 11:33:23.058228 from tcp:169.254.10.2:52405 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:23.058269 [Info] [1907917725] proxy/tun: processing from tcp:169.254.10.2:52405 to tcp:192.168.1.1:5000
+2026/10/14 11:33:23.058297 [Info] [1907917725] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:23.058301 [Info] [1907917725] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:23.066341 [Info] [2302284568] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:23.066547 [Info] [2302284568] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:23.066582 [Info] [2302284568] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:23.066593 from tcp:127.0.0.1:52406 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:23.066615 [Info] [2302284568] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:24.022628 [Info] [619005351] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:25.102602 [Info] [2030833419] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:25.350564 [Info] [1876503833] proxy/tun: processing from tcp:169.254.10.2:52410 to tcp:142.251.153.4:443
+2026/10/14 11:33:25.350577 [Info] [1876503833] app/dispatcher: default route for tcp:142.251.153.4:443
+2026/10/14 11:33:25.350570 from tcp:169.254.10.2:52410 accepted tcp:142.251.153.4:443 [tun-device >> main]
+2026/10/14 11:33:25.350580 [Info] [1876503833] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:25.351434 [Info] [2105914190] proxy/socks: TCP Connect request to tcp:142.251.153.4:443
+2026/10/14 11:33:25.351532 [Info] [2105914190] app/dispatcher: sniffed domain: www.youtube.com
+2026/10/14 11:33:25.351618 [Info] [2105914190] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:www.youtube.com:443]
+2026/10/14 11:33:25.351622 [Info] [2105914190] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:25.351635 from tcp:127.0.0.1:52411 accepted tcp:142.251.153.4:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:25.390411 [Info] [2105914190] proxy/vless/outbound: tunneling request to tcp:142.251.153.4:443 via 188.120.237.35:443
+2026/10/14 11:33:26.986217 [Info] [2714477281] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/socks: connection ends > write tcp 54.188.216.21:443: endpoint is closed for send
+2026/10/14 11:33:27.646471 [Info] [2528916589] proxy/tun: processing from tcp:169.254.10.2:52413 to tcp:13.33.235.105:443
+2026/10/14 11:33:27.646500 [Info] [2528916589] app/dispatcher: default route for tcp:13.33.235.105:443
+2026/10/14 11:33:27.646505 [Info] [2528916589] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:27.646498 from tcp:169.254.10.2:52413 accepted tcp:13.33.235.105:443 [tun-device >> main]
+2026/10/14 11:33:27.649096 [Info] [426770828] proxy/socks: TCP Connect request to tcp:13.33.235.105:443
+2026/10/14 11:33:27.649403 [Info] [426770828] app/dispatcher: taking detour [proxy~bridge] for [tcp:13.33.235.105:443]
+2026/10/14 11:33:27.649419 [Info] [426770828] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:27.649428 from tcp:127.0.0.1:52414 accepted tcp:13.33.235.105:443 [tun -> proxy~bridge]
+2026/10/14 11:33:27.686428 [Info] [426770828] proxy/vless/outbound: tunneling request to tcp:13.33.235.105:443 via 188.120.229.91:443
+2026/10/14 11:33:27.763035 [Info] app/dispatcher: taking platform initialized detour [proxy~bridge-3] for [tcp:www.gstatic.com:80]
+2026/10/14 11:33:27.763073 [Info] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:27.799051 [Info] proxy/vless/outbound: tunneling request to tcp:www.gstatic.com:80 via 157.22.193.73:443
+2026/10/14 11:33:28.068662 [Info] [3800722474] proxy/tun: processing from tcp:169.254.10.2:52417 to tcp:192.168.1.1:5000
+2026/10/14 11:33:28.068686 [Info] [3800722474] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:28.068704 [Info] [3800722474] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:28.068683 from tcp:169.254.10.2:52417 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:28.070448 [Info] [2808679122] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:28.070650 [Info] [2808679122] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:28.070664 [Info] [2808679122] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:28.070689 [Info] [2808679122] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:28.070685 from tcp:127.0.0.1:52418 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:28.570704 [Info] [1953427089] proxy/tun: processing from tcp:169.254.10.2:52420 to tcp:146.75.118.214:443
+2026/10/14 11:33:28.570719 [Info] [1953427089] app/dispatcher: default route for tcp:146.75.118.214:443
+2026/10/14 11:33:28.570722 [Info] [1953427089] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:28.570744 from tcp:169.254.10.2:52420 accepted tcp:146.75.118.214:443 [tun-device >> main]
+2026/10/14 11:33:28.572938 [Info] [2731152528] proxy/socks: TCP Connect request to tcp:146.75.118.214:443
+2026/10/14 11:33:28.573095 [Info] [2731152528] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:146.75.118.214:443]
+2026/10/14 11:33:28.573102 [Info] [2731152528] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:28.573108 from tcp:127.0.0.1:52421 accepted tcp:146.75.118.214:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:28.623878 [Info] [2731152528] proxy/vless/outbound: tunneling request to tcp:146.75.118.214:443 via 188.120.237.35:443
+2026/10/14 11:33:28.705031 [Info] [3259043259] proxy/tun: processing from tcp:169.254.10.2:52423 to tcp:173.194.220.119:443
+2026/10/14 11:33:28.705064 [Info] [3259043259] app/dispatcher: default route for tcp:173.194.220.119:443
+2026/10/14 11:33:28.705068 [Info] [3259043259] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:28.705074 from tcp:169.254.10.2:52423 accepted tcp:173.194.220.119:443 [tun-device >> main]
+2026/10/14 11:33:28.706397 [Info] [3608342975] proxy/socks: TCP Connect request to tcp:173.194.220.119:443
+2026/10/14 11:33:28.706531 [Info] [3608342975] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:173.194.220.119:443]
+2026/10/14 11:33:28.706537 [Info] [3608342975] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:28.706548 from tcp:127.0.0.1:52424 accepted tcp:173.194.220.119:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:28.748060 [Info] [3608342975] proxy/vless/outbound: tunneling request to tcp:173.194.220.119:443 via 155.212.162.214:443
+2026/10/14 11:33:29.046535 [Info] [713674349] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:29.523004 [Info] [144978419] proxy/tun: processing from udp:169.254.10.2:56244 to udp:1.1.1.1:53
+2026/10/14 11:33:29.523022 from udp:169.254.10.2:56244 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:29.523027 [Info] [144978419] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:29.523058 [Info] [144978419] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.523765 [Info] [3876949232] proxy/tun: processing from udp:169.254.10.2:50984 to udp:1.1.1.1:53
+2026/10/14 11:33:29.523773 [Info] [3876949232] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:29.523775 [Info] [3876949232] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.523790 from udp:169.254.10.2:50984 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:29.524400 [Info] [437964189] proxy/tun: processing from udp:169.254.10.2:54976 to udp:1.1.1.1:53
+2026/10/14 11:33:29.524410 [Info] [437964189] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:29.524413 [Info] [437964189] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.524418 from udp:169.254.10.2:54976 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:29.524879 [Info] [837969064] proxy/tun: processing from udp:169.254.10.2:62305 to udp:1.1.1.1:53
+2026/10/14 11:33:29.524885 [Info] [837969064] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:29.524889 [Info] [837969064] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.524895 from udp:169.254.10.2:62305 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:29.525397 [Info] [3701747112] proxy/tun: processing from udp:169.254.10.2:57700 to udp:1.1.1.1:53
+2026/10/14 11:33:29.525403 [Info] [3701747112] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:29.525405 [Info] [3701747112] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.525420 from udp:169.254.10.2:57700 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:29.526783 [Info] [3232307807] proxy/socks: client UDP connection from udp:127.0.0.1:49666
+2026/10/14 11:33:29.526846 from udp:127.0.0.1:49666 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.526947 [Info] [3232307807] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:29.526955 [Info] [3232307807] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:29.526958 [Info] [3232307807] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:29.527065 [Info] [1244521641] proxy/socks: client UDP connection from udp:127.0.0.1:62661
+2026/10/14 11:33:29.527093 [Info] [1244521641] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:29.527113 [Info] [1244521641] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:29.527114 from udp:127.0.0.1:62661 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.527117 [Info] [1244521641] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:29.527234 [Info] [734760116] proxy/socks: client UDP connection from udp:127.0.0.1:56906
+2026/10/14 11:33:29.527238 [Info] [734760116] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:29.527275 [Info] [734760116] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:29.527279 [Info] [734760116] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:29.527282 from udp:127.0.0.1:56906 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.527438 [Info] [3096259766] proxy/socks: client UDP connection from udp:127.0.0.1:53494
+2026/10/14 11:33:29.527442 [Info] [3096259766] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:29.527484 [Info] [3096259766] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:29.527487 [Info] [3096259766] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:29.527490 from udp:127.0.0.1:53494 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.527643 [Info] [901592806] proxy/socks: client UDP connection from udp:127.0.0.1:61247
+2026/10/14 11:33:29.527654 [Info] [901592806] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:29.527693 [Info] [901592806] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:29.527698 [Info] [901592806] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:29.527700 from udp:127.0.0.1:61247 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.528310 [Info] [1750019823] proxy/tun: processing from udp:169.254.10.2:61164 to udp:1.0.0.1:53
+2026/10/14 11:33:29.528316 [Info] [1750019823] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:29.528319 [Info] [1750019823] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.528332 from udp:169.254.10.2:61164 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:29.528810 [Info] [49332047] proxy/tun: processing from udp:169.254.10.2:52996 to udp:1.0.0.1:53
+2026/10/14 11:33:29.528816 [Info] [49332047] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:29.528818 [Info] [49332047] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.528830 from udp:169.254.10.2:52996 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:29.529206 [Info] [2570720077] proxy/tun: processing from udp:169.254.10.2:63560 to udp:1.0.0.1:53
+2026/10/14 11:33:29.529212 [Info] [2570720077] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:29.529215 [Info] [2570720077] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.529226 from udp:169.254.10.2:63560 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:29.529636 [Info] [101842663] proxy/tun: processing from udp:169.254.10.2:51756 to udp:1.0.0.1:53
+2026/10/14 11:33:29.529642 [Info] [101842663] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:29.529646 [Info] [101842663] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.529661 from udp:169.254.10.2:51756 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:29.530095 [Info] [3341219231] proxy/tun: processing from udp:169.254.10.2:64897 to udp:1.0.0.1:53
+2026/10/14 11:33:29.530101 [Info] [3341219231] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:29.530105 [Info] [3341219231] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.530118 from udp:169.254.10.2:64897 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:29.532513 [Info] [516766249] proxy/socks: client UDP connection from udp:127.0.0.1:63619
+2026/10/14 11:33:29.532527 [Info] [516766249] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:29.532561 [Info] [516766249] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:29.532564 [Info] [516766249] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:29.532567 [Info] [3668246656] proxy/socks: client UDP connection from udp:127.0.0.1:56185
+2026/10/14 11:33:29.532571 from udp:127.0.0.1:63619 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.532586 [Info] [3668246656] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:29.532612 [Info] [3668246656] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:29.532616 [Info] [3668246656] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:29.532616 from udp:127.0.0.1:56185 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.533001 [Info] [3162768032] proxy/socks: client UDP connection from udp:127.0.0.1:61734
+2026/10/14 11:33:29.533007 [Info] [3162768032] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:29.533043 [Info] [3162768032] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:29.533046 [Info] [3162768032] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:29.533049 from udp:127.0.0.1:61734 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.533131 [Info] [2198400616] proxy/socks: client UDP connection from udp:127.0.0.1:49606
+2026/10/14 11:33:29.533136 [Info] [2198400616] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:29.533161 from udp:127.0.0.1:49606 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.533165 [Info] [2198400616] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:29.533167 [Info] [2198400616] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:29.533328 [Info] [1715780878] proxy/socks: client UDP connection from udp:127.0.0.1:51330
+2026/10/14 11:33:29.533333 [Info] [1715780878] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:29.533373 [Info] [1715780878] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:29.533378 [Info] [1715780878] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:29.533386 from udp:127.0.0.1:51330 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:29.599664 [Info] [2465086171] proxy/tun: processing from tcp:169.254.10.2:52437 to tcp:172.217.117.4:443
+2026/10/14 11:33:29.599675 [Info] [2465086171] app/dispatcher: default route for tcp:172.217.117.4:443
+2026/10/14 11:33:29.599677 [Info] [2465086171] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.599677 from tcp:169.254.10.2:52437 accepted tcp:172.217.117.4:443 [tun-device >> main]
+2026/10/14 11:33:29.600269 [Info] [3427065970] proxy/socks: TCP Connect request to tcp:172.217.117.4:443
+2026/10/14 11:33:29.602914 [Info] [3427065970] app/dispatcher: sniffed domain: daily-cloudcode-pa.googleapis.com
+2026/10/14 11:33:29.602976 [Info] [3427065970] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:daily-cloudcode-pa.googleapis.com:443]
+2026/10/14 11:33:29.602982 [Info] [3427065970] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:29.602991 from tcp:127.0.0.1:52438 accepted tcp:172.217.117.4:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:29.640094 [Info] [3427065970] proxy/vless/outbound: tunneling request to tcp:172.217.117.4:443 via 188.120.237.35:443
+2026/10/14 11:33:29.651753 from udp:169.254.10.2:53857 accepted udp:142.251.155.119:443 [tun-device >> main]
+2026/10/14 11:33:29.651775 [Info] [1918326862] proxy/tun: processing from udp:169.254.10.2:53857 to udp:142.251.155.119:443
+2026/10/14 11:33:29.651779 [Info] [1918326862] app/dispatcher: default route for udp:142.251.155.119:443
+2026/10/14 11:33:29.651781 [Info] [1918326862] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.651976 [Info] [2781888836] proxy/tun: processing from tcp:169.254.10.2:52440 to tcp:167.235.220.62:443
+2026/10/14 11:33:29.652011 [Info] [2781888836] app/dispatcher: default route for tcp:167.235.220.62:443
+2026/10/14 11:33:29.652016 [Info] [2781888836] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.652021 from tcp:169.254.10.2:52440 accepted tcp:167.235.220.62:443 [tun-device >> main]
+2026/10/14 11:33:29.652897 [Info] [1192094048] proxy/socks: TCP Connect request to tcp:167.235.220.62:443
+2026/10/14 11:33:29.653598 [Info] [1192094048] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:167.235.220.62:443]
+2026/10/14 11:33:29.653603 from tcp:127.0.0.1:52442 accepted tcp:167.235.220.62:443 [tun -> proxy~bridge-3]
+2026/10/14 11:33:29.653607 [Info] [1192094048] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:29.654083 [Info] [3747358797] proxy/socks: client UDP connection from udp:127.0.0.1:55752
+2026/10/14 11:33:29.654091 [Info] [3747358797] transport/internet/udp: establishing new connection for udp:142.251.155.119:443
+2026/10/14 11:33:29.654203 [Info] [3747358797] app/dispatcher: sniffed domain: www.google.com
+2026/10/14 11:33:29.654233 [Info] [3747358797] app/dispatcher: taking detour [proxy~bridge] for [udp:www.google.com:443]
+2026/10/14 11:33:29.654238 [Info] [3747358797] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:29.654249 from udp:127.0.0.1:55752 accepted udp:142.251.155.119:443 [tun -> proxy~bridge]
+2026/10/14 11:33:29.690678 [Info] [1192094048] proxy/vless/outbound: tunneling request to tcp:167.235.220.62:443 via 157.22.193.73:443
+2026/10/14 11:33:29.693310 [Info] [3747358797] proxy/vless/outbound: tunneling request to udp:142.251.155.119:443 via 188.120.229.91:443
+2026/10/14 11:33:29.693493 [Info] [3747358797] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:29.693506 [Info] [3747358797] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:29.808494 [Info] [823452695] proxy/tun: processing from tcp:169.254.10.2:52445 to tcp:104.21.44.169:443
+2026/10/14 11:33:29.808513 [Info] [823452695] app/dispatcher: default route for tcp:104.21.44.169:443
+2026/10/14 11:33:29.808518 [Info] [823452695] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.808517 from tcp:169.254.10.2:52445 accepted tcp:104.21.44.169:443 [tun-device >> main]
+2026/10/14 11:33:29.809764 [Info] [2149575508] proxy/socks: TCP Connect request to tcp:104.21.44.169:443
+2026/10/14 11:33:29.809972 [Info] [2149575508] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:104.21.44.169:443]
+2026/10/14 11:33:29.809984 from tcp:127.0.0.1:52446 accepted tcp:104.21.44.169:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:29.810011 [Info] [2149575508] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:29.905146 [Info] [1575850966] proxy/tun: processing from tcp:169.254.10.2:52448 to tcp:64.233.162.198:443
+2026/10/14 11:33:29.905156 [Info] [1575850966] app/dispatcher: default route for tcp:64.233.162.198:443
+2026/10/14 11:33:29.905159 [Info] [1575850966] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.905178 from tcp:169.254.10.2:52448 accepted tcp:64.233.162.198:443 [tun-device >> main]
+2026/10/14 11:33:29.905716 from udp:169.254.10.2:58755 accepted udp:64.233.162.198:443 [tun-device >> main]
+2026/10/14 11:33:29.905735 [Info] [348910365] proxy/tun: processing from udp:169.254.10.2:58755 to udp:64.233.162.198:443
+2026/10/14 11:33:29.905742 [Info] [348910365] app/dispatcher: default route for udp:64.233.162.198:443
+2026/10/14 11:33:29.905745 [Info] [348910365] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.907054 [Info] [3814694091] proxy/socks: TCP Connect request to tcp:64.233.162.198:443
+2026/10/14 11:33:29.907188 [Info] [3814694091] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:64.233.162.198:443]
+2026/10/14 11:33:29.907195 [Info] [3814694091] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:29.907201 from tcp:127.0.0.1:52449 accepted tcp:64.233.162.198:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:29.908049 [Info] [3458603725] proxy/socks: client UDP connection from udp:127.0.0.1:58694
+2026/10/14 11:33:29.908060 [Info] [3458603725] transport/internet/udp: establishing new connection for udp:64.233.162.198:443
+2026/10/14 11:33:29.908145 [Info] [3458603725] app/dispatcher: sniffed domain: yt3.ggpht.com
+2026/10/14 11:33:29.908163 [Info] [3458603725] app/dispatcher: taking detour [proxy~bridge-4] for [udp:yt3.ggpht.com:443]
+2026/10/14 11:33:29.908186 from udp:127.0.0.1:58694 accepted udp:64.233.162.198:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:29.908206 [Info] [3458603725] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:29.914352 [Info] [2149575508] proxy/vless/outbound: tunneling request to tcp:104.21.44.169:443 via 155.212.162.214:443
+2026/10/14 11:33:29.951680 [Info] [36445595] proxy/tun: processing from tcp:169.254.10.2:52453 to tcp:142.251.155.119:443
+2026/10/14 11:33:29.951701 [Info] [3747358797] transport/internet/udp: establishing new connection for udp:142.251.155.119:443
+2026/10/14 11:33:29.951711 from tcp:169.254.10.2:52453 accepted tcp:142.251.155.119:443 [tun-device >> main]
+2026/10/14 11:33:29.951723 [Info] [36445595] app/dispatcher: default route for tcp:142.251.155.119:443
+2026/10/14 11:33:29.951731 [Info] [36445595] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:29.953572 [Info] [1823658882] proxy/socks: TCP Connect request to tcp:142.251.155.119:443
+2026/10/14 11:33:29.953677 [Info] [1823658882] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:142.251.155.119:443]
+2026/10/14 11:33:29.953683 [Info] [1823658882] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:29.953693 from tcp:127.0.0.1:52454 accepted tcp:142.251.155.119:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:29.956930 [Info] [3458603725] proxy/vless/outbound: tunneling request to udp:64.233.162.198:443 via 155.212.162.214:443
+2026/10/14 11:33:29.957243 [Info] [3458603725] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:29.957252 [Info] [3458603725] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:29.957958 [Info] [3814694091] proxy/vless/outbound: tunneling request to tcp:64.233.162.198:443 via 155.212.162.214:443
+2026/10/14 11:33:30.006023 [Info] [1823658882] proxy/vless/outbound: tunneling request to tcp:142.251.155.119:443 via 188.120.237.35:443
+2026/10/14 11:33:30.046222 [Info] [3512738270] proxy/tun: processing from tcp:169.254.10.2:52456 to tcp:173.194.220.139:443
+2026/10/14 11:33:30.046233 [Info] [3512738270] app/dispatcher: default route for tcp:173.194.220.139:443
+2026/10/14 11:33:30.046235 [Info] [3512738270] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:30.046246 from tcp:169.254.10.2:52456 accepted tcp:173.194.220.139:443 [tun-device >> main]
+2026/10/14 11:33:30.047523 [Info] [3693481468] proxy/socks: TCP Connect request to tcp:173.194.220.139:443
+2026/10/14 11:33:30.047668 [Info] [3693481468] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:173.194.220.139:443]
+2026/10/14 11:33:30.047673 [Info] [3693481468] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:30.047679 from tcp:127.0.0.1:52457 accepted tcp:173.194.220.139:443 [tun -> proxy~bridge-2]
+2026/10/14 11:33:30.085856 [Info] [3693481468] proxy/vless/outbound: tunneling request to tcp:173.194.220.139:443 via 188.120.237.35:443
+2026/10/14 11:33:30.105170 [Info] [547524373] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:30.152011 [Info] [3747358797] app/dispatcher: taking detour [proxy~bridge] for [udp:142.251.155.119:443]
+2026/10/14 11:33:30.152022 [Info] [3747358797] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:30.152024 from udp:127.0.0.1:55752 accepted udp:142.251.155.119:443 [tun -> proxy~bridge]
+2026/10/14 11:33:30.191725 [Info] [3747358797] proxy/vless/outbound: tunneling request to udp:142.251.155.119:443 via 188.120.229.91:443
+2026/10/14 11:33:30.191901 [Info] [3747358797] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:30.191909 [Info] [3747358797] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:30.210039 [Info] [3458603725] transport/internet/udp: establishing new connection for udp:64.233.162.198:443
+2026/10/14 11:33:30.268476 [Info] [1295110126] proxy/tun: processing from tcp:169.254.10.2:52461 to tcp:108.177.14.148:443
+2026/10/14 11:33:30.268484 [Info] [1295110126] app/dispatcher: default route for tcp:108.177.14.148:443
+2026/10/14 11:33:30.268485 from tcp:169.254.10.2:52461 accepted tcp:108.177.14.148:443 [tun-device >> main]
+2026/10/14 11:33:30.268492 [Info] [1295110126] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:30.269637 [Info] [1793606335] proxy/socks: TCP Connect request to tcp:108.177.14.148:443
+2026/10/14 11:33:30.269885 [Info] [1793606335] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:108.177.14.148:443]
+2026/10/14 11:33:30.269895 [Info] [1793606335] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:30.269918 from tcp:127.0.0.1:52462 accepted tcp:108.177.14.148:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:30.310256 [Info] [1793606335] proxy/vless/outbound: tunneling request to tcp:108.177.14.148:443 via 212.109.221.152:443
+2026/10/14 11:33:30.410553 [Info] [3458603725] app/dispatcher: taking detour [proxy~bridge-4] for [udp:64.233.162.198:443]
+2026/10/14 11:33:30.410581 from udp:127.0.0.1:58694 accepted udp:64.233.162.198:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:30.410617 [Info] [3458603725] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:30.461267 [Info] [3458603725] proxy/vless/outbound: tunneling request to udp:64.233.162.198:443 via 155.212.162.214:443
+2026/10/14 11:33:30.461483 [Info] [3458603725] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:30.461496 [Info] [3458603725] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:30.554448 [Info] [3747358797] transport/internet/udp: establishing new connection for udp:142.251.155.119:443
+2026/10/14 11:33:30.635399 [Info] [3598954532] proxy/tun: processing from tcp:169.254.10.2:52465 to tcp:32.188.179.232:443
+2026/10/14 11:33:30.635427 [Info] [3598954532] app/dispatcher: default route for tcp:32.188.179.232:443
+2026/10/14 11:33:30.635431 [Info] [3598954532] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:30.635443 from tcp:169.254.10.2:52465 accepted tcp:32.188.179.232:443 [tun-device >> main]
+2026/10/14 11:33:30.636878 [Info] [173601551] proxy/socks: TCP Connect request to tcp:32.188.179.232:443
+2026/10/14 11:33:30.637067 [Info] [173601551] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:32.188.179.232:443]
+2026/10/14 11:33:30.637077 [Info] [173601551] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:30.637076 from tcp:127.0.0.1:52466 accepted tcp:32.188.179.232:443 [tun -> proxy~bridge-3]
+2026/10/14 11:33:30.673736 [Info] [173601551] proxy/vless/outbound: tunneling request to tcp:32.188.179.232:443 via 157.22.193.73:443
+2026/10/14 11:33:30.755805 [Info] [3747358797] app/dispatcher: taking detour [proxy~bridge] for [udp:142.251.155.119:443]
+2026/10/14 11:33:30.755852 [Info] [3747358797] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:30.755879 from udp:127.0.0.1:55752 accepted udp:142.251.155.119:443 [tun -> proxy~bridge]
+2026/10/14 11:33:30.794059 [Info] [3747358797] proxy/vless/outbound: tunneling request to udp:142.251.155.119:443 via 188.120.229.91:443
+2026/10/14 11:33:30.794299 [Info] [3747358797] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:30.794328 [Info] [3747358797] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:30.815287 [Info] [3458603725] transport/internet/udp: establishing new connection for udp:64.233.162.198:443
+2026/10/14 11:33:31.016376 [Info] [3458603725] app/dispatcher: taking detour [proxy~bridge-5] for [udp:64.233.162.198:443]
+2026/10/14 11:33:31.016392 from udp:127.0.0.1:58694 accepted udp:64.233.162.198:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:31.016398 [Info] [3458603725] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:31.067384 [Info] [3458603725] proxy/vless/outbound: tunneling request to udp:64.233.162.198:443 via 212.109.221.152:443
+2026/10/14 11:33:31.067629 [Info] [3458603725] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:31.067645 [Info] [3458603725] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:31.251983 [Info] [3867604002] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:31.288695 [Info] [1324084183] proxy/tun: processing from tcp:169.254.10.2:52471 to tcp:17.242.184.19:443
+2026/10/14 11:33:31.288718 [Info] [1324084183] app/dispatcher: default route for tcp:17.242.184.19:443
+2026/10/14 11:33:31.288722 [Info] [1324084183] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:31.288723 from tcp:169.254.10.2:52471 accepted tcp:17.242.184.19:443 [tun-device >> main]
+2026/10/14 11:33:31.289811 [Info] [2933843284] proxy/socks: TCP Connect request to tcp:17.242.184.19:443
+2026/10/14 11:33:31.289920 [Info] [2933843284] app/dispatcher: sniffed domain: gs-loc.apple.com
+2026/10/14 11:33:31.290002 from tcp:127.0.0.1:52472 accepted tcp:17.242.184.19:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:31.290011 [Info] [2933843284] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:gs-loc.apple.com:443]
+2026/10/14 11:33:31.290017 [Info] [2933843284] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:31.392347 [Info] [2933843284] proxy/vless/outbound: tunneling request to tcp:17.242.184.19:443 via 155.212.162.214:443
+2026/10/14 11:33:31.758587 [Info] [3747358797] transport/internet/udp: establishing new connection for udp:142.251.155.119:443
+2026/10/14 11:33:31.959520 [Info] [3747358797] app/dispatcher: taking detour [proxy~bridge-5] for [udp:142.251.155.119:443]
+2026/10/14 11:33:31.959522 from udp:127.0.0.1:55752 accepted udp:142.251.155.119:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:31.959564 [Info] [3747358797] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:32.017661 [Info] [3458603725] transport/internet/udp: establishing new connection for udp:64.233.162.198:443
+2026/10/14 11:33:32.151180 [Info] [3747358797] proxy/vless/outbound: tunneling request to udp:142.251.155.119:443 via 212.109.221.152:443
+2026/10/14 11:33:32.151341 [Info] [3747358797] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:32.151364 [Info] [3747358797] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:32.218803 [Info] [3458603725] app/dispatcher: taking detour [proxy~bridge] for [udp:64.233.162.198:443]
+2026/10/14 11:33:32.218815 from udp:127.0.0.1:58694 accepted udp:64.233.162.198:443 [tun -> proxy~bridge]
+2026/10/14 11:33:32.218821 [Info] [3458603725] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:32.322658 [Info] [1722638626] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:32.346212 [Info] [3458603725] proxy/vless/outbound: tunneling request to udp:64.233.162.198:443 via 188.120.229.91:443
+2026/10/14 11:33:32.346629 [Info] [3458603725] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:32.346650 [Info] [3458603725] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:32.537926 [Info] [3277817873] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:33.114078 [Info] [169000526] proxy/tun: processing from tcp:169.254.10.2:52476 to tcp:192.168.1.1:5000
+2026/10/14 11:33:33.114103 [Info] [169000526] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:33.114109 [Info] [169000526] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:33.114088 from tcp:169.254.10.2:52476 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:33.116371 [Info] [2637985277] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:33.116658 [Info] [2637985277] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:33.116685 [Info] [2637985277] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:33.116670 from tcp:127.0.0.1:52477 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:33.116729 [Info] [2637985277] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:33.650827 [Info] [3747358797] transport/internet/udp: establishing new connection for udp:142.251.155.119:443
+2026/10/14 11:33:33.852377 [Info] [3747358797] app/dispatcher: taking detour [proxy~bridge-5] for [udp:142.251.155.119:443]
+2026/10/14 11:33:33.852371 from udp:127.0.0.1:55752 accepted udp:142.251.155.119:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:33.852463 [Info] [3747358797] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:33.891196 [Info] [3747358797] proxy/vless/outbound: tunneling request to udp:142.251.155.119:443 via 212.109.221.152:443
+2026/10/14 11:33:33.891613 [Info] [3747358797] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:33.891635 [Info] [3747358797] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:33.910067 [Info] [3458603725] transport/internet/udp: establishing new connection for udp:64.233.162.198:443
+2026/10/14 11:33:34.051756 [Info] [416643894] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:34.111555 [Info] [3458603725] app/dispatcher: taking detour [proxy~bridge-5] for [udp:64.233.162.198:443]
+2026/10/14 11:33:34.111596 [Info] [3458603725] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:34.111593 from udp:127.0.0.1:58694 accepted udp:64.233.162.198:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:34.151894 [Info] [3458603725] proxy/vless/outbound: tunneling request to udp:64.233.162.198:443 via 212.109.221.152:443
+2026/10/14 11:33:34.152187 [Info] [3458603725] app/proxyman/outbound: app/proxyman/outbound: failed to process outbound traffic > proxy/vless/outbound: XTLS rejected UDP/443 traffic
+2026/10/14 11:33:34.152204 [Info] [3458603725] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:34.361355 from tcp:169.254.10.2:52482 accepted tcp:34.54.84.110:443 [tun-device >> main]
+2026/10/14 11:33:34.361366 [Info] [2598255477] proxy/tun: processing from tcp:169.254.10.2:52482 to tcp:34.54.84.110:443
+2026/10/14 11:33:34.361413 [Info] [2598255477] app/dispatcher: default route for tcp:34.54.84.110:443
+2026/10/14 11:33:34.361423 [Info] [2598255477] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:34.362792 [Info] [1321909246] proxy/socks: TCP Connect request to tcp:34.54.84.110:443
+2026/10/14 11:33:34.367623 [Info] [1321909246] app/dispatcher: sniffed domain: antigravity-unleash.goog
+2026/10/14 11:33:34.367721 [Info] [1321909246] app/dispatcher: taking detour [proxy~bridge] for [tcp:antigravity-unleash.goog:443]
+2026/10/14 11:33:34.367734 [Info] [1321909246] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:34.367757 from tcp:127.0.0.1:52483 accepted tcp:34.54.84.110:443 [tun -> proxy~bridge]
+2026/10/14 11:33:34.506856 [Info] [1321909246] proxy/vless/outbound: tunneling request to tcp:34.54.84.110:443 via 188.120.229.91:443
+2026/10/14 11:33:34.750372 [Info] [2797672770] proxy/tun: processing from tcp:169.254.10.2:52485 to tcp:100.125.35.85:11434
+2026/10/14 11:33:34.750397 from tcp:169.254.10.2:52485 accepted tcp:100.125.35.85:11434 [tun-device >> main]
+2026/10/14 11:33:34.750421 [Info] [2797672770] app/dispatcher: default route for tcp:100.125.35.85:11434
+2026/10/14 11:33:34.750429 [Info] [2797672770] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:34.754132 [Info] [4171119498] proxy/socks: TCP Connect request to tcp:100.125.35.85:11434
+2026/10/14 11:33:34.754462 [Info] [4171119498] app/dispatcher: sniffed domain: 100.125.35.85
+2026/10/14 11:33:34.754465 from tcp:127.0.0.1:52486 accepted tcp:100.125.35.85:11434 [tun -> block]
+2026/10/14 11:33:34.754500 [Info] [4171119498] app/dispatcher: Hit route rule: [system_route_via_tun] so taking detour [block] for [tcp:100.125.35.85:11434]
+2026/10/14 11:33:35.119739 [Info] [3383854074] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:36.251997 [Info] [636914549] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:36.720664 [Info] [2399199476] proxy/tun: processing from tcp:169.254.10.2:52489 to tcp:149.154.167.41:443
+2026/10/14 11:33:36.720688 from tcp:169.254.10.2:52489 accepted tcp:149.154.167.41:443 [tun-device >> main]
+2026/10/14 11:33:36.720716 [Info] [2399199476] app/dispatcher: default route for tcp:149.154.167.41:443
+2026/10/14 11:33:36.720724 [Info] [2399199476] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:36.722572 [Info] [2330773016] proxy/socks: TCP Connect request to tcp:149.154.167.41:443
+2026/10/14 11:33:36.723316 [Info] [2330773016] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:149.154.167.41:443]
+2026/10/14 11:33:36.723342 [Info] [2330773016] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:36.723342 from tcp:127.0.0.1:52490 accepted tcp:149.154.167.41:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:36.780677 [Info] [2330773016] proxy/vless/outbound: tunneling request to tcp:149.154.167.41:443 via 212.109.221.152:443
+2026/10/14 11:33:37.490702 [Info] [2212927613] proxy/tun: processing from udp:169.254.10.2:49869 to udp:1.1.1.1:53
+2026/10/14 11:33:37.490731 [Info] [2212927613] app/dispatcher: default route for udp:1.1.1.1:53
+2026/10/14 11:33:37.490741 [Info] [2212927613] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:37.490717 from udp:169.254.10.2:49869 accepted udp:1.1.1.1:53 [tun-device >> main]
+2026/10/14 11:33:37.494428 [Info] [2282137074] proxy/socks: client UDP connection from udp:127.0.0.1:50717
+2026/10/14 11:33:37.494453 [Info] [2282137074] transport/internet/udp: establishing new connection for udp:1.1.1.1:53
+2026/10/14 11:33:37.494563 [Info] [2282137074] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.1.1.1:53]
+2026/10/14 11:33:37.494579 [Info] [2282137074] proxy/dns: handling DNS traffic to udp:1.1.1.1:53
+2026/10/14 11:33:37.494573 from udp:127.0.0.1:50717 accepted udp:1.1.1.1:53 [tun -> dns-out]
+2026/10/14 11:33:37.497628 from udp:169.254.10.2:63690 accepted udp:1.0.0.1:53 [tun-device >> main]
+2026/10/14 11:33:37.497630 [Info] [1954911706] proxy/tun: processing from udp:169.254.10.2:63690 to udp:1.0.0.1:53
+2026/10/14 11:33:37.497670 [Info] [1954911706] app/dispatcher: default route for udp:1.0.0.1:53
+2026/10/14 11:33:37.497678 [Info] [1954911706] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:37.499904 [Info] [3171645044] proxy/socks: client UDP connection from udp:127.0.0.1:64509
+2026/10/14 11:33:37.499990 [Info] [3171645044] transport/internet/udp: establishing new connection for udp:1.0.0.1:53
+2026/10/14 11:33:37.500064 [Info] [3171645044] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:1.0.0.1:53]
+2026/10/14 11:33:37.500076 [Info] [3171645044] proxy/dns: handling DNS traffic to udp:1.0.0.1:53
+2026/10/14 11:33:37.500081 from udp:127.0.0.1:64509 accepted udp:1.0.0.1:53 [tun -> dns-out]
+2026/10/14 11:33:38.118902 from tcp:169.254.10.2:52494 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:38.118909 [Info] [759344483] proxy/tun: processing from tcp:169.254.10.2:52494 to tcp:192.168.1.1:5000
+2026/10/14 11:33:38.118968 [Info] [759344483] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:38.118981 [Info] [759344483] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:38.120861 [Info] [4117574530] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:38.121171 [Info] [4117574530] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:38.121185 [Info] [4117574530] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:38.121209 from tcp:127.0.0.1:52495 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:38.121224 [Info] [4117574530] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:39.068222 [Info] [2302284568] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:39.686624 [Info] [3321626373] proxy/tun: processing from tcp:169.254.10.2:52498 to tcp:17.36.206.13:443
+2026/10/14 11:33:39.686637 [Info] [3321626373] app/dispatcher: default route for tcp:17.36.206.13:443
+2026/10/14 11:33:39.686640 [Info] [3321626373] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:39.686817 from tcp:169.254.10.2:52498 accepted tcp:17.36.206.13:443 [tun-device >> main]
+2026/10/14 11:33:39.687375 [Info] [844718750] proxy/socks: TCP Connect request to tcp:17.36.206.13:443
+2026/10/14 11:33:39.687591 [Info] [844718750] app/dispatcher: sniffed domain: gs-loc.apple.com
+2026/10/14 11:33:39.687606 [Info] [844718750] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:gs-loc.apple.com:443]
+2026/10/14 11:33:39.687609 [Info] [844718750] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:39.687625 from tcp:127.0.0.1:52499 accepted tcp:17.36.206.13:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:39.735568 [Info] [844718750] proxy/vless/outbound: tunneling request to tcp:17.36.206.13:443 via 155.212.162.214:443
+2026/10/14 11:33:40.125508 [Info] [619005351] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:41.084571 [Info] [1722638626] transport/internet/udp: establishing new connection for udp:192.168.64.255:27036
+2026/10/14 11:33:41.084691 [Info] [1722638626] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [udp:192.168.64.255:27036]
+2026/10/14 11:33:41.084718 from udp:127.0.0.1:56156 accepted udp:192.168.64.255:27036 [tun -> direct]
+2026/10/14 11:33:41.085198 [Info] [1722638626] proxy/freedom: connection opened to udp:192.168.64.255:27036, local endpoint [::]:61664, remote endpoint 192.168.64.255:27036
+2026/10/14 11:33:41.304378 [Info] [2030833419] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:42.003440 [Info] [3826406013] proxy/tun: processing from udp:169.254.10.2:62359 to udp:198.41.192.167:7844
+2026/10/14 11:33:42.003482 [Info] [3826406013] app/dispatcher: default route for udp:198.41.192.167:7844
+2026/10/14 11:33:42.003516 from udp:169.254.10.2:62359 accepted udp:198.41.192.167:7844 [tun-device >> main]
+2026/10/14 11:33:42.003538 [Info] [3826406013] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:42.004475 from udp:169.254.10.2:58786 accepted udp:198.41.192.67:7844 [tun-device >> main]
+2026/10/14 11:33:42.004472 [Info] [2328248516] proxy/tun: processing from udp:169.254.10.2:58786 to udp:198.41.192.67:7844
+2026/10/14 11:33:42.004515 [Info] [2328248516] app/dispatcher: default route for udp:198.41.192.67:7844
+2026/10/14 11:33:42.004526 [Info] [2328248516] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:42.005733 [Info] [4158955817] proxy/tun: processing from udp:169.254.10.2:59575 to udp:198.41.200.43:7844
+2026/10/14 11:33:42.005746 [Info] [4158955817] app/dispatcher: default route for udp:198.41.200.43:7844
+2026/10/14 11:33:42.005754 [Info] [4158955817] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:42.005750 from udp:169.254.10.2:59575 accepted udp:198.41.200.43:7844 [tun-device >> main]
+2026/10/14 11:33:42.006551 from udp:169.254.10.2:58850 accepted udp:198.41.200.23:7844 [tun-device >> main]
+2026/10/14 11:33:42.006557 [Info] [318430757] proxy/tun: processing from udp:169.254.10.2:58850 to udp:198.41.200.23:7844
+2026/10/14 11:33:42.006563 [Info] [318430757] app/dispatcher: default route for udp:198.41.200.23:7844
+2026/10/14 11:33:42.006574 [Info] [318430757] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:42.010087 [Info] [177272620] proxy/socks: client UDP connection from udp:127.0.0.1:54255
+2026/10/14 11:33:42.010141 [Info] [177272620] transport/internet/udp: establishing new connection for udp:198.41.192.167:7844
+2026/10/14 11:33:42.010615 [Info] [177272620] app/dispatcher: sniffed domain: quic.cftunnel.com
+2026/10/14 11:33:42.010627 [Info] [177272620] app/dispatcher: taking detour [proxy~bridge-5] for [udp:quic.cftunnel.com:7844]
+2026/10/14 11:33:42.010630 [Info] [177272620] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:42.010687 from udp:127.0.0.1:54255 accepted udp:198.41.192.167:7844 [tun -> proxy~bridge-5]
+2026/10/14 11:33:42.010712 [Info] [2481419813] proxy/socks: client UDP connection from udp:127.0.0.1:57629
+2026/10/14 11:33:42.010717 [Info] [2481419813] transport/internet/udp: establishing new connection for udp:198.41.192.67:7844
+2026/10/14 11:33:42.010864 [Info] [2481419813] app/dispatcher: sniffed domain: quic.cftunnel.com
+2026/10/14 11:33:42.010905 [Info] [2481419813] app/dispatcher: taking detour [proxy~bridge-5] for [udp:quic.cftunnel.com:7844]
+2026/10/14 11:33:42.010910 [Info] [2481419813] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:42.010931 from udp:127.0.0.1:57629 accepted udp:198.41.192.67:7844 [tun -> proxy~bridge-5]
+2026/10/14 11:33:42.011107 [Info] [3263369714] proxy/socks: client UDP connection from udp:127.0.0.1:49263
+2026/10/14 11:33:42.011113 [Info] [3263369714] transport/internet/udp: establishing new connection for udp:198.41.200.43:7844
+2026/10/14 11:33:42.011224 [Info] [3263369714] app/dispatcher: sniffed domain: quic.cftunnel.com
+2026/10/14 11:33:42.011290 [Info] [3263369714] app/dispatcher: taking detour [proxy~bridge-4] for [udp:quic.cftunnel.com:7844]
+2026/10/14 11:33:42.011296 [Info] [3263369714] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:42.011345 from udp:127.0.0.1:49263 accepted udp:198.41.200.43:7844 [tun -> proxy~bridge-4]
+2026/10/14 11:33:42.011783 [Info] [1180440287] proxy/socks: client UDP connection from udp:127.0.0.1:63105
+2026/10/14 11:33:42.011793 [Info] [1180440287] transport/internet/udp: establishing new connection for udp:198.41.200.23:7844
+2026/10/14 11:33:42.011897 [Info] [1180440287] app/dispatcher: sniffed domain: quic.cftunnel.com
+2026/10/14 11:33:42.011903 [Info] [1180440287] app/dispatcher: taking detour [proxy~bridge] for [udp:quic.cftunnel.com:7844]
+2026/10/14 11:33:42.011909 from udp:127.0.0.1:63105 accepted udp:198.41.200.23:7844 [tun -> proxy~bridge]
+2026/10/14 11:33:42.011924 [Info] [1180440287] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:42.084109 [Info] [2481419813] proxy/vless/outbound: tunneling request to udp:198.41.192.67:7844 via 212.109.221.152:443
+2026/10/14 11:33:42.084973 [Info] [177272620] proxy/vless/outbound: tunneling request to udp:198.41.192.167:7844 via 212.109.221.152:443
+2026/10/14 11:33:42.090096 [Info] [3263369714] proxy/vless/outbound: tunneling request to udp:198.41.200.43:7844 via 155.212.162.214:443
+2026/10/14 11:33:42.206062 [Info] [1180440287] proxy/vless/outbound: tunneling request to udp:198.41.200.23:7844 via 188.120.229.91:443
+2026/10/14 11:33:43.168464 [Info] [819631535] proxy/tun: processing from tcp:169.254.10.2:52517 to tcp:192.168.1.1:5000
+2026/10/14 11:33:43.168482 [Info] [819631535] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:43.168525 [Info] [819631535] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:43.168500 from tcp:169.254.10.2:52517 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:43.170074 [Info] [2924515477] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:43.170352 from tcp:127.0.0.1:52518 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:43.170366 [Info] [2924515477] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:43.170379 [Info] [2924515477] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:43.170386 [Info] [2924515477] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:44.072155 [Info] [2808679122] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:45.147878 [Info] [713674349] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:46.306909 [Info] [547524373] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:46.434355 [Info] [2878591373] proxy/tun: processing from tcp:169.254.10.2:52523 to tcp:173.194.190.134:443
+2026/10/14 11:33:46.434371 [Info] [2878591373] app/dispatcher: default route for tcp:173.194.190.134:443
+2026/10/14 11:33:46.434374 [Info] [2878591373] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:46.434359 from tcp:169.254.10.2:52523 accepted tcp:173.194.190.134:443 [tun-device >> main]
+2026/10/14 11:33:46.435404 [Info] [2906783391] proxy/socks: TCP Connect request to tcp:173.194.190.134:443
+2026/10/14 11:33:46.435645 [Info] [2906783391] app/dispatcher: taking detour [proxy~bridge-5] for [tcp:173.194.190.134:443]
+2026/10/14 11:33:46.435656 [Info] [2906783391] transport/internet/tcp: dialing TCP to tcp:212.109.221.152:443
+2026/10/14 11:33:46.435683 from tcp:127.0.0.1:52524 accepted tcp:173.194.190.134:443 [tun -> proxy~bridge-5]
+2026/10/14 11:33:46.494865 [Info] [2906783391] proxy/vless/outbound: tunneling request to tcp:173.194.190.134:443 via 212.109.221.152:443
+2026/10/14 11:33:46.900452 from tcp:169.254.10.2:52526 accepted tcp:173.194.190.134:443 [tun-device >> main]
+2026/10/14 11:33:46.900474 [Info] [3753015662] proxy/tun: processing from tcp:169.254.10.2:52526 to tcp:173.194.190.134:443
+2026/10/14 11:33:46.900482 [Info] [3753015662] app/dispatcher: default route for tcp:173.194.190.134:443
+2026/10/14 11:33:46.900485 [Info] [3753015662] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:46.902886 [Info] [4004065889] proxy/socks: TCP Connect request to tcp:173.194.190.134:443
+2026/10/14 11:33:46.903304 from tcp:127.0.0.1:52527 accepted tcp:173.194.190.134:443 [tun -> proxy~bridge]
+2026/10/14 11:33:46.903291 [Info] [4004065889] app/dispatcher: taking detour [proxy~bridge] for [tcp:173.194.190.134:443]
+2026/10/14 11:33:46.903332 [Info] [4004065889] transport/internet/tcp: dialing TCP to tcp:188.120.229.91:443
+2026/10/14 11:33:46.952219 [Info] [4004065889] proxy/vless/outbound: tunneling request to tcp:173.194.190.134:443 via 188.120.229.91:443
+2026/10/14 11:33:47.558844 [Info] [3867604002] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:47.593979 [Info] [3567651894] proxy/tun: processing from udp:169.254.10.2:62967 to udp:100.100.100.100:53
+2026/10/14 11:33:47.593992 [Info] [3567651894] app/dispatcher: default route for udp:100.100.100.100:53
+2026/10/14 11:33:47.593999 [Info] [3567651894] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:47.594004 from udp:169.254.10.2:62967 accepted udp:100.100.100.100:53 [tun-device >> main]
+2026/10/14 11:33:47.595712 [Info] [2734800905] proxy/socks: client UDP connection from udp:127.0.0.1:51868
+2026/10/14 11:33:47.595720 [Info] [2734800905] transport/internet/udp: establishing new connection for udp:100.100.100.100:53
+2026/10/14 11:33:47.595972 [Info] [2734800905] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:100.100.100.100:53]
+2026/10/14 11:33:47.595981 [Info] [2734800905] proxy/dns: handling DNS traffic to udp:100.100.100.100:53
+2026/10/14 11:33:47.596137 from udp:127.0.0.1:51868 accepted udp:100.100.100.100:53 [tun -> dns-out]
+2026/10/14 11:33:47.600952 [Info] [3779978840] proxy/tun: processing from udp:169.254.10.2:53615 to udp:100.100.100.100:53
+2026/10/14 11:33:47.600959 [Info] [3779978840] app/dispatcher: default route for udp:100.100.100.100:53
+2026/10/14 11:33:47.600960 [Info] [3779978840] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:47.601193 from udp:169.254.10.2:53615 accepted udp:100.100.100.100:53 [tun-device >> main]
+2026/10/14 11:33:47.603474 [Info] [2413966503] proxy/socks: client UDP connection from udp:127.0.0.1:58339
+2026/10/14 11:33:47.603482 [Info] [2413966503] transport/internet/udp: establishing new connection for udp:100.100.100.100:53
+2026/10/14 11:33:47.603530 from udp:127.0.0.1:58339 accepted udp:100.100.100.100:53 [tun -> dns-out]
+2026/10/14 11:33:47.603551 [Info] [2413966503] app/dispatcher: Hit route rule: [tun_dns] so taking detour [dns-out] for [udp:100.100.100.100:53]
+2026/10/14 11:33:47.603562 [Info] [2413966503] proxy/dns: handling DNS traffic to udp:100.100.100.100:53
+2026/10/14 11:33:47.604424 [Info] [1598445503] proxy/tun: processing from tcp:169.254.10.2:52532 to tcp:185.181.5.204:443
+2026/10/14 11:33:47.604435 [Info] [1598445503] app/dispatcher: default route for tcp:185.181.5.204:443
+2026/10/14 11:33:47.604438 [Info] [1598445503] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:47.604444 from tcp:169.254.10.2:52532 accepted tcp:185.181.5.204:443 [tun-device >> main]
+2026/10/14 11:33:47.605504 [Info] [2475127832] proxy/socks: TCP Connect request to tcp:185.181.5.204:443
+2026/10/14 11:33:47.605617 [Info] [2475127832] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:185.181.5.204:443]
+2026/10/14 11:33:47.605619 [Info] [2475127832] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:47.605640 from tcp:127.0.0.1:52533 accepted tcp:185.181.5.204:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:48.172817 [Info] [2420137359] proxy/tun: processing from tcp:169.254.10.2:52535 to tcp:192.168.1.1:5000
+2026/10/14 11:33:48.172845 [Info] [2420137359] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:48.172838 from tcp:169.254.10.2:52535 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:48.172849 [Info] [2420137359] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:48.174176 [Info] [2937044590] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:48.174413 [Info] [2937044590] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:48.174437 [Info] [2937044590] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:48.174453 from tcp:127.0.0.1:52536 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:48.174689 [Info] [2937044590] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:48.249606 [Info] [2475127832] proxy/vless/outbound: tunneling request to tcp:185.181.5.204:443 via 155.212.162.214:443
+2026/10/14 11:33:49.118263 [Info] [2637985277] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:50.154518 [Info] [416643894] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:50.713543 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server localhost in serial query mode > lookup wpad.tailbbf17c.ts.net: no such host
+2026/10/14 11:33:50.713566 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server localhost in serial query mode > lookup wpad.tailbbf17c.ts.net: no such host
+2026/10/14 11:33:50.713570 [Info] app/dns: DOH//1.1.1.1 querying: wpad.tailbbf17c.ts.net.
+2026/10/14 11:33:50.715263 [Info] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:1.1.1.1:443]
+2026/10/14 11:33:50.715273 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:50.715304 from DNS accepted https://1.1.1.1/dns-query [xray.system.aadfe918-4bfc-4a51-908b-d8b8a656ea43 -> proxy~bridge-2]
+2026/10/14 11:33:50.720067 [Info] [598621747] proxy/tun: processing from tcp:169.254.10.2:52543 to tcp:140.82.121.4:443
+2026/10/14 11:33:50.720081 [Info] [598621747] app/dispatcher: default route for tcp:140.82.121.4:443
+2026/10/14 11:33:50.720083 from tcp:169.254.10.2:52543 accepted tcp:140.82.121.4:443 [tun-device >> main]
+2026/10/14 11:33:50.720085 [Info] [598621747] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:50.721060 [Info] [3096171072] proxy/socks: TCP Connect request to tcp:140.82.121.4:443
+2026/10/14 11:33:50.721141 [Info] [3096171072] app/dispatcher: sniffed domain: github.com
+2026/10/14 11:33:50.721204 [Info] [3096171072] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:github.com:443]
+2026/10/14 11:33:50.721211 [Info] [3096171072] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:50.721215 from tcp:127.0.0.1:52544 accepted tcp:140.82.121.4:443 [tun -> proxy~bridge-3]
+2026/10/14 11:33:50.754785 [Info] proxy/vless/outbound: tunneling request to tcp:1.1.1.1:443 via 188.120.237.35:443
+2026/10/14 11:33:50.761658 [Info] [3096171072] proxy/vless/outbound: tunneling request to tcp:140.82.121.4:443 via 157.22.193.73:443
+2026/10/14 11:33:51.034335 [Info] app/dns: DOH//1.1.1.1 got answer: wpad.tailbbf17c.ts.net. TypeA -> [], rtt: 320.722875ms, lock: 3.125µs
+2026/10/14 11:33:51.034348 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server DOH//1.1.1.1 in serial query mode > rcode: 3
+2026/10/14 11:33:51.034351 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server DOH//1.1.1.1 in serial query mode > rcode: 3
+2026/10/14 11:33:51.034353 [Info] app/dns: DOH//8.8.8.8 querying: wpad.tailbbf17c.ts.net.
+2026/10/14 11:33:51.034520 [Info] app/dispatcher: taking detour [proxy~bridge-2] for [tcp:8.8.8.8:443]
+2026/10/14 11:33:51.034538 [Info] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:51.034539 from DNS accepted https://8.8.8.8/dns-query [xray.system.aadfe918-4bfc-4a51-908b-d8b8a656ea43 -> proxy~bridge-2]
+2026/10/14 11:33:51.043618 [Info] [459066285] proxy/tun: processing from tcp:169.254.10.2:52547 to tcp:185.199.108.133:443
+2026/10/14 11:33:51.043631 [Info] [459066285] app/dispatcher: default route for tcp:185.199.108.133:443
+2026/10/14 11:33:51.043634 [Info] [459066285] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:51.043732 from tcp:169.254.10.2:52547 accepted tcp:185.199.108.133:443 [tun-device >> main]
+2026/10/14 11:33:51.044472 [Info] [3317441352] proxy/socks: TCP Connect request to tcp:185.199.108.133:443
+2026/10/14 11:33:51.044605 [Info] [3317441352] app/dispatcher: sniffed domain: release-assets.githubusercontent.com
+2026/10/14 11:33:51.044651 [Info] [3317441352] app/dispatcher: taking detour [proxy~bridge-4] for [tcp:release-assets.githubusercontent.com:443]
+2026/10/14 11:33:51.044658 [Info] [3317441352] transport/internet/tcp: dialing TCP to tcp:155.212.162.214:443
+2026/10/14 11:33:51.044666 from tcp:127.0.0.1:52548 accepted tcp:185.199.108.133:443 [tun -> proxy~bridge-4]
+2026/10/14 11:33:51.073379 [Info] proxy/vless/outbound: tunneling request to tcp:8.8.8.8:443 via 188.120.237.35:443
+2026/10/14 11:33:51.154843 [Info] [3317441352] proxy/vless/outbound: tunneling request to tcp:185.199.108.133:443 via 155.212.162.214:443
+2026/10/14 11:33:51.320958 [Info] [3383854074] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:51.357228 [Info] app/dns: DOH//8.8.8.8 got answer: wpad.tailbbf17c.ts.net. TypeA -> [], rtt: 322.830917ms, lock: 4.291µs
+2026/10/14 11:33:51.357305 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server DOH//8.8.8.8 in serial query mode > rcode: 3
+2026/10/14 11:33:51.357311 [Info] app/dns: failed to lookup ip for domain wpad.tailbbf17c.ts.net at server DOH//8.8.8.8 in serial query mode > rcode: 3
+2026/10/14 11:33:51.357331 [Info] proxy/dns: ip query > app/dns: returning nil for domain wpad.tailbbf17c.ts.net > multierr: lookup wpad.tailbbf17c.ts.net: no such host | rcode: 3 | rcode: 3 | 
+2026/10/14 11:33:51.357337 [Info] proxy/dns: ip query > app/dns: returning nil for domain wpad.tailbbf17c.ts.net > multierr: lookup wpad.tailbbf17c.ts.net: no such host | rcode: 3 | rcode: 3 | 
+2026/10/14 11:33:52.553167 [Info] [636914549] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:52.997795 [Info] [786283458] transport/internet/udp: failed to handle UDP input > io: read/write on closed pipe
+2026/10/14 11:33:53.177433 [Info] [786283458] transport/internet/udp: establishing new connection for udp:192.144.20.19:54977
+2026/10/14 11:33:53.177696 from udp:127.0.0.1:59536 accepted udp:192.144.20.19:54977 [tun -> proxy~bridge-2]
+2026/10/14 11:33:53.177712 [Info] [786283458] app/dispatcher: taking detour [proxy~bridge-2] for [udp:192.144.20.19:54977]
+2026/10/14 11:33:53.177744 [Info] [786283458] transport/internet/tcp: dialing TCP to tcp:188.120.237.35:443
+2026/10/14 11:33:53.212021 [Info] [3421810931] proxy/tun: processing from tcp:169.254.10.2:52553 to tcp:192.168.1.1:5000
+2026/10/14 11:33:53.212034 from tcp:169.254.10.2:52553 accepted tcp:192.168.1.1:5000 [tun-device >> main]
+2026/10/14 11:33:53.212040 [Info] [3421810931] app/dispatcher: default route for tcp:192.168.1.1:5000
+2026/10/14 11:33:53.212044 [Info] [3421810931] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:53.213737 [Info] [1254074714] proxy/socks: TCP Connect request to tcp:192.168.1.1:5000
+2026/10/14 11:33:53.213943 [Info] [1254074714] app/dispatcher: sniffed domain: 192.168.1.1
+2026/10/14 11:33:53.213957 from tcp:127.0.0.1:52554 accepted tcp:192.168.1.1:5000 [tun -> direct]
+2026/10/14 11:33:53.213960 [Info] [1254074714] app/dispatcher: Hit route rule: [local network] so taking detour [direct] for [tcp:192.168.1.1:5000]
+2026/10/14 11:33:53.213969 [Info] [1254074714] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:53.220207 [Info] [786283458] proxy/vless/outbound: tunneling request to udp:192.144.20.19:54977 via 188.120.237.35:443
+2026/10/14 11:33:54.122611 [Info] [4117574530] transport/internet/tcp: dialing TCP to tcp:192.168.1.1:5000
+2026/10/14 11:33:54.738232 [Info] [37227099] proxy/tun: processing from tcp:169.254.10.2:52557 to tcp:140.82.121.6:443
+2026/10/14 11:33:54.738252 from tcp:169.254.10.2:52557 accepted tcp:140.82.121.6:443 [tun-device >> main]
+2026/10/14 11:33:54.738256 [Info] [37227099] app/dispatcher: default route for tcp:140.82.121.6:443
+2026/10/14 11:33:54.738268 [Info] [37227099] transport/internet/tcp: dialing TCP to tcp:127.0.0.1:52156
+2026/10/14 11:33:54.740424 [Info] [696813172] proxy/socks: TCP Connect request to tcp:140.82.121.6:443
+2026/10/14 11:33:54.740655 [Info] [696813172] app/dispatcher: sniffed domain: api.github.com
+2026/10/14 11:33:54.740822 [Info] [696813172] app/dispatcher: taking detour [proxy~bridge-3] for [tcp:api.github.com:443]
+2026/10/14 11:33:54.740835 [Info] [696813172] transport/internet/tcp: dialing TCP to tcp:157.22.193.73:443
+2026/10/14 11:33:54.740847 from tcp:127.0.0.1:52558 accepted tcp:140.82.121.6:443 [tun -> proxy~bridge-3]
+2026/10/14 11:33:54.775279 [Info] [696813172] proxy/vless/outbound: tunneling request to tcp:140.82.121.6:443 via 157.22.193.73:443
