@@ -93,7 +93,13 @@ func recoverXray(err *error) {
 
 // Validate checks that Xray accepts the config (including geo lookups)
 // without starting it.
-func Validate(cfg map[string]any) (err error) {
+func Validate(cfg map[string]any) error {
+	return validate(cfg, core.New)
+}
+
+// validate is Validate with the instance builder passed in, so a test can
+// make that builder panic and check that startMu is still released.
+func validate(cfg map[string]any, newInstance func(*core.Config) (*core.Instance, error)) (err error) {
 	defer recoverXray(&err)
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -103,9 +109,14 @@ func Validate(cfg map[string]any) (err error) {
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}
+	var inst *core.Instance
 	startMu.Lock()
-	inst, err := core.New(pb)
-	startMu.Unlock()
+	func() {
+		// recoverXray above turns a panic into an error; the unlock has to
+		// survive that return or every later Validate/Start hangs.
+		defer startMu.Unlock()
+		inst, err = newInstance(pb)
+	}()
 	if err != nil {
 		return fmt.Errorf("xray: %w", err)
 	}

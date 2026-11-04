@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xtls/xray-core/core"
 
@@ -191,6 +192,30 @@ func TestValidateRecoversPanic(t *testing.T) {
 	}
 	if _, err := Start(xc); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+// A panic in core.New is recovered here, so the lock has to be released
+// before the panic unwinds: otherwise every later Validate/Start hangs.
+func TestValidatePanicReleasesStartLock(t *testing.T) {
+	xc := map[string]any{"outbounds": []any{map[string]any{"protocol": "freedom"}}}
+	err := validate(xc, func(*core.Config) (*core.Instance, error) {
+		panic("bad config")
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid config") {
+		t.Fatalf("Validate = %v, want the recovered panic", err)
+	}
+
+	locked := make(chan struct{})
+	go func() {
+		startMu.Lock()
+		startMu.Unlock()
+		close(locked)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("startMu is still locked after a panic in the Xray builder")
 	}
 }
 
