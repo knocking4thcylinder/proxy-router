@@ -12,12 +12,14 @@ func TestAutoSwitchConfig(t *testing.T) {
 		yaml    string
 		enabled bool
 		stall   time.Duration
+		warn    bool
 	}{
-		{"", true, 10 * time.Second},
-		{"auto_switch:\n  stall: 5s\n", true, 5 * time.Second},
-		{"auto_switch:\n  enabled: false\n", false, 10 * time.Second},
-		{"auto_switch:\n  interval: 1m\n  failures: 2\n  timeout: 15s\n", true, 10 * time.Second},
-		{"auto_switch:\n  interval: 0\n", false, 10 * time.Second},
+		{"", true, 10 * time.Second, false},
+		{"auto_switch:\n  stall: 5s\n", true, 5 * time.Second, false},
+		{"auto_switch:\n  enabled: false\n", false, 10 * time.Second, false},
+		{"auto_switch:\n  interval: 1m\n  failures: 2\n  timeout: 15s\n", true, 10 * time.Second, false},
+		{"auto_switch:\n  interval: 0\n", false, 10 * time.Second, true},
+		{"auto_switch:\n  enabled: false\n  interval: 0\n", false, 10 * time.Second, false},
 	}
 	for _, c := range cases {
 		cfg, err := loadYAML(t, c.yaml)
@@ -27,6 +29,9 @@ func TestAutoSwitchConfig(t *testing.T) {
 		}
 		if a := cfg.AutoSwitch; a.Enabled != c.enabled || a.Stall.D() != c.stall {
 			t.Errorf("%q: enabled %v, stall %s; want %v, %s", c.yaml, a.Enabled, a.Stall.D(), c.enabled, c.stall)
+		}
+		if warned := len(cfg.Warnings) > 0; warned != c.warn {
+			t.Errorf("%q: warnings %q; want %v", c.yaml, cfg.Warnings, c.warn)
 		}
 	}
 	for _, bad := range []string{"auto_switch:\n  stall: 1s\n", "auto_switch:\n  interval: 5s\n"} {

@@ -142,6 +142,9 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintln(os.Stderr, "note:", w)
+	}
 	state, err := config.LoadState(dir)
 	if err != nil {
 		return nil, err

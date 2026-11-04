@@ -258,11 +258,14 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 
 // ControlSockets runs ctl on every socket Xray opens in this process,
 // before it connects or binds. It can't be undone, so it's only for
-// one-shot commands like ping.
+// one-shot commands like ping. It briefly swaps the process-wide dialer
+// while registering, so nothing else may dial then: a long-running process
+// would let connections made during the swap bypass the Watcher.
 func ControlSockets(ctl func(network, address string, c syscall.RawConn) error) error {
 	if base != nil {
 		// Xray only adds controllers to the dialer in effect, so put the
-		// one the Watcher wraps in place for a moment.
+		// one the Watcher wraps in place for a moment. Safe only before
+		// other goroutines dial (see above).
 		w := &watchDialer{base: base, w: watcher}
 		internet.UseAlternativeSystemDialer(base)
 		defer internet.UseAlternativeSystemDialer(w)

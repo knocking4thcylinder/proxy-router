@@ -109,9 +109,10 @@ type Config struct {
 		Failures int `yaml:"failures"`
 		// A check fails if ping.download_url takes longer than this.
 		Timeout Duration `yaml:"timeout"`
-		// How often a server whose connections can't be watched (QUIC,
-		// mKCP, WireGuard: UDP) is checked instead. 0 turns auto-switching
-		// off, as when every server was checked this way.
+		// How often a server whose connections can't be watched (XHTTP
+		// over HTTP/3, mKCP, WireGuard) is checked instead. Hysteria is
+		// watched for some trouble but still checked every 5 intervals.
+		// 0 turns auto-switching off.
 		Interval Duration `yaml:"interval"`
 	} `yaml:"auto_switch"`
 
@@ -136,6 +137,10 @@ type Config struct {
 	Mux         Mux      `yaml:"mux"`
 	PreferredIP string   `yaml:"preferred_ip"` // auto, ipv4, ipv6, ipv4v6, ipv6v4
 	TUN         TUN      `yaml:"tun"`
+
+	// Warnings holds settings that were overridden while loading, for the
+	// CLI to show. It isn't part of config.yaml.
+	Warnings []string `yaml:"-"`
 
 	dir      string
 	assetDir string
@@ -210,6 +215,10 @@ func (c *Config) validateAutoSwitch() error {
 		return errors.New("ping.download_url must be an http(s) URL")
 	}
 	if c.AutoSwitch.Interval == 0 {
+		if c.AutoSwitch.Enabled {
+			c.Warnings = append(c.Warnings,
+				"auto_switch.interval is 0, so auto-switching is off; set an interval to enable it")
+		}
 		c.AutoSwitch.Enabled = false
 	}
 	a := c.AutoSwitch

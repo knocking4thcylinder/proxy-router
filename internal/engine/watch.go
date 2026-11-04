@@ -355,10 +355,11 @@ func (c *watchedConn) stalled() {
 	}
 }
 
-// troubleLocked reports once per connection.
+// troubleLocked reports once per connection. The Watcher drops a report it
+// can't take, so this doesn't need a goroutine of its own.
 func (c *watchedConn) troubleLocked(kind, detail string) {
 	c.closedLocked()
-	go c.report(Trouble{Kind: kind, Detail: detail})
+	c.report(Trouble{Kind: kind, Detail: detail})
 }
 
 func (c *watchedConn) closedLocked() {

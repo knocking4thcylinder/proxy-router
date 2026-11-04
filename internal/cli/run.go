@@ -447,7 +447,10 @@ func run(ctx context.Context, o runOptions) error {
 	}
 
 	// Auto-switching watches the connections the main instance opens for
-	// the server; the watch goes in before any are.
+	// the server; the watch goes in before any are. It's installed even
+	// when auto_switch.enabled is false: the wrapper costs a mutex read per
+	// dial, and enabling it with a config reload then works without a
+	// restart.
 	watch := engine.WatchOutbound("proxy")
 	defer watch.Stop()
 
