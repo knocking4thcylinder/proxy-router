@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
@@ -62,8 +64,7 @@ func panelCmd() *cobra.Command {
 				p.anchor = &anchor
 			}
 			preparePanelProcess()
-			p.run()
-			return nil
+			return p.run()
 		},
 	}
 	cmd.Flags().StringVar(&anchorFlag, "anchor", "", "x,y of the tray icon's screen position")
@@ -160,23 +161,38 @@ const (
 
 func pingKey(group, name string) string { return group + "\x00" + name }
 
-func (p *panel) run() {
+func (p *panel) run() error {
 	// One panel serves every click: a second launch brings the running
-	// window forward instead of opening another one.
+	// window forward instead of opening another one. The lock lasts for
+	// the panel's lifetime, and the lock file is never removed: deleting
+	// it would let two later panels lock different inodes and both win.
 	sock := panelSocket(p.t.dir)
-	if panelRequest(sock, "show", p.anchor) {
-		return
+	lock, err := lockPanel(sock)
+	if err != nil {
+		if !errors.Is(err, unix.EWOULDBLOCK) {
+			return fmt.Errorf("panel lock: %w", err)
+		}
+		// The owning panel may still be starting, so give it a moment to
+		// bind the socket before deciding it is unreachable.
+		if panelRequestWait(sock, "show", p.anchor, time.Second) {
+			return nil
+		}
+		return errors.New("another panel is running but isn't answering")
 	}
+	defer lock.Close()
+
+	// We own the lock, so a socket at this path is left over from a panel
+	// that exited without cleaning up.
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
-		if panelRequest(sock, "show", p.anchor) {
-			return
-		}
-	} else {
-		_ = os.Chmod(sock, 0o600)
-		defer os.Remove(sock)
+		return fmt.Errorf("panel socket: %w", err)
 	}
+	_ = os.Chmod(sock, 0o600)
+	defer func() {
+		_ = ln.Close()
+		_ = os.Remove(sock)
+	}()
 
 	p.app = app.NewWithID("io.github.knocking4thcylinder.proxy-router")
 	p.app.Settings().SetTheme(panelTheme{})
@@ -212,16 +228,45 @@ func (p *panel) run() {
 			fyne.Do(p.refresh)
 		}
 	}()
-	if ln != nil {
-		defer ln.Close()
-		go p.serve(ln)
-	}
+	go p.serve(ln)
 	if p.anchor != nil {
 		p.reveal()
 		p.app.Run()
-		return
+		return nil
 	}
 	p.win.ShowAndRun()
+	return nil
+}
+
+// lockPanel takes the panel's single-instance lock: the kernel drops it when
+// the process exits, crashes included. The lock file is never removed, so a
+// later panel can't race an earlier one by locking a fresh inode at the same
+// path. EWOULDBLOCK means another panel holds it.
+func lockPanel(sock string) (*os.File, error) {
+	f, err := os.OpenFile(sock+".lock", os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// panelRequestWait retries a request while the panel that owns the lock is
+// still starting up and hasn't bound its socket yet.
+func panelRequestWait(path, cmd string, a *panelAnchor, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if panelRequest(path, cmd, a) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // serve carries the tray's requests: show or toggle the window below the
@@ -506,8 +551,28 @@ func (p *panel) home(m trayModel, st runStatus, live bool) fyne.CanvasObject {
 	acts = append(acts, button("Log", pText, func() { openText(logPath(p.t.dir)) }))
 	actions := container.NewBorder(nil, nil, nil, container.NewHBox(append([]fyne.CanvasObject{gap(6)}, spaced(acts[1:])...)...), acts[0])
 
-	body := container.NewVBox(top, pad(0, 0, 12, 12, card), pad(12, 12, 12, 12, actions))
+	body := container.NewVBox(top)
+	if m.actionErr != "" {
+		body.Add(pad(0, 0, 12, 12, p.actionErrBanner(m)))
+	}
+	body.Add(pad(0, 0, 12, 12, card))
+	body.Add(pad(12, 12, 12, 12, actions))
 	return container.NewStack(canvas.NewRectangle(pBg), body)
+}
+
+// actionErrBanner is the tray's last failed action. Notifications are easy
+// to miss, and the window is where the user looks when a button did
+// nothing; tapping the banner opens the log with the full command output.
+func (p *panel) actionErrBanner(m trayModel) fyne.CanvasObject {
+	text := container.NewVBox(
+		txt("Last action failed", 12, pWarn, true, false),
+		txt(shorten(firstLine(m.actionErr), 34), 11.5, pMute, false, false),
+	)
+	left := container.NewHBox(container.NewVBox(layout.NewSpacer(), txt("⚠", 15, pWarn, true, false), layout.NewSpacer()), gap(9), text)
+	row := container.NewBorder(nil, nil, left, txt("Log ›", 11.5, pAccInk, false, false))
+	return newTap(rounded(pCard, pLine, 9, pad(9, 9, 10, 10, row)), func() {
+		openText(filepath.Join(p.t.dir, "tray.log"))
+	})
 }
 
 func (p *panel) serverRow(m trayModel) fyne.CanvasObject {
@@ -780,7 +845,11 @@ func (p *panel) servers(m trayModel) fyne.CanvasObject {
 	scroll := container.NewVScroll(pad(0, 10, 6, 6, list))
 	scroll.SetMinSize(fyne.NewSize(340, min(list.MinSize().Height+10, 470)))
 
-	body := container.NewVBox(pad(13, 8, 16, 12, top), pad(0, 6, 16, 16, sortLine), scroll)
+	body := container.NewVBox(pad(13, 8, 16, 12, top), pad(0, 6, 16, 16, sortLine))
+	if m.actionErr != "" {
+		body.Add(pad(0, 0, 16, 16, p.actionErrBanner(m)))
+	}
+	body.Add(scroll)
 	return container.NewStack(canvas.NewRectangle(pBg), body)
 }
 

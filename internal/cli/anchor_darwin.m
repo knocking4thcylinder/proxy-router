@@ -10,6 +10,9 @@ typedef struct {
 // private, but it is an ordinary visible window in the app's window list.
 // AppKit also keeps hidden placeholders parked below the screen origin, so
 // take the highest one: that is the item actually shown in the menu bar.
+// Tested on macOS 27.3; if a future release renames the class the lookup
+// finds nothing and the panel opens at the default position instead of
+// failing, because statusItemAnchor reports ok = 0.
 static NSWindow *pr_status_window(void) {
 	NSWindow *best = nil;
 	for (NSWindow *w in [NSApp windows]) {
@@ -40,6 +43,10 @@ static NSWindow *pr_panel_window(void) {
 
 // pr_place sets the window's top-left corner, converting from the top-left
 // screen coordinates GLFW and Fyne use to AppKit's bottom-left ones.
+// Both use the *primary* display's height for this conversion, even when the
+// icon or window is on another display: _glfwTransformYCocoa does the same
+// with CGMainDisplayBounds(CGMainDisplayID()). Fyne's window positions are
+// therefore global coordinates rooted at the primary display's top-left.
 static void pr_place(NSWindow *w, double x, double y) {
 	NSScreen *primary = [[NSScreen screens] firstObject];
 	if (!primary)
@@ -69,6 +76,12 @@ static pr_anchor pr_read_anchor(double panelWidth) {
 
 	NSRect visible = [screen visibleFrame];
 	CGFloat screenHeight = [primary frame].size.height;
+
+	// Fyne/GLFW screen coordinates start at the primary display's top-left:
+	// AppKit uses a bottom-left origin, so an anchor is always converted
+	// against the primary display's height, whichever screen holds the icon.
+	// The horizontal clamp still uses the icon's own screen so the panel
+	// stays on the display the menu bar item is on.
 
 	// Center under the icon, but keep the whole panel on that screen.
 	CGFloat x = f.origin.x + f.size.width/2 - panelWidth/2;
