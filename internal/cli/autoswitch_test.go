@@ -10,8 +10,9 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
-// The fastest download wins over the lowest latency; pools only when no
-// single server works.
+// The fastest download wins over the lowest latency; a server whose speed
+// test failed still works, so it only loses to reachable servers with a
+// measured or unmeasured speed; pools only when no single server works.
 func TestPickFastest(t *testing.T) {
 	result := func(name string, pool bool, latency time.Duration, speed float64, err error) engine.PingResult {
 		s := &share.Server{Name: name}
@@ -19,6 +20,9 @@ func TestPickFastest(t *testing.T) {
 			s.Pool = &share.Pool{}
 		}
 		return engine.PingResult{Entry: config.Entry{Server: s}, Latency: latency, Speed: speed, Err: err}
+	}
+	speedErr := func(name string, latency time.Duration, err error) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name}}, Latency: latency, SpeedErr: err}
 	}
 	cases := []struct {
 		want    string
@@ -39,6 +43,18 @@ func TestPickFastest(t *testing.T) {
 		{"measured", []engine.PingResult{
 			result("unmeasured", false, 10*time.Millisecond, 0, nil),
 			result("measured", false, 400*time.Millisecond, 1e5, nil),
+		}},
+		{"measured", []engine.PingResult{
+			speedErr("stalled", 10*time.Millisecond, engine.ErrStalled),
+			result("measured", false, 400*time.Millisecond, 1e5, nil),
+		}},
+		{"unmeasured", []engine.PingResult{
+			speedErr("stalled", 10*time.Millisecond, engine.ErrStalled),
+			result("unmeasured", false, 300*time.Millisecond, 0, nil),
+		}},
+		{"stalled", []engine.PingResult{
+			speedErr("stalled", 100*time.Millisecond, engine.ErrStalled),
+			result("dead", false, 0, 0, errors.New("timeout")),
 		}},
 		{"quicker", []engine.PingResult{
 			result("slower", false, 300*time.Millisecond, 0, nil),

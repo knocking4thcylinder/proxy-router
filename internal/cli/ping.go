@@ -50,45 +50,59 @@ func pingWithProgress(ctx context.Context, entries []config.Entry, opts engine.P
 			p.draw()
 		case results := <-finished:
 			p.clear()
-			fmt.Fprintf(out, "Done in %.1fs: %d reachable, %d failed.\n\n", time.Since(p.start).Seconds(), p.ok, p.failed)
+			line := fmt.Sprintf("Done in %.1fs: %d reachable, %d failed", time.Since(p.start).Seconds(), p.ok, p.failed)
+			if p.speedFailed > 0 {
+				line += fmt.Sprintf("; %d speed tests failed", p.speedFailed)
+			}
+			fmt.Fprintf(out, "%s.\n\n", line)
 			return results
 		}
 	}
 }
 
 type pingDisplay struct {
-	out                            io.Writer
-	width, total, done, ok, failed int
-	completed, probes              int
-	exit                           bool
-	start                          time.Time
+	out                                io.Writer
+	width, total, done, ok, failed     int
+	completed, probes                  int
+	speedDone, speedTotal, speedFailed int
+	exit                               bool
+	start                              time.Time
 }
 
 func (p *pingDisplay) update(u engine.PingProgress) {
-	p.completed, p.probes = u.Completed, u.Total
-	if u.EntryDone {
-		p.done++
-		status := "OK"
-		if u.Result.Err == nil {
-			p.ok++
-		} else {
-			p.failed++
-			status = "FAIL"
+	if u.Phase == engine.PhaseSpeed {
+		// A failed speed test doesn't make the server unreachable; it
+		// stays in the reachable count and the table shows why.
+		p.speedDone, p.speedTotal = u.Completed, u.Total
+		if u.Result.SpeedErr != nil {
+			p.speedFailed++
 		}
-		p.clear()
-		r := u.Result
-		fmt.Fprintf(p.out, "[%d/%d] %-4s #%d %s | %s", p.done, p.total, status, r.Entry.Index, pingText(r.Entry.Server.Name), pingLatency(r))
-		if r.Err == nil && r.Speed > 0 {
-			fmt.Fprintf(p.out, " | %s", speedText(r.Speed))
-		}
-		if r.Members > 0 {
-			fmt.Fprintf(p.out, " | %d/%d alive", r.Alive, r.Members)
-		}
-		if p.exit {
-			fmt.Fprintf(p.out, " | exit: %s", pingExit(r))
-		}
-		fmt.Fprintln(p.out)
+		p.draw()
+		return
 	}
+	p.completed, p.probes = u.Completed, u.Total
+	if !u.EntryDone {
+		p.draw()
+		return
+	}
+	p.done++
+	status := "OK"
+	r := u.Result
+	if r.Err == nil {
+		p.ok++
+	} else {
+		p.failed++
+		status = "FAIL"
+	}
+	p.clear()
+	fmt.Fprintf(p.out, "[%d/%d] %-4s #%d %s | %s", p.done, p.total, status, r.Entry.Index, pingText(r.Entry.Server.Name), pingLatency(r))
+	if r.Members > 0 {
+		fmt.Fprintf(p.out, " | %d/%d alive", r.Alive, r.Members)
+	}
+	if p.exit {
+		fmt.Fprintf(p.out, " | exit: %s", pingExit(r))
+	}
+	fmt.Fprintln(p.out)
 	p.draw()
 }
 
@@ -105,7 +119,10 @@ func (p *pingDisplay) draw() {
 	elapsed := time.Since(p.start)
 	spinner := "|/-\\"[int(elapsed/(100*time.Millisecond))%4]
 	status := fmt.Sprintf("%c %d/%d servers | %d reachable, %d failed | %.1fs", spinner, p.done, p.total, p.ok, p.failed, elapsed.Seconds())
-	if p.probes > p.total {
+	switch {
+	case p.speedTotal > 0:
+		status += fmt.Sprintf(" | speeds %d/%d", p.speedDone, p.speedTotal)
+	case p.probes > p.total:
 		status += fmt.Sprintf(" | %d/%d probes", p.completed, p.probes)
 	}
 	// Leave the last column unused so the status never wraps onto another line.
@@ -120,7 +137,7 @@ func (p *pingDisplay) draw() {
 }
 
 func writePingResults(out io.Writer, results []engine.PingResult, current int, exit bool) error {
-	speed := slices.ContainsFunc(results, func(r engine.PingResult) bool { return r.Speed > 0 })
+	speed := slices.ContainsFunc(results, func(r engine.PingResult) bool { return r.Speed > 0 || r.SpeedErr != nil })
 	slices.SortStableFunc(results, func(a, b engine.PingResult) int {
 		switch {
 		case a.Err != nil && b.Err != nil:
@@ -129,8 +146,22 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 			return 1
 		case b.Err != nil:
 			return -1
-		case speed && a.Speed != b.Speed:
-			return cmp.Compare(b.Speed, a.Speed)
+		}
+		if speed {
+			switch {
+			case (a.Speed > 0) != (b.Speed > 0):
+				if a.Speed > 0 {
+					return -1
+				}
+				return 1
+			case a.Speed > 0 && a.Speed != b.Speed:
+				return cmp.Compare(b.Speed, a.Speed)
+			case (a.SpeedErr == nil) != (b.SpeedErr == nil):
+				if a.SpeedErr == nil {
+					return -1
+				}
+				return 1
+			}
 		}
 		return cmp.Compare(a.Latency, b.Latency)
 	})
@@ -156,8 +187,12 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s", mark, r.Entry.Index, pingText(r.Entry.Server.Name), pingText(r.Entry.Group), pingLatency(r))
 		if speed {
 			sp := "-"
-			if r.Err == nil && r.Speed > 0 {
+			switch {
+			case r.Err != nil:
+			case r.Speed > 0:
 				sp = speedText(r.Speed)
+			case r.SpeedErr != nil:
+				sp = speedFailure(r.SpeedErr)
 			}
 			fmt.Fprintf(tw, "\t%s", sp)
 		}
@@ -175,6 +210,9 @@ func writePingResults(out io.Writer, results []engine.PingResult, current int, e
 	}
 	if pool {
 		fmt.Fprintln(tw, "\nPools show the latency, speed and exit of their fastest responding member.")
+	}
+	if slices.ContainsFunc(results, func(r engine.PingResult) bool { return r.SpeedErr != nil }) {
+		fmt.Fprintln(tw, "A failed speed test doesn't mean the server is down: it answered the latency request.")
 	}
 	return tw.Flush()
 }

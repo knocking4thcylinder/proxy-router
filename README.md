@@ -128,12 +128,27 @@ terminal back; the icon stays after you close the terminal. Its output
 goes to `~/.config/proxy-router/tray.log` (`--foreground` keeps it attached
 instead, for debugging).
 
-The icon is orange while connected, faded while starting or waiting for the
-network, and grey when disconnected. Its menu:
+The icon changes shape as well as color, so the monochrome macOS one
+reads too: a filled disc while connected, a dashed ring while starting or
+waiting for the network, the bare glyph (grey disc on Linux) when
+disconnected, and a red badge when the config is broken. Hovering it shows
+the status and server. Its menu, top to bottom:
 
+- **Status**: connected or not, and in which mode. Anything that needs
+  you gets a ⚠ line right under it (a config error, a failed action, or
+  a service running an older build); clicking it opens what fixes it.
 - **Connect / Disconnect**: `start` / `stop` the background service
-- **TUN Mode (All Traffic)**: switch modes (restarts the service if it's
-  running). TUN mode asks for your password in the system's dialog
+- **Server: _name_**: shows the selected server, with **(auto)** while
+  auto-switching is on. Inside: **⚡ Fastest Available** across
+  everything, then, for 15+ servers in 2+ countries, a submenu per
+  country (from the flag the server names start with; the rest are under
+  **Other**), and **Subscriptions** with each subscription's servers,
+  **⚡ Fastest Available in This Group** and **Update Subscription**.
+  Smaller lists show the subscriptions directly. Flags are shown as
+  round icons, servers without one get a globe.
+- **Mode: _Proxy / All Traffic_**: switch modes; it restarts the service
+  if it's running, or is used by the next Connect. TUN mode (All Traffic)
+  asks for your password in the system's dialog
   (polkit on Linux, the standard macOS prompt) instead of sudo. On macOS
   that's once: the dialog also adds a sudoers rule
   (`/etc/sudoers.d/proxy-router`) so connecting and disconnecting TUN mode
@@ -142,14 +157,12 @@ network, and grey when disconnected. Its menu:
   the service's own root-owned copy of proxy-router, so switching modes
   and updating the service to a new build still ask. Switching to proxy
   mode and `uninstall` remove the rule.
-- **Servers**: each subscription has its own submenu with a server count,
-  server selection, **Use the Fastest**, and **Update Subscription**. The
-  active group is marked with a check. Manually added servers have their own
-  submenu; actions across all subscriptions are labeled explicitly.
-- **Edit Routing Rules**, **Show Log**, **Open Config Folder**
-- **Start Tray at Login**: adds a login item (`~/.config/autostart` on
-  Linux, a LaunchAgent on macOS) that runs this `proxy-router` binary, so
-  keep it somewhere stable (e.g. `~/go/bin`)
+- **Copy Proxy Address**: the SOCKS5 / HTTP addresses (on Linux this uses
+  `wl-copy`, `xclip`, `xsel` or KDE's clipboard)
+- **More**: edit routing rules, show the log, open the config folder, and
+  **Start Tray at Login**, which adds a login item (`~/.config/autostart`
+  on Linux, a LaunchAgent on macOS) that runs this `proxy-router` binary,
+  so keep it somewhere stable (e.g. `~/go/bin`)
 
 Quitting the tray leaves the service running.
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -82,6 +83,8 @@ type switcher struct {
 	checking   bool
 	scanning   bool
 	failures   int
+	speedOnly  bool // the download failed but a plain request worked
+	target     config.Selection
 	quietUntil time.Time
 	// failed holds servers that stopped working, and when.
 	failed  map[config.Selection]time.Time
@@ -95,6 +98,9 @@ type checkResult struct {
 	gen    int
 	target config.Entry
 	err    error
+	// speedOnly means the download failed but the ping URL answered: the
+	// server is alive, the speed test site just didn't work through it.
+	speedOnly bool
 }
 
 type scanResult struct {
@@ -128,6 +134,11 @@ func (sw *switcher) tick(ctx context.Context, o runOptions, inst *core.Instance,
 		sw.failures = 0
 		return
 	}
+	if sel := selectionOf(target); sel != sw.target {
+		// A different server is watched now, so what the last one did
+		// says nothing about this one.
+		sw.target, sw.speedOnly = sel, false
+	}
 	if time.Since(sw.lastCheck) < e.cfg.AutoSwitch.Interval.D() {
 		return
 	}
@@ -137,7 +148,17 @@ func (sw *switcher) tick(ctx context.Context, o runOptions, inst *core.Instance,
 	url := e.cfg.Ping.DownloadURL
 	go func() {
 		_, err := engine.CheckOutbound(ctx, inst, "proxy", url, stall, limit)
-		sw.checked <- checkResult{gen: gen, target: target, err: err}
+		speedOnly := false
+		if err != nil && !errors.Is(err, engine.ErrStalled) && !errors.Is(err, engine.ErrTooSlow) {
+			// A connection-level failure to the speed site can be the
+			// site (blocked, reset), not the server. A small request
+			// through the same outbound decides.
+			timeout := e.cfg.Ping.Timeout.D()
+			if _, pingErr := engine.CheckOutbound(ctx, inst, "proxy", e.cfg.Ping.URL, timeout, timeout); pingErr == nil {
+				speedOnly = true
+			}
+		}
+		sw.checked <- checkResult{gen: gen, target: target, err: err, speedOnly: speedOnly}
 	}()
 }
 
@@ -151,9 +172,23 @@ func (sw *switcher) check(ctx context.Context, o runOptions, r checkResult, gen 
 	if err != nil {
 		return
 	}
+	wasSpeedOnly := sw.speedOnly
+	sw.speedOnly = false
+	if r.speedOnly {
+		if !wasSpeedOnly {
+			fmt.Printf("%s auto-switch: %s still answers requests (speed test failed: %s)\n",
+				now(), clean(r.target.String()), shortErr(r.err))
+		}
+		sw.speedOnly = true
+		sw.failures = 0
+		return
+	}
 	if r.err == nil {
-		if sw.failures > 0 {
+		switch {
+		case sw.failures > 0:
 			fmt.Printf("%s auto-switch: %s works again\n", now(), clean(r.target.String()))
+		case wasSpeedOnly:
+			fmt.Printf("%s auto-switch: %s passes the speed test again\n", now(), clean(r.target.String()))
 		}
 		sw.failures = 0
 		return
