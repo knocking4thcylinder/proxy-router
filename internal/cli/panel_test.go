@@ -2,7 +2,10 @@
 
 package cli
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestFreezeCountriesKeepsOrderAndSplit(t *testing.T) {
 	ok := []panelCountry{
@@ -27,6 +30,39 @@ func TestFreezeCountriesKeepsOrderAndSplit(t *testing.T) {
 	}
 	if len(frozenDead) != 1 || frozenDead[0].name != "Germany" {
 		t.Fatalf("dead rows moved: %+v", frozenDead)
+	}
+}
+
+func TestToggleActionAfterFocusLoss(t *testing.T) {
+	now := time.Now()
+	p := &panel{}
+	if got := p.toggleAction(now); got != panelToggleShow {
+		t.Fatalf("closed panel: got %v, want show", got)
+	}
+
+	p.open = true
+	if got := p.toggleAction(now); got != panelToggleHide {
+		t.Fatalf("open panel: got %v, want hide", got)
+	}
+
+	// The tray click that took focus away is already handled by dismiss;
+	// its toggle must not reopen the panel.
+	p.open = false
+	p.autoHideAt = now.Add(-panelToggleGrace / 2)
+	if got := p.toggleAction(now); got != panelToggleIgnore {
+		t.Fatalf("toggle right after focus loss: got %v, want ignore", got)
+	}
+
+	p.autoHideAt = now.Add(-panelToggleGrace - time.Millisecond)
+	if got := p.toggleAction(now); got != panelToggleShow {
+		t.Fatalf("toggle after the grace period: got %v, want show", got)
+	}
+
+	// An open panel wins over the grace window: the click closes it.
+	p.open = true
+	p.autoHideAt = now.Add(-panelToggleGrace / 2)
+	if got := p.toggleAction(now); got != panelToggleHide {
+		t.Fatalf("open panel within grace: got %v, want hide", got)
 	}
 }
 

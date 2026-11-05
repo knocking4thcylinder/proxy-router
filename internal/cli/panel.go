@@ -134,6 +134,14 @@ type panel struct {
 	height float32
 	styled bool
 	open   bool
+	// startupUntil is set when the first show restyles the window. That
+	// takes focus away, and so can the refocus right after it; neither is
+	// a click outside.
+	startupUntil time.Time
+	// autoHideAt is when losing focus last closed the panel. The tray click
+	// that takes focus away still sends its own toggle just afterwards; that
+	// toggle must not reopen the panel.
+	autoHideAt time.Time
 
 	scroll *container.Scroll // keeps its offset while the page rebuilds
 	order  []panelOrder      // rows stay put while a scan updates them
@@ -160,6 +168,13 @@ const (
 	panelRecheckMax = 16
 	// panelRescan is how often every server is tested again.
 	panelRescan = 5 * time.Minute
+	// panelToggleGrace covers the gap between the panel losing focus to a
+	// tray click and that click's toggle request arriving.
+	panelToggleGrace = 500 * time.Millisecond
+	// panelStartupGrace covers the first show's restyle, which can take
+	// focus away more than once even though the user is still looking at
+	// the panel.
+	panelStartupGrace = time.Second
 )
 
 func pingKey(group, name string) string { return group + "\x00" + name }
@@ -218,6 +233,8 @@ func (p *panel) run() error {
 			}
 		}
 	})
+	// Clicking anywhere outside the popover takes its focus away.
+	p.app.Lifecycle().SetOnExitedForeground(p.dismiss)
 	p.page = "home"
 	p.refresh()
 	go p.ping()
@@ -303,10 +320,15 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 	case "hide":
 		p.hide()
 	case "toggle":
-		if p.open {
+		switch p.toggleAction(time.Now()) {
+		case panelToggleHide:
 			p.hide()
-		} else {
+		case panelToggleShow:
 			p.reveal()
+		default:
+			// This is the tray click that just took focus away: the panel
+			// is already closed, and reopening it would flicker.
+			p.autoHideAt = time.Time{}
 		}
 	default:
 		p.reveal()
@@ -317,14 +339,22 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 // first time. The icon moves as menu bar items come and go, so every show
 // takes the fresh anchor.
 func (p *panel) reveal() {
+	first := p.anchor != nil && !p.styled
 	if p.anchor != nil {
 		if dw, ok := p.win.(desktop.Window); ok {
 			dw.RequestPosition(p.anchor.X, p.anchor.Y)
 		}
 	}
+	if first {
+		// The first show restyles the window, which takes focus away
+		// once. Arm the grace first: the loss can arrive as early as
+		// Show itself.
+		p.startupUntil = time.Now().Add(panelStartupGrace)
+	}
 	p.open = true
+	p.autoHideAt = time.Time{}
 	p.win.Show()
-	if p.anchor != nil && !p.styled {
+	if first {
 		stylePanelWindow(*p.anchor)
 		p.styled = true
 		// Removing the title bar changes the content area; size it back
@@ -341,7 +371,53 @@ func (p *panel) reveal() {
 // hide closes the popover without quitting, so the next click is instant.
 func (p *panel) hide() {
 	p.open = false
+	p.startupUntil = time.Time{}
 	p.win.Hide()
+}
+
+// dismiss closes the popover when it loses focus, the way a menu does.
+// Hiding an already closed panel is a no-op, so the window hide can't
+// re-enter this callback.
+func (p *panel) dismiss() {
+	if !p.open {
+		return
+	}
+	if time.Now().Before(p.startupUntil) {
+		// The first show's restyle takes focus away, and the refocus can
+		// lose it once more. None of that is a click outside, so take the
+		// focus back and keep the panel open.
+		p.win.RequestFocus()
+		if p.anchor != nil {
+			activatePanelWindow()
+		}
+		return
+	}
+	p.open = false
+	p.autoHideAt = time.Now()
+	p.win.Hide()
+}
+
+// panelToggle is what a click on the tray icon should do to the panel.
+type panelToggle int
+
+const (
+	panelToggleShow panelToggle = iota
+	panelToggleHide
+	panelToggleIgnore
+)
+
+// toggleAction decides what a tray click does. The click that takes focus
+// away from the panel also sends its own toggle just afterwards, so a toggle
+// arriving right after dismiss() is that same click, not a new one.
+func (p *panel) toggleAction(now time.Time) panelToggle {
+	switch {
+	case p.open:
+		return panelToggleHide
+	case now.Sub(p.autoHideAt) < panelToggleGrace:
+		return panelToggleIgnore
+	default:
+		return panelToggleShow
+	}
 }
 
 // panelAvailable says whether this build has the control window.
