@@ -96,16 +96,24 @@ type Config struct {
 		DownloadURL string `yaml:"download_url"`
 	} `yaml:"ping"`
 
-	// After "use --fastest", a running proxy-router keeps checking the
-	// server it picked and switches to the fastest working one when it
-	// stops carrying traffic.
+	// After "use --fastest", a running proxy-router watches its connections
+	// to the server it picked; when they show trouble, it checks the server
+	// and switches to the fastest working one if it stopped carrying
+	// traffic.
 	AutoSwitch struct {
-		// How often the server is checked. 0 disables auto-switching.
-		Interval Duration `yaml:"interval"`
+		Enabled bool `yaml:"enabled"`
+		// How long a connection may sit with data stopped mid-transfer (or
+		// a handshake unanswered) before the server is checked.
+		Stall Duration `yaml:"stall"`
 		// Failed checks in a row before switching.
 		Failures int `yaml:"failures"`
 		// A check fails if ping.download_url takes longer than this.
 		Timeout Duration `yaml:"timeout"`
+		// How often a server whose connections can't be watched (XHTTP
+		// over HTTP/3, mKCP, WireGuard) is checked instead. Hysteria is
+		// watched for some trouble but still checked every 5 intervals.
+		// 0 turns auto-switching off.
+		Interval Duration `yaml:"interval"`
 	} `yaml:"auto_switch"`
 
 	// Destinations that always use the system's own routing: never proxied
@@ -130,6 +138,10 @@ type Config struct {
 	PreferredIP string   `yaml:"preferred_ip"` // auto, ipv4, ipv6, ipv4v6, ipv6v4
 	TUN         TUN      `yaml:"tun"`
 
+	// Warnings holds settings that were overridden while loading, for the
+	// CLI to show. It isn't part of config.yaml.
+	Warnings []string `yaml:"-"`
+
 	dir      string
 	assetDir string
 }
@@ -148,6 +160,8 @@ func defaults() *Config {
 	c.Ping.Timeout = Duration(5 * time.Second)
 	c.Ping.PerEndpoint = 2
 	c.Ping.DownloadURL = "https://speed.cloudflare.com/__down?bytes=262144"
+	c.AutoSwitch.Enabled = true
+	c.AutoSwitch.Stall = Duration(10 * time.Second)
 	c.AutoSwitch.Interval = Duration(time.Minute)
 	c.AutoSwitch.Failures = 2
 	c.AutoSwitch.Timeout = Duration(15 * time.Second)
@@ -200,10 +214,19 @@ func (c *Config) validateAutoSwitch() error {
 	if u := c.Ping.DownloadURL; u != "" && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 		return errors.New("ping.download_url must be an http(s) URL")
 	}
+	if c.AutoSwitch.Interval == 0 {
+		if c.AutoSwitch.Enabled {
+			c.Warnings = append(c.Warnings,
+				"auto_switch.interval is 0, so auto-switching is off; set an interval to enable it")
+		}
+		c.AutoSwitch.Enabled = false
+	}
 	a := c.AutoSwitch
 	switch {
 	case a.Interval != 0 && a.Interval.D() < 15*time.Second:
 		return errors.New("auto_switch.interval must be at least 15s (or 0 to disable)")
+	case a.Stall.D() < 2*time.Second:
+		return errors.New("auto_switch.stall must be at least 2s")
 	case a.Failures < 1:
 		return errors.New("auto_switch.failures must be at least 1")
 	case a.Timeout.D() < time.Second:
