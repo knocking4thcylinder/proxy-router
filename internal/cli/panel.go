@@ -135,6 +135,9 @@ type panel struct {
 	styled bool
 	open   bool
 
+	scroll *container.Scroll // keeps its offset while the page rebuilds
+	order  []panelOrder      // rows stay put while a scan updates them
+
 	mu         sync.Mutex
 	results    map[string]engine.PingResult // by group + "\x00" + name
 	testing    bool
@@ -345,6 +348,12 @@ func (p *panel) hide() {
 func panelAvailable() bool { return true }
 
 func (p *panel) show(page string) {
+	if page != p.page {
+		// A fresh visit to the servers page starts at the top, and a scan
+		// that was running elsewhere doesn't freeze its rows.
+		p.scroll = nil
+		p.order = nil
+	}
 	p.page = page
 	p.shown = ""
 	p.refresh()
@@ -354,6 +363,10 @@ func (p *panel) show(page string) {
 func (p *panel) refresh() {
 	m := p.t.model()
 	st, live := readRunStatus(p.t.dir)
+	var offset float32
+	if p.page == "servers" && p.scroll != nil {
+		offset = p.scroll.Offset.Y
+	}
 	var obj fyne.CanvasObject
 	var key string
 	p.mu.Lock()
@@ -371,6 +384,12 @@ func (p *panel) refresh() {
 	p.win.SetContent(obj)
 	p.height = obj.MinSize().Height
 	p.win.Resize(fyne.NewSize(panelWidth, p.height))
+	if p.page == "servers" && p.scroll != nil {
+		// Put the list back where the user left it. Refresh clamps it to
+		// the new content, so a shorter list can't leave a blank gap.
+		p.scroll.Offset.Y = offset
+		p.scroll.Refresh()
+	}
 	if p.styled && p.anchor != nil {
 		placePanelWindow(*p.anchor)
 	}
@@ -737,7 +756,65 @@ type panelCountry struct {
 	selected        bool
 }
 
-func (p *panel) countries(m trayModel) (ok, dead []panelCountry, fastest *panelCountry) {
+// panelOrder is one row's place in the servers list. While a scan runs the
+// page reuses it instead of re-sorting rows out from under the cursor.
+type panelOrder struct {
+	key string
+	ok  bool // which side of the working/not responding split it was on
+}
+
+func countryKey(c trayCountry) string { return c.flag + "\x00" + c.name }
+
+// countryOrder records the order rows were last shown in.
+func countryOrder(ok, dead []panelCountry) []panelOrder {
+	order := make([]panelOrder, 0, len(ok)+len(dead))
+	for _, c := range ok {
+		order = append(order, panelOrder{key: countryKey(c.trayCountry), ok: true})
+	}
+	for _, c := range dead {
+		order = append(order, panelOrder{key: countryKey(c.trayCountry)})
+	}
+	return order
+}
+
+// freezeCountries puts rows back in their recorded order, keeping each on
+// its old side of the split so it can't jump to the footer mid-scan.
+// Countries that appeared since the order was recorded go at the end.
+func freezeCountries(order []panelOrder, ok, dead []panelCountry) ([]panelCountry, []panelCountry) {
+	byKey := make(map[string]panelCountry, len(ok)+len(dead))
+	for _, c := range ok {
+		byKey[countryKey(c.trayCountry)] = c
+	}
+	for _, c := range dead {
+		byKey[countryKey(c.trayCountry)] = c
+	}
+	var frozenOK, frozenDead []panelCountry
+	for _, o := range order {
+		c, found := byKey[o.key]
+		if !found {
+			continue
+		}
+		delete(byKey, o.key)
+		if o.ok {
+			frozenOK = append(frozenOK, c)
+		} else {
+			frozenDead = append(frozenDead, c)
+		}
+	}
+	for _, c := range ok {
+		if _, found := byKey[countryKey(c.trayCountry)]; found {
+			frozenOK = append(frozenOK, c)
+		}
+	}
+	for _, c := range dead {
+		if _, found := byKey[countryKey(c.trayCountry)]; found {
+			frozenDead = append(frozenDead, c)
+		}
+	}
+	return frozenOK, frozenDead
+}
+
+func (p *panel) countries(m trayModel, testing bool) (ok, dead []panelCountry, fastest *panelCountry) {
 	cs, other := byCountry(m.groups)
 	if cs == nil {
 		// A short list: one row per subscription.
@@ -795,6 +872,13 @@ func (p *panel) countries(m trayModel) (ok, dead []panelCountry, fastest *panelC
 	if len(ok) > 0 && ok[0].working > 0 {
 		fastest = &ok[0]
 	}
+	// Live results update the row contents, not their places. The split
+	// is frozen too, so a country can't jump to the footer mid-scan.
+	// Once the scan ends the list sorts itself again.
+	if testing && p.order != nil {
+		ok, dead = freezeCountries(p.order, ok, dead)
+	}
+	p.order = countryOrder(ok, dead)
 	return ok, dead, fastest
 }
 
@@ -814,7 +898,7 @@ func (p *panel) servers(m trayModel) fyne.CanvasObject {
 	}
 	sortLine := container.NewBorder(nil, nil, txt("Fastest first · working only", 11.5, pDim, false, false), newTap(txt(note, 11.5, pMute, false, false), func() { go p.ping() }))
 
-	ok, dead, fastest := p.countries(m)
+	ok, dead, fastest := p.countries(m, testing)
 	var rows []fyne.CanvasObject
 	if fastest != nil {
 		s := fastest.bestServer
@@ -834,16 +918,26 @@ func (p *panel) servers(m trayModel) fyne.CanvasObject {
 	for _, c := range ok {
 		rows = append(rows, p.countryRow(c))
 	}
-	if len(dead) > 0 {
-		var names []string
-		for _, c := range dead {
+	var names []string
+	for _, c := range dead {
+		if c.working == 0 {
 			names = append(names, c.name)
 		}
+	}
+	if len(names) > 0 {
 		rows = append(rows, gap(6), pad(7, 7, 10, 10, txt(shorten("Not responding: "+strings.Join(names, ", "), 44), 12, pDim, false, false)))
 	}
 	list := container.NewVBox(rows...)
-	scroll := container.NewVScroll(pad(0, 10, 6, 6, list))
-	scroll.SetMinSize(fyne.NewSize(340, min(list.MinSize().Height+10, 470)))
+	content := pad(0, 10, 6, 6, list)
+	if p.scroll == nil {
+		p.scroll = container.NewVScroll(content)
+	} else {
+		// Swap the rows inside the existing scroll so its offset survives
+		// the rebuild.
+		p.scroll.Content = content
+	}
+	p.scroll.SetMinSize(fyne.NewSize(340, min(list.MinSize().Height+10, 470)))
+	scroll := p.scroll
 
 	body := container.NewVBox(pad(13, 8, 16, 12, top), pad(0, 6, 16, 16, sortLine))
 	if m.actionErr != "" {
