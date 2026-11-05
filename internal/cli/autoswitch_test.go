@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func TestAutoPickFollowsTheUsersSelection(t *testing.T) {
 	}
 }
 
-// Auto-switching is off for --server, for interval 0, and for pools.
+// Auto-switching is off for --server, when disabled, and for pools.
 func TestAutoTargetSkips(t *testing.T) {
 	st := &config.State{Subscriptions: []*config.Subscription{{Name: "sub", Servers: []*share.Server{
 		{Name: "a"}, {Name: "pool", Pool: &share.Pool{}},
@@ -124,13 +125,90 @@ func TestAutoTargetSkips(t *testing.T) {
 	if _, ok := (runOptions{server: "a"}).autoTarget(env); ok {
 		t.Error("auto-switching a --server run")
 	}
-	cfg.AutoSwitch.Interval = 0
+	cfg.AutoSwitch.Enabled = false
 	if _, ok := (runOptions{}).autoTarget(env); ok {
-		t.Error("auto-switching with interval 0")
+		t.Error("auto-switching while disabled")
 	}
-	cfg.AutoSwitch.Interval = config.Duration(time.Minute)
+	cfg.AutoSwitch.Enabled = true
 	st.SelectAuto(st.Entries()[1], "")
 	if _, ok := (runOptions{}).autoTarget(env); ok {
 		t.Error("checking a pool")
+	}
+}
+
+// A speed test that fails while the server still answers requests says
+// nothing about the server, so it neither counts as a failure nor starts a
+// scan.
+func TestSpeedOnlyCheckDoesNotCountAsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	if _, err := config.LoadState(dir); err != nil {
+		t.Fatal(err)
+	}
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	target := config.Entry{Server: &share.Server{Name: "a"}}
+	sw.check(context.Background(), runOptions{}, checkResult{
+		target:    target,
+		err:       errors.New("connection reset"),
+		speedOnly: true,
+	}, 0)
+	if sw.failures != 0 || sw.scanning {
+		t.Fatalf("speed-only failure counted: failures %d, scanning %v", sw.failures, sw.scanning)
+	}
+	if !sw.speedOnly {
+		t.Fatal("speed-only state not kept")
+	}
+	sw.check(context.Background(), runOptions{}, checkResult{target: target}, 0)
+	if sw.speedOnly {
+		t.Fatal("speed-only state not cleared after a full check")
+	}
+}
+
+// TCP servers are only watched; Hysteria is watched and checked every
+// autoFallback intervals; XHTTP over HTTP/3 only on the timer.
+func TestSwitcherFollowsWhatItCanWatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	var servers []*share.Server
+	for _, link := range []string{
+		"vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?type=tcp&security=tls&sni=a#tcp",
+		"hysteria2://pass@1.2.3.4:443/?sni=a#hy2",
+		"vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?type=xhttp&security=tls&sni=a&alpn=h3#h3",
+	} {
+		s, err := share.ParseLink(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		servers = append(servers, s)
+	}
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: servers}}
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	cfg, _ := config.Load(dir)
+	iv := cfg.AutoSwitch.Interval.D()
+	for i, want := range []struct {
+		watched bool
+		every   time.Duration
+		how     string
+	}{
+		{true, 0, "when its connections show trouble"},
+		{true, autoFallback * iv, "when its connections show trouble, and every 5m0s"},
+		{false, iv, "every 1m0s (its connections can't be watched)"},
+	} {
+		st.SelectAuto(st.Entries()[i], "")
+		if err := st.Save(); err != nil {
+			t.Fatal(err)
+		}
+		sw.follow(runOptions{}, 0)
+		if sw.watched != want.watched || sw.every != want.every || (sw.next != nil) != (want.every > 0) {
+			t.Errorf("%s: watched %v, every %s, timer %v; want %v, %s", servers[i].Name, sw.watched, sw.every, sw.next != nil, want.watched, want.every)
+		}
+		if how := howChecked(cfg, servers[i]); how != want.how {
+			t.Errorf("%s: %q; want %q", servers[i].Name, how, want.how)
+		}
 	}
 }
