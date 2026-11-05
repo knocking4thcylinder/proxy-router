@@ -1,2 +1,6 @@
 /proxy-router
 *.exe
+
+# Local runtime captures
+*.log
+/log.txt
