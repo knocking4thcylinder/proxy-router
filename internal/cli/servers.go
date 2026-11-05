@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -385,9 +386,11 @@ func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
 }
 
 // pickFastest picks the best working result: the fastest download, else (no
-// download measured) the lowest latency. A pool only if no single server
-// works: its health check is a short request, which can't see a member
-// that connects and then stalls, so it may keep using one.
+// download measured) the lowest latency. A server whose download stalled is
+// still a candidate: it answered the latency probe, so it may carry real
+// traffic; it just ranks below servers with a measured speed. A pool only if
+// no single server works: its health check is a short request, which can't
+// see a member that connects and then stalls, so it may keep using one.
 func pickFastest(results []engine.PingResult) (engine.PingResult, bool) {
 	best, found := engine.PingResult{}, false
 	for _, r := range results {
@@ -409,16 +412,34 @@ func better(a, b engine.PingResult) bool {
 	if a.Speed > 0 && a.Speed != b.Speed {
 		return a.Speed > b.Speed
 	}
+	if (a.SpeedErr == nil) != (b.SpeedErr == nil) {
+		return a.SpeedErr == nil
+	}
 	return a.Latency < b.Latency
 }
 
-// pingSummary is "4.2 Mbit/s, 120ms", or just the latency.
+// pingSummary is "4.2 Mbit/s, 120ms", "stalled, 120ms", or just the latency.
 func pingSummary(r engine.PingResult) string {
 	lat := r.Latency.Round(time.Millisecond).String()
-	if r.Speed > 0 {
+	switch {
+	case r.Speed > 0:
 		return speedText(r.Speed) + ", " + lat
+	case r.SpeedErr != nil:
+		return speedFailure(r.SpeedErr) + ", " + lat
 	}
 	return lat
+}
+
+// speedFailure says why a reachable server has no speed. "speed:" keeps a
+// failed speed test from reading like the server itself timed out.
+func speedFailure(err error) string {
+	switch {
+	case errors.Is(err, engine.ErrStalled):
+		return "stalled"
+	case errors.Is(err, engine.ErrTooSlow):
+		return "too slow"
+	}
+	return "speed: " + shortErr(err)
 }
 
 // speedText formats bytes per second as megabits, like speed tests do.

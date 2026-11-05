@@ -7,9 +7,11 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,7 +26,11 @@ import (
 )
 
 // icons/ is rendered from assets/tray/*.svg: rsvg-convert -w 64 for the
-// colored icons, -w 44 for the macOS template (monochrome) ones.
+// colored icons, -w 44 for the macOS template (monochrome) ones. The
+// states differ in shape, not just color, so the template ones tell them
+// apart too: a filled disc when connected, a dashed ring while starting or
+// waiting, the bare glyph when disconnected, and a badge on it when
+// something needs fixing.
 //
 //go:embed icons/*.png
 var trayIcons embed.FS
@@ -85,7 +91,12 @@ menu. --foreground keeps it attached to the terminal instead.`,
 				return err
 			}
 			t := &tray{dir: dir, exe: exe, userT: userT, sysT: sysT, kick: make(chan struct{}, 1)}
+			if panelAvailable() && trayOpensPanelOnTap {
+				systray.SetOnTapped(t.togglePanel)
+			}
 			systray.Run(t.ready, nil)
+			// The popover belongs to the tray; don't leave it running alone.
+			panelRequest(panelSocket(dir), "quit", nil)
 			return nil
 		},
 	}
@@ -166,22 +177,27 @@ type tray struct {
 // trayModel is everything the menu shows; the menu is rebuilt when it
 // changes.
 type trayModel struct {
-	icon       string // on, waiting, off
+	icon       string // on, waiting, off, alert
 	status     string
 	details    []string
-	connected  bool // the service is running (or starting)
-	foreground bool // "proxy-router run" is active in a terminal
+	addrs      []trayAddr // proxy listeners, copied on click
+	connected  bool       // the service is running (or starting)
+	foreground bool       // "proxy-router run" is active in a terminal
 	tun        bool
 	needRoot   bool // stopping, or starting in the shown mode, needs root
 	outdated   bool
 	groups     []trayGroup
 	selGroup   string
 	selName    string
+	auto       bool // the service replaces the server when it stops working
+	autoSet    bool // the saved selection lets the service replace the server
 	autostart  bool
 	busy       bool
 	configErr  string
 	actionErr  string
 }
+
+type trayAddr struct{ label, addr string }
 
 type trayGroup struct {
 	name         string
@@ -190,7 +206,6 @@ type trayGroup struct {
 }
 
 func (t *tray) ready() {
-	systray.SetTooltip("proxy-router " + version())
 	t.refresh()
 	go func() {
 		tick := time.NewTicker(2 * time.Second)
@@ -224,6 +239,7 @@ func (t *tray) refresh() {
 		return
 	}
 	setTrayIcon(m.icon)
+	systray.SetTooltip(m.tooltip())
 	systray.ResetMenu()
 	t.build(m)
 }
@@ -271,6 +287,7 @@ func (t *tray) model() trayModel {
 		}
 		if cur, ok := e.state.Current(); ok {
 			m.selGroup, m.selName = cur.Group, cur.Server.Name
+			m.autoSet = e.state.Selected.Auto
 		}
 	}
 	if m.connected {
@@ -279,20 +296,27 @@ func (t *tray) model() trayModel {
 		m.needRoot = m.tun || ss.Installed
 	}
 
+	mode := "Proxy"
+	if m.tun {
+		mode = "All Traffic"
+	}
 	m.icon = "off"
 	switch {
 	case m.foreground:
 		m.icon = "on"
-		m.status = fmt.Sprintf("Running in a terminal (pid %d)", st.PID)
+		m.status = fmt.Sprintf("Running in a Terminal · %s (pid %d)", mode, st.PID)
 	case live && st.State == "waiting":
 		m.icon = "waiting"
 		m.status = "Waiting: " + st.Waiting
 	case live:
 		m.icon = "on"
-		m.status = "Connected"
+		m.status = "Connected · " + mode
 	case m.connected:
 		m.icon = "waiting"
 		m.status = "Starting…"
+	case m.configErr != "":
+		m.icon = "alert"
+		m.status = "Can't Connect"
 	default:
 		m.status = "Disconnected"
 	}
@@ -304,21 +328,26 @@ func (t *tray) model() trayModel {
 		if st.Auto {
 			server += " (auto)"
 		}
+		m.auto = st.Auto
 		m.details = append(m.details, "Server: "+server)
 		if st.TUN != "" {
-			m.details = append(m.details, "All traffic ("+st.TUN+")")
+			via := ""
+			if st.Via != "" {
+				via = " via " + st.Via
+			}
+			m.details = append(m.details, "Interface: "+st.TUN+via)
 		}
 		if st.Socks != "" {
-			m.details = append(m.details, "SOCKS5 "+st.Socks)
+			m.addrs = append(m.addrs, trayAddr{"SOCKS5", st.Socks})
 		}
 		if st.HTTP != "" {
-			m.details = append(m.details, "HTTP "+st.HTTP)
+			m.addrs = append(m.addrs, trayAddr{"HTTP", st.HTTP})
 		}
 	}
 	if !live {
 		if _, err := os.Stat(filepath.Join(systemRunDir(), "status.json")); errors.Is(err, os.ErrPermission) {
-			m.status, m.icon = "Service status unavailable", "waiting"
-			m.details = append(m.details, "Cannot read service status. Run proxy-router restart to update the service.")
+			m.status, m.icon = "Service Status Unavailable", "alert"
+			m.details = append(m.details, "Can't read the service's status; run proxy-router restart")
 		}
 	}
 	if busy != "" {
@@ -343,23 +372,18 @@ func (t *tray) outdated(target service.Target) bool {
 	return t.outdatedVal[target.Scope]
 }
 
-func (t *tray) build(m trayModel) {
-	info := func(s string) { systray.AddMenuItem(menuLabel(s), "").Disable() }
-	info(m.status)
-	for _, d := range m.details {
-		info("    " + d)
-	}
-	if m.actionErr != "" {
-		info("Last action failed:")
-		for _, line := range strings.Split(lastLines(m.actionErr, 4), "\n") {
-			info("    " + line)
-		}
-	}
-	if m.configErr != "" {
-		info("Config error: " + firstLine(m.configErr))
-	}
-	systray.AddSeparator()
+// tooltip is what hovering the icon shows: the status and the details the
+// menu leaves out.
+func (m trayModel) tooltip() string {
+	return strings.Join(append([]string{"proxy-router " + version(), m.status}, m.details...), "\n")
+}
 
+// build lays the menu out one line per decision: the status and the
+// switch, then server, mode and addresses, then the rarely used rest under
+// More. Problems get a line at the top only while there are any.
+func (t *tray) build(m trayModel) {
+	systray.AddMenuItem(menuLabel(m.status), "").Disable()
+	t.warnings(m)
 	if !m.foreground {
 		if m.connected {
 			t.onClick(systray.AddMenuItem("Disconnect", ""), m.busy, func() {
@@ -370,37 +394,155 @@ func (t *tray) build(m trayModel) {
 				t.run("Connecting…", m.needRoot, "start", modeFlag(m.tun))
 			})
 		}
-		tun := systray.AddMenuItemCheckbox("TUN Mode (All Traffic)", "Capture all traffic instead of running a local SOCKS5/HTTP proxy", m.tun)
-		t.onClick(tun, m.busy || m.configErr != "", func() {
-			if m.connected {
-				t.run("Switching mode…", true, "start", modeFlag(!m.tun))
-				return
-			}
-			want := !m.tun
-			t.mu.Lock()
-			t.wantTUN = &want
-			t.mu.Unlock()
-			t.poke()
-		})
-		if m.outdated {
-			t.onClick(systray.AddMenuItem("Update Service to This Build", "The service runs a different build of proxy-router"), m.busy, func() {
-				t.run("Restarting…", m.needRoot || m.tun, "restart")
+	}
+	if panelAvailable() {
+		t.onClick(systray.AddMenuItem("Open Panel", "Show the control window"), false, t.openPanel)
+	}
+	systray.AddSeparator()
+
+	t.serverMenu(m)
+	if !m.foreground {
+		t.modeMenu(m)
+	}
+	if len(m.addrs) > 0 {
+		cp := systray.AddMenuItem("Copy Proxy Address", "")
+		for _, a := range m.addrs {
+			t.onClick(cp.AddSubMenuItem(menuLabel(a.label+"  "+a.addr), ""), false, func() {
+				if err := copyText(a.addr); err != nil {
+					notify("Couldn't copy the address", err.Error())
+				}
 			})
 		}
 	}
 	systray.AddSeparator()
 
-	servers := systray.AddMenuItem("Servers", "")
+	more := systray.AddMenuItem("More", "")
+	t.onClick(more.AddSubMenuItem("Edit Routing Rules", ""), false, func() {
+		path := filepath.Join(t.dir, "routing.yaml")
+		if e, err := load(); err == nil {
+			path = e.cfg.RulesPath()
+		}
+		openText(path)
+	})
+	t.onClick(more.AddSubMenuItem("Show Log", ""), false, func() { openText(logPath(t.dir)) })
+	t.onClick(more.AddSubMenuItem("Open Config Folder", ""), false, func() { openFolder(t.dir) })
+	more.AddSeparator()
+	t.onClick(more.AddSubMenuItemCheckbox("Start Tray at Login", "", m.autostart), false, func() {
+		if err := setTrayAutostart(!m.autostart, t.exe, t.dir); err != nil {
+			notify("Couldn't change login item", err.Error())
+		}
+		t.poke()
+	})
+	t.onClick(systray.AddMenuItem("Quit Tray", "The service keeps running; use Disconnect to stop it"), false, systray.Quit)
+}
+
+// warnings adds a line for each thing that needs the user, each opening
+// what fixes it.
+func (t *tray) warnings(m trayModel) {
+	if m.configErr != "" {
+		t.onClick(systray.AddMenuItem(menuLabel("⚠ Config error: "+firstLine(m.configErr)), "Open config.yaml"), false, func() {
+			openText(filepath.Join(t.dir, "config.yaml"))
+		})
+	}
+	if m.actionErr != "" {
+		t.onClick(systray.AddMenuItem(menuLabel("⚠ "+lastLines(m.actionErr, 1)), "Show the tray's log"), false, func() {
+			openText(filepath.Join(t.dir, "tray.log"))
+		})
+	}
+	if m.outdated && !m.foreground {
+		t.onClick(systray.AddMenuItem("⚠ Update the Service to This Build", "The service runs a different build of proxy-router"), m.busy, func() {
+			t.run("Restarting…", m.needRoot || m.tun, "restart")
+		})
+	}
+}
+
+// modeMenu adds the mode picker, titled with the current mode. Picking the
+// other one restarts a running service in it, or is remembered for the
+// next Connect.
+func (t *tray) modeMenu(m trayModel) {
+	title := "Mode: Proxy"
+	if m.tun {
+		title = "Mode: All Traffic"
+	}
+	mode := systray.AddMenuItem(title, "")
+	for _, c := range []struct {
+		tun        bool
+		label, tip string
+	}{
+		{false, "Proxy (SOCKS5 and HTTP)", "Run a local proxy that apps opt in to"},
+		{true, "All Traffic (TUN)", "Capture all traffic; asks for your password"},
+	} {
+		t.onClick(choice(mode, c.label, c.tip, m.tun == c.tun), m.busy || m.configErr != "", func() {
+			if m.tun == c.tun {
+				return
+			}
+			if m.connected {
+				t.run("Switching mode…", true, "start", modeFlag(c.tun))
+				return
+			}
+			tun := c.tun
+			t.mu.Lock()
+			t.wantTUN = &tun
+			t.mu.Unlock()
+			t.poke()
+		})
+	}
+}
+
+// serverMenu adds the server picker, titled with the selected server so
+// it's visible without opening it. Big lists are split by country (going
+// by the flag servers' names start with), with the subscriptions one
+// level down; small ones list the subscriptions directly. Like Happ, a
+// name's flag is shown as a round icon instead (a globe for servers
+// without one); inside a country it's left out, being the same on every
+// line.
+func (t *tray) serverMenu(m trayModel) {
+	title := "Server: Choose…"
+	if m.selName != "" {
+		_, name := splitFlag(m.selName)
+		title = "Server: " + name
+		if m.auto || m.autoSet {
+			title += " (auto)"
+		}
+	}
+	servers := systray.AddMenuItem(menuLabel(title)+iconLabelPad, "")
+	if m.selName != "" {
+		servers.SetIcon(serverIcon(m.selName))
+	}
 	if m.configErr != "" {
 		servers.Disable()
 	}
+	if len(m.groups) == 0 {
+		servers.AddSubMenuItem(`No servers yet ("proxy-router sub add <url>")`, "").Disable()
+		return
+	}
+	t.onClick(servers.AddSubMenuItem("⚡ Fastest Available", "Test every server and pick the fastest one that works"), m.busy, func() {
+		t.run("Testing servers…", false, "use", "--fastest")
+	})
+	servers.AddSeparator()
+	countries, other := byCountry(m.groups)
+	groupsIn := servers
+	if countries != nil {
+		for _, c := range append(countries, trayCountry{name: "Other", servers: other}) {
+			if len(c.servers) == 0 {
+				continue
+			}
+			sel := slices.ContainsFunc(c.servers, func(s trayServer) bool { return s.group == m.selGroup && s.name == m.selName })
+			parent := choice(servers, menuLabel(fmt.Sprintf("%s (%d)", c.name, len(c.servers)))+iconLabelPad, "", sel)
+			parent.SetIcon(flagIcon(c.flag))
+			for _, s := range c.servers {
+				item := choice(parent, menuLabel(s.label), "", s.group == m.selGroup && s.name == m.selName)
+				t.onClick(item, m.busy, func() { t.selectServer(s.group, s.name) })
+			}
+		}
+		servers.AddSeparator()
+		groupsIn = servers.AddSubMenuItem("Subscriptions", "")
+	}
 	for _, g := range m.groups {
 		label := fmt.Sprintf("%s (%d)", menuLabel(g.name), len(g.servers))
-		if g.name == m.selGroup {
-			label = "✓ " + label
-		}
-		parent := servers.AddSubMenuItem(label, "")
-		t.onClick(parent.AddSubMenuItem("Use the Fastest", "Test only this group"), m.busy || len(g.servers) == 0, func() {
+		parent := choice(groupsIn, label, "", g.name == m.selGroup)
+		// Actions first: a big subscription's list scrolls.
+		t.onClick(parent.AddSubMenuItem("⚡ Fastest Available in This Group", ""), m.busy || len(g.servers) == 0, func() {
 			t.run("Testing "+g.name+"…", false, "use", "--fastest", "--group", g.name)
 		})
 		if g.subscription {
@@ -413,40 +555,28 @@ func (t *tray) build(m trayModel) {
 			parent.AddSubMenuItem("No servers", "").Disable()
 		}
 		for _, name := range g.servers {
-			item := parent.AddSubMenuItemCheckbox(menuLabel(name), "", g.name == m.selGroup && name == m.selName)
+			_, label := splitFlag(name)
+			item := choice(parent, menuLabel(label)+iconLabelPad, "", g.name == m.selGroup && name == m.selName)
+			item.SetIcon(serverIcon(name))
 			t.onClick(item, m.busy, func() { t.selectServer(g.name, name) })
 		}
 	}
-	if len(m.groups) == 0 {
-		servers.AddSubMenuItem(`No servers yet ("proxy-router sub add <url>")`, "").Disable()
-	} else {
-		servers.AddSeparator()
-		t.onClick(servers.AddSubMenuItem("Use the Fastest Across All Groups", "Ping every server and select the fastest"), m.busy, func() {
-			t.run("Testing servers…", false, "use", "--fastest")
+	if slices.ContainsFunc(m.groups, func(g trayGroup) bool { return g.subscription }) {
+		groupsIn.AddSeparator()
+		t.onClick(groupsIn.AddSubMenuItem("Update All Subscriptions", ""), m.busy, func() {
+			t.run("Updating subscriptions…", false, "sub", "update")
 		})
 	}
-	t.onClick(servers.AddSubMenuItem("Update All Subscriptions", ""), m.busy || len(m.groups) == 0, func() {
-		t.run("Updating subscriptions…", false, "sub", "update")
-	})
-	systray.AddSeparator()
+}
 
-	t.onClick(systray.AddMenuItem("Edit Routing Rules", ""), false, func() {
-		path := filepath.Join(t.dir, "routing.yaml")
-		if e, err := load(); err == nil {
-			path = e.cfg.RulesPath()
-		}
-		openText(path)
-	})
-	t.onClick(systray.AddMenuItem("Show Log", ""), false, func() { openText(logPath(t.dir)) })
-	t.onClick(systray.AddMenuItem("Open Config Folder", ""), false, func() { openFolder(t.dir) })
-	systray.AddSeparator()
-	t.onClick(systray.AddMenuItemCheckbox("Start Tray at Login", "", m.autostart), false, func() {
-		if err := setTrayAutostart(!m.autostart, t.exe, t.dir); err != nil {
-			notify("Couldn't change login item", err.Error())
-		}
-		t.poke()
-	})
-	t.onClick(systray.AddMenuItem("Quit Tray", "The service keeps running; use Disconnect to stop it"), false, systray.Quit)
+// choice adds an item to pick from a list, checked if it's the picked
+// one. Only that one is checkable: KDE draws an empty box next to every
+// other checkable item.
+func choice(parent *systray.MenuItem, label, tip string, picked bool) *systray.MenuItem {
+	if picked {
+		return parent.AddSubMenuItemCheckbox(label, tip, true)
+	}
+	return parent.AddSubMenuItem(label, tip)
 }
 
 // onClick runs f for each click on item, or disables it.
@@ -546,6 +676,63 @@ func (t *tray) run(what string, root bool, args ...string) {
 			notify("proxy-router", firstLine(out.String()))
 		}
 	}()
+}
+
+// panelSocket is the Unix socket a running panel listens on; through it a
+// second launch brings that window forward.
+func panelSocket(dir string) string { return filepath.Join(dir, "panel.sock") }
+
+// panelRequest sends a command to a running panel, with the anchor when the
+// sender knows where the tray icon is. It reports whether one was there to
+// ask.
+func panelRequest(path, cmd string, a *panelAnchor) bool {
+	c, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	if a != nil {
+		_, _ = fmt.Fprintf(c, "%s %d %d", cmd, a.X, a.Y)
+	} else {
+		_, _ = c.Write([]byte(cmd))
+	}
+	_ = c.Close()
+	return true
+}
+
+// togglePanel opens the control window below the tray icon, or closes it if
+// it is already open.
+func (t *tray) togglePanel() { t.panel("toggle") }
+
+// openPanel shows the control window, starting it if it isn't running.
+func (t *tray) openPanel() { t.panel("show") }
+
+func (t *tray) panel(cmd string) {
+	var anchor *panelAnchor
+	if a, ok := statusItemAnchor(); ok {
+		anchor = &a
+	}
+	if panelRequest(panelSocket(t.dir), cmd, anchor) {
+		return
+	}
+	logName := filepath.Join(t.dir, "panel.log")
+	logf, err := os.OpenFile(logName, os.O_WRONLY|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		notify("Couldn't open the panel", err.Error())
+		return
+	}
+	defer logf.Close()
+	args := []string{"--dir", t.dir, "panel"}
+	if anchor != nil {
+		args = append(args, "--anchor", anchor.String())
+	}
+	cmd2 := exec.Command(t.exe, args...)
+	cmd2.Stdout, cmd2.Stderr = logf, logf
+	cmd2.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd2.Start(); err != nil {
+		notify("Couldn't open the panel", err.Error())
+		return
+	}
+	go func() { _ = cmd2.Wait() }()
 }
 
 func setTrayIcon(name string) {

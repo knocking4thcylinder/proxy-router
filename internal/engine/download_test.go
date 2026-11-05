@@ -73,20 +73,20 @@ func proxyServer(t *testing.T, addr, name string) *share.Server {
 	return s
 }
 
-// A server that answers the latency request but cuts the download fails;
-// one that delivers it reports a speed.
-func TestPingFailsServersWhoseDownloadStalls(t *testing.T) {
+// A server that answers the latency request but cuts the download is still
+// reachable: its speed test fails, but it isn't marked dead.
+func TestPingReportsStalledDownloadsAsSpeedErrors(t *testing.T) {
 	good := proxyServer(t, cuttingProxy(t, 0), "good")
 	cut := proxyServer(t, cuttingProxy(t, 16<<10), "cut")
 	results := Ping(context.Background(), []config.Entry{{Index: 1, Server: good}, {Index: 2, Server: cut}}, PingOptions{
 		URL: "http://probe.invalid/ping", DownloadURL: "http://probe.invalid/down",
 		Timeout: time.Second, Parallel: 2,
 	})
-	if r := results[0]; r.Err != nil || r.Speed <= 0 {
-		t.Errorf("good server: err %v, speed %v; want a speed", r.Err, r.Speed)
+	if r := results[0]; r.Err != nil || r.SpeedErr != nil || r.Speed <= 0 {
+		t.Errorf("good server: err %v, speed err %v, speed %v; want a speed", r.Err, r.SpeedErr, r.Speed)
 	}
-	if r := results[1]; !errors.Is(r.Err, ErrStalled) || !strings.Contains(r.Err.Error(), "after 16 KB") {
-		t.Errorf("cut server: err %v; want stalled after 16 KB", r.Err)
+	if r := results[1]; r.Err != nil || r.Speed != 0 || !errors.Is(r.SpeedErr, ErrStalled) || !strings.Contains(r.SpeedErr.Error(), "after 16 KB") {
+		t.Errorf("cut server: err %v, speed err %v; want reachable with a stalled speed test", r.Err, r.SpeedErr)
 	}
 }
 
@@ -164,7 +164,7 @@ func TestDownloadTooSlow(t *testing.T) {
 		_ = srv.Serve(l)
 	}()
 	_, err = Download(context.Background(), http.DefaultClient, "http://"+l.Addr().String()+"/", time.Second, 300*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "too slow") || errors.Is(err, ErrStalled) {
+	if err == nil || !errors.Is(err, ErrTooSlow) || errors.Is(err, ErrStalled) || !strings.Contains(err.Error(), "too slow") {
 		t.Errorf("got %v; want too slow", err)
 	}
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -10,8 +11,9 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
-// The fastest download wins over the lowest latency; pools only when no
-// single server works.
+// The fastest download wins over the lowest latency; a server whose speed
+// test failed still works, so it only loses to reachable servers with a
+// measured or unmeasured speed; pools only when no single server works.
 func TestPickFastest(t *testing.T) {
 	result := func(name string, pool bool, latency time.Duration, speed float64, err error) engine.PingResult {
 		s := &share.Server{Name: name}
@@ -19,6 +21,9 @@ func TestPickFastest(t *testing.T) {
 			s.Pool = &share.Pool{}
 		}
 		return engine.PingResult{Entry: config.Entry{Server: s}, Latency: latency, Speed: speed, Err: err}
+	}
+	speedErr := func(name string, latency time.Duration, err error) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name}}, Latency: latency, SpeedErr: err}
 	}
 	cases := []struct {
 		want    string
@@ -39,6 +44,18 @@ func TestPickFastest(t *testing.T) {
 		{"measured", []engine.PingResult{
 			result("unmeasured", false, 10*time.Millisecond, 0, nil),
 			result("measured", false, 400*time.Millisecond, 1e5, nil),
+		}},
+		{"measured", []engine.PingResult{
+			speedErr("stalled", 10*time.Millisecond, engine.ErrStalled),
+			result("measured", false, 400*time.Millisecond, 1e5, nil),
+		}},
+		{"unmeasured", []engine.PingResult{
+			speedErr("stalled", 10*time.Millisecond, engine.ErrStalled),
+			result("unmeasured", false, 300*time.Millisecond, 0, nil),
+		}},
+		{"stalled", []engine.PingResult{
+			speedErr("stalled", 100*time.Millisecond, engine.ErrStalled),
+			result("dead", false, 0, 0, errors.New("timeout")),
 		}},
 		{"quicker", []engine.PingResult{
 			result("slower", false, 300*time.Millisecond, 0, nil),
@@ -116,6 +133,34 @@ func TestAutoTargetSkips(t *testing.T) {
 	st.SelectAuto(st.Entries()[1], "")
 	if _, ok := (runOptions{}).autoTarget(env); ok {
 		t.Error("checking a pool")
+	}
+}
+
+// A speed test that fails while the server still answers requests says
+// nothing about the server, so it neither counts as a failure nor starts a
+// scan.
+func TestSpeedOnlyCheckDoesNotCountAsFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	if _, err := config.LoadState(dir); err != nil {
+		t.Fatal(err)
+	}
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	target := config.Entry{Server: &share.Server{Name: "a"}}
+	sw.check(context.Background(), runOptions{}, checkResult{
+		target:    target,
+		err:       errors.New("connection reset"),
+		speedOnly: true,
+	}, 0)
+	if sw.failures != 0 || sw.scanning {
+		t.Fatalf("speed-only failure counted: failures %d, scanning %v", sw.failures, sw.scanning)
+	}
+	if !sw.speedOnly {
+		t.Fatal("speed-only state not kept")
+	}
+	sw.check(context.Background(), runOptions{}, checkResult{target: target}, 0)
+	if sw.speedOnly {
+		t.Fatal("speed-only state not cleared after a full check")
 	}
 }
 
