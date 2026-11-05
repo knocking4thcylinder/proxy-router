@@ -4,11 +4,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -127,6 +129,33 @@ func configDir() (string, error) {
 	return config.CheckDir(dir)
 }
 
+// configWarnings remembers the config warnings already shown, so that
+// commands which reload the config on a timer (the tray, every 2 seconds)
+// don't repeat a standing warning in their log forever.
+var configWarnings warningLog
+
+type warningLog struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+// print writes each warning it hasn't written before. It is safe for
+// concurrent use.
+func (l *warningLog) print(w io.Writer, warnings []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.seen == nil {
+		l.seen = map[string]bool{}
+	}
+	for _, warning := range warnings {
+		if l.seen[warning] {
+			continue
+		}
+		l.seen[warning] = true
+		fmt.Fprintln(w, "note:", warning)
+	}
+}
+
 func load() (*env, error) {
 	dir, err := configDir()
 	if err != nil {
@@ -142,9 +171,7 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, w := range cfg.Warnings {
-		fmt.Fprintln(os.Stderr, "note:", w)
-	}
+	configWarnings.print(os.Stderr, cfg.Warnings)
 	state, err := config.LoadState(dir)
 	if err != nil {
 		return nil, err
