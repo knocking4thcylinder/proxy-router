@@ -18,9 +18,9 @@ import (
 
 const trayUsesTemplate = false
 
-// trayOpensPanelOnTap is false on Linux: a left click opens the menu there,
-// and the panel has its own menu item.
-const trayOpensPanelOnTap = false
+// trayOpensPanelOnTap opens the panel on a left click, as it does on macOS;
+// the menu stays on the right click.
+const trayOpensPanelOnTap = true
 
 // iconLabelPad goes after the label of an item with an icon: KDE leaves
 // the icon out when it sizes the menu, running long labels into a
