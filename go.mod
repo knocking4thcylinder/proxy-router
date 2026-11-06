@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	fyne.io/fyne/v2 v2.8.2
 	fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4
+	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -30,7 +31,6 @@ require (
 	github.com/fyne-io/oksvg v0.2.1-0.20260918172519-a9af55fa95d9 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
 	github.com/go-gl/gl v0.0.0-20260331235117-4566fea9a276 // indirect
-	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.2 // indirect
 	github.com/go-text/render v0.2.1 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/google/btree v1.1.2 // indirect

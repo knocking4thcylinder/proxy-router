@@ -214,14 +214,14 @@ func (p *panel) run() error {
 
 	p.app = app.NewWithID("io.github.knocking4thcylinder.proxy-router")
 	p.app.Settings().SetTheme(panelTheme{})
-	p.win = p.app.NewWindow("proxy-router")
+	p.win = newPanelWindow(p.app)
 	p.win.SetTitle("proxy-router")
 	p.win.SetPadded(false)
 	p.win.SetFixedSize(true)
 	if dw, ok := p.win.(desktop.Window); ok {
 		dw.RequestAlwaysOnTop() // stays over the app it controls
 		if p.anchor != nil {
-			dw.RequestPosition(p.anchor.X, p.anchor.Y)
+			requestPanelPosition(p.win, *p.anchor)
 		}
 	}
 	p.win.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
@@ -341,9 +341,7 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 func (p *panel) reveal() {
 	first := p.anchor != nil && !p.styled
 	if p.anchor != nil {
-		if dw, ok := p.win.(desktop.Window); ok {
-			dw.RequestPosition(p.anchor.X, p.anchor.Y)
-		}
+		requestPanelPosition(p.win, *p.anchor)
 	}
 	if first {
 		// The first show restyles the window, which takes focus away
