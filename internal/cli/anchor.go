@@ -8,10 +8,11 @@ import (
 // panelWidth is the control window's fixed width, in Fyne units.
 const panelWidth = 340
 
-// panelAnchor is the top-left corner of the control window in the screen
-// coordinates Fyne uses: from the top-left of the main display, y growing
-// down. The tray works it out from its status item so the window opens
-// right below the icon.
+// panelAnchor locates the tray icon on screen. On macOS it is the top-left
+// corner of the control window in the screen coordinates Fyne uses: from the
+// top-left of the main display, y growing down. On Linux it is the global
+// click point in physical pixels, because a StatusNotifierItem has no window
+// frame to read; the panel works out where to open from that point.
 type panelAnchor struct{ X, Y int }
 
 func (a panelAnchor) String() string {

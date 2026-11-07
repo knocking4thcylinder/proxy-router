@@ -93,6 +93,8 @@ menu. --foreground keeps it attached to the terminal instead.`,
 			t := &tray{dir: dir, exe: exe, userT: userT, sysT: sysT, kick: make(chan struct{}, 1)}
 			if panelAvailable() && trayOpensPanelOnTap {
 				systray.SetOnTapped(t.togglePanel)
+				// The monitor must be listening before the first click.
+				watchTrayClicks()
 			}
 			systray.Run(t.ready, nil)
 			// The popover belongs to the tray; don't leave it running alone.
