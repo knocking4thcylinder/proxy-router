@@ -357,11 +357,20 @@ func runJobs[T any](jobs []T, parallel int, fn func(T)) {
 }
 
 // ControlSockets runs ctl on every socket Xray opens in this process,
-// before it connects or binds. It can't be undone, so it's only for
-// one-shot commands like ping. It briefly swaps the process-wide dialer
-// while registering, so nothing else may dial then: a long-running process
-// would let connections made during the swap bypass the Watcher.
+// before it connects or binds. Xray has no way to remove a controller, so
+// only the first successful call takes effect; later calls are no-ops. The
+// panel re-runs ping on a timer, and without this every test would append
+// another controller and every dial would run all of them.
+//
+// It briefly swaps the process-wide dialer while registering, so nothing
+// else may dial then: a long-running process would let connections made
+// during the swap bypass the Watcher.
 func ControlSockets(ctl func(network, address string, c syscall.RawConn) error) error {
+	controlMu.Lock()
+	defer controlMu.Unlock()
+	if controlRegistered {
+		return nil
+	}
 	if base != nil {
 		// Xray only adds controllers to the dialer in effect, so put the
 		// one the Watcher wraps in place for a moment. Safe only before
@@ -370,8 +379,17 @@ func ControlSockets(ctl func(network, address string, c syscall.RawConn) error) 
 		internet.UseAlternativeSystemDialer(base)
 		defer internet.UseAlternativeSystemDialer(w)
 	}
-	return internet.RegisterDialerController(ctl)
+	if err := internet.RegisterDialerController(ctl); err != nil {
+		return err
+	}
+	controlRegistered = true
+	return nil
 }
+
+var (
+	controlMu         sync.Mutex
+	controlRegistered bool
+)
 
 // maxPingParallel caps how many servers Ping tests at once.
 const maxPingParallel = 64

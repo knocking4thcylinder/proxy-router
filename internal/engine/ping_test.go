@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -167,6 +168,16 @@ func TestControlSocketsCoversPing(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Xray can't remove a controller, so a second registration would run
+	// both on every dial. The panel re-registers before every test; only
+	// the first call may take effect.
+	var extra atomic.Int32
+	if err := ControlSockets(func(string, string, syscall.RawConn) error {
+		extra.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -194,5 +205,8 @@ func TestControlSocketsCoversPing(t *testing.T) {
 	}
 	if seen["tcp"] == 0 || seen["udp"] == 0 {
 		t.Errorf("controlled sockets: %v; want both TCP and UDP", seen)
+	}
+	if n := extra.Load(); n != 0 {
+		t.Errorf("second ControlSockets ran %d times; want 0", n)
 	}
 }
