@@ -1,0 +1,9 @@
+.git
+.gocache
+.gomod
+.gopath
+dist
+proxy-router
+proxy-router-*
+*.exe
+*.log
