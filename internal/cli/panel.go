@@ -143,6 +143,12 @@ type panel struct {
 	// toggle must not reopen the panel.
 	autoHideAt time.Time
 
+	// tickerMu guards tickerStop. The scan and refresh loops run only while
+	// the popover is open; closing it stops them, and revealing it starts
+	// them again.
+	tickerMu   sync.Mutex
+	tickerStop chan struct{}
+
 	scroll *container.Scroll // keeps its offset while the page rebuilds
 	order  []panelOrder      // rows stay put while a scan updates them
 
@@ -168,6 +174,8 @@ const (
 	panelRecheckMax = 16
 	// panelRescan is how often every server is tested again.
 	panelRescan = 5 * time.Minute
+	// panelRefresh is how often the page picks up results from a scan.
+	panelRefresh = 2 * time.Second
 	// panelToggleGrace covers the gap between the panel losing focus to a
 	// tray click and that click's toggle request arriving.
 	panelToggleGrace = 500 * time.Millisecond
@@ -237,25 +245,75 @@ func (p *panel) run() error {
 	p.app.Lifecycle().SetOnExitedForeground(p.dismiss)
 	p.page = "home"
 	p.refresh()
-	go p.ping()
-	go func() {
-		for range time.Tick(panelRecheck) {
-			go p.autoTest()
-		}
-	}()
-	go func() {
-		for range time.Tick(2 * time.Second) {
-			fyne.Do(p.refresh)
-		}
-	}()
+	defer p.stopTickers()
 	go p.serve(ln)
 	if p.anchor != nil {
+		// reveal starts the scan/refresh loops; closing the popover stops
+		// them until the next click.
 		p.reveal()
 		p.app.Run()
 		return nil
 	}
+	p.startTickers()
 	p.win.ShowAndRun()
 	return nil
+}
+
+// startTickers starts the scan and refresh loops. It is idempotent: reveal
+// calls it every time the popover opens, and the first call also refreshes
+// immediately, so a panel left closed overnight doesn't show old results
+// until the first tick.
+func (p *panel) startTickers() {
+	p.tickerMu.Lock()
+	if p.tickerStop != nil {
+		p.tickerMu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	p.tickerStop = stop
+	p.tickerMu.Unlock()
+
+	go p.tickerLoop(stop)
+	go p.refreshLoop(stop)
+	go p.autoTest()
+}
+
+// stopTickers stops the loops when the popover closes. A scan already in
+// flight finishes; only new ticks are stopped.
+func (p *panel) stopTickers() {
+	p.tickerMu.Lock()
+	defer p.tickerMu.Unlock()
+	if p.tickerStop == nil {
+		return
+	}
+	close(p.tickerStop)
+	p.tickerStop = nil
+}
+
+func (p *panel) tickerLoop(stop <-chan struct{}) {
+	t := time.NewTicker(panelRecheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			go p.autoTest()
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (p *panel) refreshLoop(stop <-chan struct{}) {
+	t := time.NewTicker(panelRefresh)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			fyne.Do(p.refresh)
+		case <-stop:
+			return
+		}
+	}
 }
 
 // lockPanel takes the panel's single-instance lock: the kernel drops it when
@@ -316,6 +374,7 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 	}
 	switch cmd {
 	case "quit":
+		p.stopTickers()
 		p.app.Quit()
 	case "hide":
 		p.hide()
@@ -364,12 +423,14 @@ func (p *panel) reveal() {
 	if p.anchor != nil {
 		activatePanelWindow()
 	}
+	p.startTickers()
 }
 
 // hide closes the popover without quitting, so the next click is instant.
 func (p *panel) hide() {
 	p.open = false
 	p.startupUntil = time.Time{}
+	p.stopTickers()
 	p.win.Hide()
 }
 
@@ -392,6 +453,7 @@ func (p *panel) dismiss() {
 	}
 	p.open = false
 	p.autoHideAt = time.Now()
+	p.stopTickers()
 	p.win.Hide()
 }
 
