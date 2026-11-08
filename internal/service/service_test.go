@@ -189,3 +189,36 @@ func TestSystemHardening(t *testing.T) {
 		}
 	}
 }
+
+func TestSameContents(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	// Larger than one comparison chunk, to exercise the loop.
+	big := make([]byte, 3*(64<<10)+123)
+	for i := range big {
+		big[i] = byte(i * 7)
+	}
+	a := write("a", big)
+	b := write("b", big)
+	if same, err := sameContents(a, b); err != nil || !same {
+		t.Fatalf("identical files: same=%v err=%v", same, err)
+	}
+	if same, err := sameContents(a, write("short", big[:len(big)-1])); err != nil || same {
+		t.Fatalf("different sizes: same=%v err=%v", same, err)
+	}
+	diff := append([]byte(nil), big...)
+	diff[len(diff)/2] ^= 0xff
+	if same, err := sameContents(a, write("diff", diff)); err != nil || same {
+		t.Fatalf("different contents: same=%v err=%v", same, err)
+	}
+	if _, err := sameContents(a, filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing file: want an error")
+	}
+}

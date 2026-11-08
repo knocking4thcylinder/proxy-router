@@ -146,16 +146,60 @@ func Outdated(t Target) bool {
 	return err == nil && !same
 }
 
-func sameContents(a, b string) (bool, error) {
-	fa, err := os.ReadFile(a)
+// sameContents compares two files without reading either whole: the
+// service binary is tens of megabytes, and the tray and panel check it
+// every time they start. Loading both would briefly cost 100 MB or more,
+// which the Go heap then keeps until a later collection.
+func sameContents(a, b string) (same bool, err error) {
+	fa, err := os.Open(a)
 	if err != nil {
 		return false, err
 	}
-	fb, err := os.ReadFile(b)
+	defer fa.Close()
+	fb, err := os.Open(b)
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(fa, fb), nil
+	defer fb.Close()
+
+	sa, err := fa.Stat()
+	if err != nil {
+		return false, err
+	}
+	sb, err := fb.Stat()
+	if err != nil {
+		return false, err
+	}
+	if sa.Size() != sb.Size() {
+		return false, nil
+	}
+
+	const chunk = 64 << 10
+	bufA, bufB := make([]byte, chunk), make([]byte, chunk)
+	for {
+		na, errA := io.ReadFull(fa, bufA)
+		nb, errB := io.ReadFull(fb, bufB)
+		if na != nb || !bytes.Equal(bufA[:na], bufB[:nb]) {
+			return false, nil
+		}
+		// A short read at EOF is the last chunk, not a failure.
+		endA := errA == io.EOF || errA == io.ErrUnexpectedEOF
+		endB := errB == io.EOF || errB == io.ErrUnexpectedEOF
+		if errA != nil && !endA {
+			return false, errA
+		}
+		if errB != nil && !endB {
+			return false, errB
+		}
+		switch {
+		case endA && endB:
+			return true, nil
+		case endA || endB:
+			// Equal sizes mean both end together; an early EOF is a
+			// change during the read.
+			return false, nil
+		}
+	}
 }
 
 // writeDefinition writes a service definition file. User services' files

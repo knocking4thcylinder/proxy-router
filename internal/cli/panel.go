@@ -3,7 +3,7 @@
 package cli
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -149,6 +149,12 @@ type panel struct {
 	tickerMu   sync.Mutex
 	tickerStop chan struct{}
 
+	// idle quits the process after the popover has been closed long
+	// enough. The window is only open for a moment at a time, and while
+	// it is hidden it still holds the GUI toolkit's memory (a Fyne window
+	// brings the OpenGL driver, fonts and textures with it).
+	idle *time.Timer
+
 	scroll *container.Scroll // keeps its offset while the page rebuilds
 	order  []panelOrder      // rows stay put while a scan updates them
 
@@ -183,6 +189,11 @@ const (
 	// focus away more than once even though the user is still looking at
 	// the panel.
 	panelStartupGrace = time.Second
+	// panelIdleExit quits a hidden panel, so its window and GL resources
+	// don't sit in memory for hours. It matches the rescan interval: a
+	// panel reopened after this long would have run a full scan anyway,
+	// while one reopened sooner stays warm.
+	panelIdleExit = panelRescan
 )
 
 func pingKey(group, name string) string { return group + "\x00" + name }
@@ -374,6 +385,7 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 	}
 	switch cmd {
 	case "quit":
+		p.cancelIdleExit()
 		p.stopTickers()
 		p.app.Quit()
 	case "hide":
@@ -398,6 +410,7 @@ func (p *panel) command(cmd string, a panelAnchor, hasAnchor bool) {
 // first time. The icon moves as menu bar items come and go, so every show
 // takes the fresh anchor.
 func (p *panel) reveal() {
+	p.cancelIdleExit()
 	first := p.anchor != nil && !p.styled
 	if p.anchor != nil {
 		requestPanelPosition(p.win, *p.anchor)
@@ -432,6 +445,31 @@ func (p *panel) hide() {
 	p.startupUntil = time.Time{}
 	p.stopTickers()
 	p.win.Hide()
+	p.scheduleIdleExit()
+}
+
+// scheduleIdleExit quits the process after the popover has been hidden for
+// panelIdleExit. Revealing it first cancels the timer.
+func (p *panel) scheduleIdleExit() {
+	p.cancelIdleExit()
+	p.idle = time.AfterFunc(panelIdleExit, func() {
+		// Check on Fyne's goroutine: the panel may have been revealed
+		// after the timer fired but before this callback ran.
+		fyne.Do(func() {
+			if p.open {
+				return
+			}
+			p.stopTickers()
+			p.app.Quit()
+		})
+	})
+}
+
+func (p *panel) cancelIdleExit() {
+	if p.idle != nil {
+		p.idle.Stop()
+		p.idle = nil
+	}
 }
 
 // dismiss closes the popover when it loses focus, the way a menu does.
@@ -455,6 +493,7 @@ func (p *panel) dismiss() {
 	p.autoHideAt = time.Now()
 	p.stopTickers()
 	p.win.Hide()
+	p.scheduleIdleExit()
 }
 
 // panelToggle is what a click on the tray icon should do to the panel.
@@ -841,18 +880,57 @@ func (p *panel) toggleAuto(on bool) {
 
 type panelSwitch struct{ at, from, to string }
 
+// switchCache keeps the last read of the log. The panel refreshes every
+// two seconds, and the service log can be ten megabytes; re-reading and
+// re-splitting it each time was a steady stream of garbage.
+var switchCache struct {
+	mu   sync.Mutex
+	path string
+	size int64
+	mod  time.Time
+	n    int
+	out  []panelSwitch
+}
+
 // readSwitches finds the last n "auto-switch: X stopped working;
-// switching to Y" lines in a log.
+// switching to Y" lines in a log. It reads only the tail of a large log,
+// and reuses the last result while the file is unchanged.
 func readSwitches(path string, n int) []panelSwitch {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	switchCache.mu.Lock()
+	if switchCache.path == path && switchCache.size == fi.Size() &&
+		switchCache.mod.Equal(fi.ModTime()) && switchCache.n == n {
+		out := switchCache.out
+		switchCache.mu.Unlock()
+		return out
+	}
+	switchCache.mu.Unlock()
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	// Auto-switch lines are recent; 256 KB is plenty for the last two,
+	// and stops a 10 MB log from being read every refresh.
+	const tail = 256 << 10
+	start := max(fi.Size()-tail, 0)
+	buf := make([]byte, fi.Size()-start)
+	read, _ := f.ReadAt(buf, start)
+	buf = buf[:read]
+	if start > 0 {
+		// Drop the partial first line.
+		if i := bytes.IndexByte(buf, '\n'); i >= 0 {
+			buf = buf[i+1:]
+		} else {
+			buf = nil
+		}
+	}
 	var out []panelSwitch
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
+	for _, line := range strings.Split(string(buf), "\n") {
 		at, rest, ok := strings.Cut(line, " auto-switch: ")
 		if !ok {
 			continue
@@ -879,7 +957,13 @@ func readSwitches(path string, n int) []panelSwitch {
 		out = append(out, panelSwitch{at, short(from), short(to)})
 	}
 	slices.Reverse(out)
-	return out[:min(n, len(out))]
+	out = out[:min(n, len(out))]
+
+	switchCache.mu.Lock()
+	switchCache.path, switchCache.size, switchCache.mod = path, fi.Size(), fi.ModTime()
+	switchCache.n, switchCache.out = n, out
+	switchCache.mu.Unlock()
+	return out
 }
 
 // ---- servers ----
