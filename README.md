@@ -100,6 +100,13 @@ podman build -f Containerfile.arch \
 That binary is linked against the Arch image's glibc, so use the default
 `Dockerfile` if it also has to run on an older distribution.
 
+### Prebuilt binaries
+
+Pushing a `v*` tag builds Linux (amd64 / arm64), macOS arm64, and Windows
+(amd64 / arm64) binaries and attaches them to the GitHub release, with
+`SHA256SUMS`. Windows builds are CLI-only: the tray and panel need Linux or
+macOS.
+
 ## Quick start
 
 ```sh

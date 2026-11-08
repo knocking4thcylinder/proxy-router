@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            os: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            cgo: "1"
+            ext: ""
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            cgo: "1"
+            ext: ""
+          - name: macos-arm64
+            os: macos-15
+            goos: darwin
+            goarch: arm64
+            cgo: "1"
+            ext: ""
+          - name: windows-amd64
+            os: windows-2022
+            goos: windows
+            goarch: amd64
+            cgo: "0"
+            ext: ".exe"
+          - name: windows-arm64
+            os: windows-2022
+            goos: windows
+            goarch: arm64
+            cgo: "0"
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxxf86vm-dev
+
+      - name: Build
+        shell: bash
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          mkdir -p dist
+          go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags "-s -w -X github.com/knocking4thcylinder/proxy-router/internal/cli.Version=${version}" \
+            -o "dist/proxy-router${{ matrix.ext }}" \
+            .
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -C dist -czf "dist/proxy-router-${{ matrix.name }}.tar.gz" "proxy-router${{ matrix.ext }}"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/proxy-router.exe" -DestinationPath "dist/proxy-router-${{ matrix.name }}.zip" -Force
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-router-${{ matrix.name }}
+          path: |
+            dist/proxy-router-*.tar.gz
+            dist/proxy-router-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
