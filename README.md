@@ -88,6 +88,18 @@ proxy-router --version
 the machine you're on. The build image supplies the headers; the machine
 that runs the binary still needs Mesa and the Wayland/X11 runtime libraries.
 
+The default builder is Debian slim because its older glibc keeps the binary
+portable. On Arch or SteamOS, `Containerfile.arch` builds with Arch packages
+instead:
+
+```sh
+podman build -f Containerfile.arch \
+  --output type=local,dest="$HOME/.local/bin" .
+```
+
+That binary is linked against the Arch image's glibc, so use the default
+`Dockerfile` if it also has to run on an older distribution.
+
 ## Quick start
 
 ```sh

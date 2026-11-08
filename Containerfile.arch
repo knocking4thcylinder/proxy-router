@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+
+# Arch/SteamOS builder: no Debian anywhere. The binary is linked against
+# this image's glibc, so use the default Dockerfile when the binary has to
+# run on a non-Arch system with an older glibc.
+FROM archlinux:latest AS build
+
+RUN pacman -Syu --noconfirm --needed \
+        ca-certificates \
+        go \
+        gcc \
+        pkgconf \
+        mesa \
+        wayland \
+        libxkbcommon \
+        libx11 \
+        libxcursor \
+        libxi \
+        libxrandr \
+        libxinerama \
+        libxxf86vm \
+    && pacman -Scc --noconfirm
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=1 go build \
+        -trimpath \
+        -buildvcs=false \
+        -o /out/proxy-router \
+        .
+
+FROM scratch AS artifact
+COPY --from=build /out/proxy-router /proxy-router
