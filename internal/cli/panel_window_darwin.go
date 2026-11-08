@@ -1,4 +1,4 @@
-//go:build panel && darwin && cgo
+//go:build cgo && darwin
 
 package cli
 

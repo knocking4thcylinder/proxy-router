@@ -29,10 +29,38 @@ protocol Xray supports works, not just the links above.
 
 ## Install
 
+The tray and the control panel are built by default when cgo is available
+(Linux and macOS). They need a C compiler and the OpenGL / Wayland (or X11)
+development headers.
+
+Debian / Ubuntu:
+
+```sh
+sudo apt install build-essential pkg-config libgl1-mesa-dev libwayland-dev \
+  libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev \
+  libxxf86vm-dev
+```
+
+Arch / SteamOS:
+
+```sh
+sudo pacman -S --needed base-devel pkgconf mesa wayland libx11 \
+  libxcursor libxi libxrandr libxinerama libxxf86vm
+```
+
+Then:
+
 ```sh
 go install github.com/knocking4thcylinder/proxy-router@latest
 # or
 go build -o proxy-router .
+```
+
+For a build without the control panel (and, on macOS, without the menu bar
+icon), disable cgo:
+
+```sh
+CGO_ENABLED=0 go install github.com/knocking4thcylinder/proxy-router@latest
 ```
 
 ## Quick start
@@ -168,11 +196,14 @@ Quitting the tray leaves the service running.
 
 - **Linux:** works on KDE Plasma (including the Steam Deck's desktop mode),
   XFCE, Cinnamon and others with StatusNotifierItem support; GNOME needs
-  the *AppIndicator and KStatusNotifierItem Support* extension. No extra
-  libraries are needed.
-- **macOS:** the menu bar icon needs cgo, so build on the Mac with Xcode's
-  command line tools installed (`xcode-select --install`); a build without
-  cgo still works, minus `tray`.
+  the *AppIndicator and KStatusNotifierItem Support* extension. The tray
+  icon needs no extra libraries. The control panel is built by default
+  when cgo is available and needs the headers listed under
+  [Install](#install); `CGO_ENABLED=0` builds without it.
+- **macOS:** the menu bar icon and the control panel need cgo, so build on
+  the Mac with Xcode's command line tools installed
+  (`xcode-select --install`); a build without cgo still works, minus
+  `tray` and the panel.
 
 ## Commands
 

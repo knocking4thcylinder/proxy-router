@@ -1,4 +1,4 @@
-//go:build panel && linux
+//go:build cgo && linux
 
 package cli
 
