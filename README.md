@@ -100,12 +100,24 @@ podman build -f Containerfile.arch \
 That binary is linked against the Arch image's glibc, so use the default
 `Dockerfile` if it also has to run on an older distribution.
 
-### Prebuilt binaries
+### Install a release
 
-Pushing a `v*` tag builds Linux (amd64 / arm64), macOS arm64, and Windows
-(amd64 / arm64) binaries and attaches them to the GitHub release, with
-`SHA256SUMS`. Windows builds are CLI-only: the tray and panel need Linux or
-macOS.
+Linux (amd64 / arm64) and macOS arm64:
+
+```sh
+curl -fsSL https://github.com/knocking4thcylinder/proxy-router/releases/latest/download/install.sh | sh
+```
+
+Pin a version with `sh -s -- v0.1.0`, or set `BINDIR` to install elsewhere.
+The installer verifies `SHA256SUMS` and puts the binary in `~/.local/bin`.
+
+For Windows, download the matching `.zip` from the
+[release](https://github.com/knocking4thcylinder/proxy-router/releases/latest)
+and extract it. Windows builds are CLI-only: the tray and panel need Linux
+or macOS.
+
+Pushing a `v*` tag builds all five targets and publishes the archives,
+`install.sh`, and `SHA256SUMS`.
 
 ## Quick start
 

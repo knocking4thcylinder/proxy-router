@@ -122,10 +122,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Add the installer
+        run: cp install.sh artifacts/install.sh
 
       - name: Generate checksums
         working-directory: artifacts
