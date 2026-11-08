@@ -1,15 +1,21 @@
 # syntax=docker/dockerfile:1
 
-# The panel needs cgo and the OpenGL / Wayland / X11 development headers.
-# Override GO_VERSION if the 1.27 image is not available yet.
-ARG GO_VERSION=1.27
+# The panel is cgo, so the build stage needs a C toolchain and the
+# OpenGL / Wayland / X11 headers. It uses Debian slim for a glibc baseline
+# old enough to run on current distros; the artifact stage is still empty
+# except for the binary.
+ARG GO_VERSION=1.27.1
 
-FROM golang:${GO_VERSION}-bookworm AS build
+FROM debian:bookworm-slim AS build
+
+ARG GO_VERSION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        build-essential \
+        curl \
+        gcc \
+        libc6-dev \
         pkg-config \
         libgl1-mesa-dev \
         libwayland-dev \
@@ -21,6 +27,22 @@ RUN apt-get update \
         libxinerama-dev \
         libxxf86vm-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Go here rather than inheriting the much larger golang image.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64|arm64|s390x|riscv64) ;; \
+        armhf) arch=armv6l ;; \
+        i386) arch=386 ;; \
+        ppc64el) arch=ppc64le ;; \
+        *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tar.gz; \
+    tar -C /usr/local -xzf /tmp/go.tar.gz; \
+    rm /tmp/go.tar.gz
+
+ENV PATH=/usr/local/go/bin:$PATH
 
 WORKDIR /src
 
@@ -37,6 +59,6 @@ RUN CGO_ENABLED=1 go build \
         .
 
 # Export the binary with:
-#   docker buildx build --output=dist .
+#   podman build --output type=local,dest="$HOME/.local/bin" .
 FROM scratch AS artifact
 COPY --from=build /out/proxy-router /proxy-router

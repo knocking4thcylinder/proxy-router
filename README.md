@@ -63,27 +63,30 @@ icon), disable cgo:
 CGO_ENABLED=0 go install github.com/knocking4thcylinder/proxy-router@latest
 ```
 
-### Build in Docker
+### Build in Docker or Podman
 
-`Dockerfile` builds the Linux binary, panel included, and exports it so the
-container never has to run the GUI:
+`Dockerfile` builds the Linux binary, panel included, and exports only the
+binary. Its build stage is Debian slim with a small Go toolchain; the final
+stage is `scratch`, so no distro is included in the output.
 
-```sh
-mkdir -p dist
-docker buildx build --platform linux/amd64 --output=dist .
-./dist/proxy-router --version
-```
-
-Use your own architecture instead of `linux/amd64` when you aren't building
-for a Steam Deck. The build image supplies the headers; the machine that
-runs the binary still needs Mesa and the Wayland/X11 runtime libraries.
-
-`docker buildx` is part of Docker Desktop and recent Docker Engine. With
-plain BuildKit, use:
+With Podman, writing straight to a directory on `PATH`:
 
 ```sh
-DOCKER_BUILDKIT=1 docker build --output=dist .
+podman build --output type=local,dest="$HOME/.local/bin" .
+proxy-router --version
 ```
+
+With Docker:
+
+```sh
+docker buildx build --platform linux/amd64 \
+  --output=type=local,dest="$HOME/.local/bin" .
+proxy-router --version
+```
+
+`--platform` defaults to the host architecture, so omit it when building for
+the machine you're on. The build image supplies the headers; the machine
+that runs the binary still needs Mesa and the Wayland/X11 runtime libraries.
 
 ## Quick start
 
