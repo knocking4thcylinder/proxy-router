@@ -282,7 +282,11 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if _, sysT, terr := targets(); terr == nil && exe == service.BinaryPath(sysT) && service.Outdated(sysT) {
-			fmt.Fprintln(os.Stderr, `note: the TUN service has a different build of proxy-router; "proxy-router restart" updates it`)
+			if newerService(sysT) {
+				fmt.Fprintln(os.Stderr, `note: the TUN service has a newer build of proxy-router; "proxy-router update" updates this binary`)
+			} else {
+				fmt.Fprintln(os.Stderr, `note: the TUN service has a different build of proxy-router; "proxy-router restart" updates it`)
+			}
 		}
 		os.Exit(ee.ExitCode())
 	}
@@ -312,6 +316,10 @@ func rootExecutable(which rootBinary) (string, error) {
 		// it's updated.
 		fmt.Fprintln(os.Stderr, "the TUN service has an older build of proxy-router; using this one")
 	case err == nil:
+		if which == upgradeBinary && newerBinary(installed) {
+			fmt.Fprintln(os.Stderr, "the TUN service runs a newer build of proxy-router; using it")
+			return installed, nil
+		}
 		_, sysT, terr := targets()
 		if which != upgradeBinary || (terr == nil && !service.Outdated(sysT)) {
 			return installed, nil
@@ -434,7 +442,10 @@ func startService(o startOptions, restart bool) error {
 		}
 		fmt.Printf("stopped the proxy-mode %s\n", userT)
 	}
-	if _, err := service.InstallBinary(want); err != nil {
+	if newerService(want) {
+		// An older CLI must not undo a background update of the service.
+		fmt.Fprintf(os.Stderr, "note: the %s runs a newer build of proxy-router; keeping it (\"proxy-router update\" updates this binary)\n", want)
+	} else if _, err := service.InstallBinary(want); err != nil {
 		return fmt.Errorf("install the service binary: %w", err)
 	}
 	begin := time.Now()
@@ -573,7 +584,11 @@ func showStatus() error {
 		}
 		fmt.Printf("service: %s (%s mode, %s, %s)\n", state, modeName(t), t, auto)
 		if service.Outdated(t) {
-			fmt.Println(`note:    the service runs a different build than this one; "proxy-router restart" updates it`)
+			if newerService(t) {
+				fmt.Println(`note:    the service runs a newer build; "proxy-router update" updates this binary`)
+			} else {
+				fmt.Println(`note:    the service runs a different build than this one; "proxy-router restart" updates it`)
+			}
 		}
 	}
 	if !shown {

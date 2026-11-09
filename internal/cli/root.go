@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -25,6 +26,11 @@ import (
 // otherwise it comes from the build info.
 var Version = ""
 
+// pseudoVersion matches the version Go stamps a build from a checkout
+// ("v0.1.1-0.20261108234532-d28583c8e2e5"); that's a dev build, not a
+// release to update from.
+var pseudoVersion = regexp.MustCompile(`-\d{14}-[0-9a-f]{12}|-0\.\d{14}-[0-9a-f]{12}`)
+
 // version is Version, the module version "go install ...@version" built,
 // or the git commit of a local build.
 func version() string {
@@ -35,7 +41,7 @@ func version() string {
 	if !ok {
 		return "dev"
 	}
-	if v := bi.Main.Version; v != "" && v != "(devel)" {
+	if v := bi.Main.Version; v != "" && v != "(devel)" && !pseudoVersion.MatchString(v) {
 		return v
 	}
 	var rev, dirty string
@@ -99,7 +105,7 @@ in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also star
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
 		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
-		trayCmd(),
+		updateCmd(), trayCmd(),
 	)
 	if c := panelCmd(); c != nil {
 		root.AddCommand(c)

@@ -74,6 +74,12 @@ type Config struct {
 	AccessLog bool `yaml:"access_log"`
 	// Refresh subscriptions older than this when `run` starts. 0 disables.
 	UpdateInterval Duration `yaml:"update_interval"`
+	// Install new proxy-router releases in the background.
+	AutoUpdate struct {
+		Enabled bool `yaml:"enabled"`
+		// How often to check GitHub. 0 disables checking.
+		Interval Duration `yaml:"interval"`
+	} `yaml:"auto_update"`
 	// Network interface for proxy-router's own connections: "auto" (bypass
 	// another VPN's tunnel if one owns the default route), "none", or a name.
 	BindInterface string `yaml:"bind_interface"`
@@ -154,6 +160,8 @@ func defaults() *Config {
 	c.LogLevel = "warning"
 	c.BindInterface = "auto"
 	c.UpdateInterval = Duration(12 * time.Hour)
+	c.AutoUpdate.Enabled = true
+	c.AutoUpdate.Interval = Duration(24 * time.Hour)
 	c.Geo.GeoIP = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
 	c.Geo.GeoSite = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
 	c.Ping.URL = "https://www.gstatic.com/generate_204"
@@ -199,6 +207,9 @@ func Load(dir string) (*Config, error) {
 	if err := c.validateAutoSwitch(); err != nil {
 		return nil, fmt.Errorf("config.yaml: %w", err)
 	}
+	if err := c.validateAutoUpdate(); err != nil {
+		return nil, fmt.Errorf("config.yaml: %w", err)
+	}
 	if confined.on && (!filepath.IsLocal(c.Rules) || strings.HasPrefix(c.Rules, "~")) {
 		return nil, fmt.Errorf("config.yaml: rules: the TUN service only reads rules files inside %s, not %q", dir, c.Rules)
 	}
@@ -231,6 +242,17 @@ func (c *Config) validateAutoSwitch() error {
 		return errors.New("auto_switch.failures must be at least 1")
 	case a.Timeout.D() < time.Second:
 		return errors.New("auto_switch.timeout must be at least 1s")
+	}
+	return nil
+}
+
+func (c *Config) validateAutoUpdate() error {
+	if c.AutoUpdate.Interval == 0 {
+		c.AutoUpdate.Enabled = false
+		return nil
+	}
+	if c.AutoUpdate.Enabled && c.AutoUpdate.Interval.D() < time.Hour {
+		return errors.New("auto_update.interval must be at least 1h (or 0 to disable)")
 	}
 	return nil
 }
