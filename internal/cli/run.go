@@ -340,6 +340,9 @@ func applyRefreshed(s *config.State) {
 		}
 		c := *sub
 		c.Servers, c.Info, c.UpdatedAt, c.LastError = r.Servers, r.Info, r.UpdatedAt, r.LastError
+		// The service may have learned that the panel requires an x-hwid;
+		// keep sending it on later user-side updates too.
+		c.SendHWID = c.SendHWID || r.SendHWID
 		s.Subscriptions[i] = &c
 	}
 	if s.HWID == "" {

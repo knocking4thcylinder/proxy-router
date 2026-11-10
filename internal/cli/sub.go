@@ -88,7 +88,7 @@ func subAddCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&name, "name", "n", "", "name for the subscription (default: provider title or host)")
 	cmd.Flags().StringVar(&ua, "user-agent", "", "User-Agent to send (default from config.yaml)")
 	cmd.Flags().StringArrayVarP(&headers, "header", "H", nil, `extra request header, e.g. -H "Authorization: Bearer x" (repeatable)`)
-	cmd.Flags().BoolVar(&hwid, "hwid", false, "send a device ID (x-hwid) for panels with device limits")
+	cmd.Flags().BoolVar(&hwid, "hwid", false, "send a device ID (x-hwid) on the first request; automatic when a panel requires one")
 	cmd.Flags().BoolVar(&allowHTTP, "allow-http", false, "accept a plain http:// URL (anyone on the network can then change your servers)")
 	return cmd
 }
@@ -124,6 +124,21 @@ func (e *env) updateSubscription(ctx context.Context, sub *config.Subscription) 
 		fmt.Fprintf(os.Stderr, "warning: %s is fetched over plain http; anyone on the network can change its servers\n", nameOr(sub))
 	}
 	res, err := subscription.Fetch(ctx, req)
+	if errors.Is(err, subscription.ErrHWIDRequired) && !sub.SendHWID {
+		// Panels with HWID Device Limit (Remnawave and friends) hand out a
+		// placeholder instead of the subscription until the client sends a
+		// device ID. Use a stable random one (not a machine serial) and
+		// remember that this subscription needs it.
+		req.HWID = e.state.DeviceID()
+		sub.SendHWID = true
+		res, err = subscription.Fetch(ctx, req)
+		if err == nil {
+			fmt.Fprintf(os.Stderr, "note: %s: panel requires a device ID; sending this installation's x-hwid from now on\n", nameOr(sub))
+		}
+	}
+	if errors.Is(err, subscription.ErrHWIDLimit) {
+		err = fmt.Errorf("%w; remove a device in the provider's panel or contact its support", err)
+	}
 	if errors.Is(err, subscription.ErrInsecureURL) {
 		hint := "proxy-router sub add --allow-http <url>"
 		if sub.Name != "" {

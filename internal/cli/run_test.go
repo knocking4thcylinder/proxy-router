@@ -26,6 +26,7 @@ func TestApplyRefreshed(t *testing.T) {
 	s.HWID = "hwid"
 	s.Subscriptions[0].Servers = []*share.Server{{Name: "new"}}
 	s.Subscriptions[0].UpdatedAt = time.Now()
+	s.Subscriptions[0].SendHWID = true
 	s.Subscriptions[1].UpdatedAt = time.Now()
 	s.Subscriptions[1].Servers = nil
 	keepRefreshed(s, s.Subscriptions)
@@ -38,6 +39,9 @@ func TestApplyRefreshed(t *testing.T) {
 	a, b := next.Subscriptions[0], next.Subscriptions[1]
 	if len(a.Servers) != 1 || a.Servers[0].Name != "new" {
 		t.Errorf("a: %v, want the refreshed servers", a.Servers)
+	}
+	if !a.SendHWID {
+		t.Error("a: the service's HWID requirement was lost")
 	}
 	if a.Headers["X"] != "edited" {
 		t.Errorf("a: the user's own edits were lost: %v", a.Headers)

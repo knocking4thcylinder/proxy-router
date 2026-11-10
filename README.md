@@ -708,8 +708,10 @@ when a port is taken and by which process.
   blocking outbound. Provider health checks must use https and can't make
   direct requests.
 - Subscriptions are fetched as Happ (`Happ/3.24.1`) by default. Change it
-  with `user_agent` in `config.yaml` or `sub add --user-agent`. Panels with
-  device limits need `--hwid`.
+  with `user_agent` in `config.yaml` or `sub add --user-agent`. If a panel
+  requires a device ID (HWID, e.g. Remnawave's device limit), `sub add` and
+  `sub update` retry with a random per-install ID and remember to send it
+  from then on. `--hwid` sends it on the first request too.
 - Encrypted `happ://crypt…` links can't be imported. Use the plain
   subscription URL.
 - `--system-proxy` is macOS only for now. It restores the previous settings

@@ -349,6 +349,21 @@ func TestEndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name: "vless reality grpc",
+			server: vless(map[string]any{
+				"network": "grpc", "grpcSettings": map[string]any{"serviceName": "svc"},
+				"security": "reality", "realitySettings": map[string]any{
+					"target":      strings.TrimPrefix(realityTarget.URL, "https://"),
+					"serverNames": []string{"localhost"},
+					"privateKey":  realityPriv,
+					"shortIds":    []string{"a1b2c3d4"},
+				}}, ""),
+			link: func(p int) string {
+				return fmt.Sprintf("vless://%s@127.0.0.1:%d?type=grpc&serviceName=svc&security=reality&sni=localhost&fp=chrome&pbk=%s&sid=a1b2c3d4#realitygrpc",
+					testUUID, p, realityPub)
+			},
+		},
+		{
 			name: "vless reality xhttp",
 			server: vless(map[string]any{"network": "xhttp", "xhttpSettings": map[string]any{"path": "/rx"},
 				"security": "reality", "realitySettings": map[string]any{
