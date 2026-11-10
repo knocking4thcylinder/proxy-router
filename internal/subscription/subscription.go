@@ -17,6 +17,20 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
 
+// Errors that tell the caller how to satisfy a subscription panel's
+// client checks.
+var (
+	// ErrHWIDRequired means the panel only serves clients that send a
+	// device ID (x-hwid), e.g. Remnawave with HWID Device Limit enabled.
+	ErrHWIDRequired = errors.New("subscription panel requires a device ID (x-hwid)")
+	// ErrHWIDRejected means the panel rejected the device ID it was given;
+	// its device limit may be reached.
+	ErrHWIDRejected = errors.New("subscription panel rejected the device ID (x-hwid)")
+	// ErrHWIDLimit means the panel says the subscription's device limit has
+	// been reached.
+	ErrHWIDLimit = errors.New("subscription panel's device limit has been reached")
+)
+
 // Request describes how to fetch a subscription.
 type Request struct {
 	URL       string
@@ -118,6 +132,19 @@ func (p policy) fetch(ctx context.Context, req Request) (*Result, error) {
 
 	res := Decode(body)
 	res.Info = parseInfo(resp.Header)
+	// Panels with HWID Device Limit enabled (Remnawave and friends) either
+	// say so in a header or answer with a placeholder link named "App not
+	// supported" instead of the subscription.
+	hwidMissing := headerTrue(resp.Header, "x-hwid-not-supported") || hwidSentinel(res.Servers)
+	switch {
+	case headerTrue(resp.Header, "x-hwid-max-devices-reached") ||
+		(req.HWID != "" && headerTrue(resp.Header, "x-hwid-limit")):
+		return nil, ErrHWIDLimit
+	case hwidMissing && req.HWID == "":
+		return nil, ErrHWIDRequired
+	case hwidMissing:
+		return nil, ErrHWIDRejected
+	}
 	if len(res.Servers) == 0 {
 		msg := "subscription contains no usable servers"
 		if len(res.Errors) > 0 {
@@ -174,6 +201,26 @@ func CleanServers(servers []*share.Server) {
 			s.Warnings[i] = safetext.Clean(w, maxError)
 		}
 	}
+}
+
+// headerTrue reports whether a panel's boolean header is set.
+func headerTrue(h http.Header, key string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(h.Get(key)))
+	return err == nil && v
+}
+
+// hwidSentinel recognizes the placeholder panels return instead of a
+// subscription when the client didn't send an x-hwid: one VLESS link to
+// 0.0.0.0:1 named "App not supported".
+func hwidSentinel(servers []*share.Server) bool {
+	if len(servers) != 1 || servers[0] == nil || servers[0].Port != 1 {
+		return false
+	}
+	s := servers[0]
+	if s.Address != "0.0.0.0" && s.Address != "::" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(s.Name), "not supported")
 }
 
 func parseInfo(h http.Header) Info {

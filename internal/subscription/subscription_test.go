@@ -62,6 +62,42 @@ func TestFetchSendsHeaders(t *testing.T) {
 	}
 }
 
+const notSupportedLink = "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?encryption=none&type=tcp&security=none#App%20not%20supported"
+
+func TestFetchHWIDGate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		hwid    string
+		headers map[string]string
+		body    string
+		want    error
+	}{
+		{"missing header", "", map[string]string{"x-hwid-not-supported": "true"}, link, ErrHWIDRequired},
+		{"missing sentinel", "", nil, notSupportedLink, ErrHWIDRequired},
+		{"rejected header", "dev1", map[string]string{"x-hwid-not-supported": "true"}, link, ErrHWIDRejected},
+		{"rejected sentinel", "dev1", nil, notSupportedLink, ErrHWIDRejected},
+		{"limit", "dev1", map[string]string{"x-hwid-max-devices-reached": "true"}, link, ErrHWIDLimit},
+		{"limit backwards compatible", "dev1", map[string]string{"x-hwid-limit": "true"}, link, ErrHWIDLimit},
+		{"accepted", "dev1", nil, link, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range tc.headers {
+					w.Header().Set(k, v)
+				}
+				w.Write([]byte(tc.body))
+			})
+			res, err := testPolicy(srv).fetch(context.Background(), Request{URL: srv.URL + "/sub", HWID: tc.hwid})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if tc.want == nil && (res == nil || len(res.Servers) != 1) {
+				t.Fatalf("res = %+v, want one server", res)
+			}
+		})
+	}
+}
+
 func TestFetchRejectsHTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(link)) }))
 	defer srv.Close()
