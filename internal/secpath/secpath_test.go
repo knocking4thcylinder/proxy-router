@@ -17,6 +17,13 @@ func TestCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	me := os.Getuid()
+	// In containers the filesystem root or an intermediate directory can
+	// be owned by an unrelated uid (e.g. "nobody"), which Check rightly
+	// rejects. The ownership rules can't be exercised there, so skip
+	// instead of asserting about an environment the test doesn't control.
+	if !ownedBy(dir, me) {
+		t.Skipf("ancestors of %s aren't owned by uid %d or root; skipping", dir, me)
+	}
 	if _, err := Check(dir, me); err != nil {
 		t.Fatalf("own directory: %v", err)
 	}
@@ -95,4 +102,25 @@ func mustReal(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return r
+}
+
+// ownedBy walks p up to the filesystem root and reports whether every
+// component is owned by uid or root. It mirrors the ownership half of
+// Check, so the test can tell whether the environment lets it run.
+func ownedBy(p string, uid int) bool {
+	for {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return false
+		}
+		owner, ok := ownerOf(fi)
+		if !ok || (owner != uid && owner != 0) {
+			return false
+		}
+		if parent := filepath.Dir(p); parent == p {
+			return true
+		} else {
+			p = parent
+		}
+	}
 }

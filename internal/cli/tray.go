@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/knocking4thcylinder/proxy-router/internal/config"
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
+	"github.com/knocking4thcylinder/proxy-router/internal/update"
 )
 
 // icons/ is rendered from assets/tray/*.svg: rsvg-convert -w 64 for the
@@ -220,6 +222,71 @@ func (t *tray) ready() {
 			t.refresh()
 		}
 	}()
+	go t.autoUpdateLoop()
+}
+
+// autoUpdateLoop keeps the tray's own binary current. The background
+// service updates its own copy by itself; this one is the file the user
+// runs. It starts gently so opening the tray doesn't download anything.
+func (t *tray) autoUpdateLoop() {
+	delay := 2 * time.Minute
+	for {
+		time.Sleep(delay)
+		cfg, err := config.Load(t.dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "auto-update: %v\n", err)
+			delay = 15 * time.Minute
+			continue
+		}
+		iv := cfg.AutoUpdate.Interval.D()
+		switch {
+		case !cfg.AutoUpdate.Enabled, iv <= 0, !update.IsRelease(version()):
+			delay = 15 * time.Minute
+			continue
+		}
+		delay = iv
+		tag, err := t.updateSelf()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "auto-update: %v\n", err)
+			continue
+		}
+		if tag != "" {
+			// This process keeps running the old code; the next start,
+			// or any panel it opens, uses the new binary.
+			notify("proxy-router updated", tag+" will be used the next time the tray starts.")
+			return
+		}
+	}
+}
+
+// updateSelf replaces the tray's executable with the latest release. It
+// returns the new tag, or "" when there was nothing to do.
+func (t *tray) updateSelf() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	client := update.NewClient()
+	rel, err := client.Latest(ctx)
+	if err != nil {
+		return "", err
+	}
+	// The file may already be newer than this running process (another
+	// updater got there first).
+	if v, ok := binaryVersion(t.exe); ok && update.Compare(rel.Tag, v) <= 0 {
+		return "", nil
+	}
+	if update.Compare(rel.Tag, version()) <= 0 {
+		return "", nil
+	}
+	err = update.Install(ctx, client, rel, update.InstallOptions{
+		Target: t.exe,
+		Log: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return rel.Tag, nil
 }
 
 func (t *tray) poke() {
@@ -369,7 +436,10 @@ func (t *tray) outdated(target service.Target) bool {
 	}
 	if t.outdatedKey[target.Scope] != key {
 		t.outdatedKey[target.Scope] = key
-		t.outdatedVal[target.Scope] = service.Outdated(target)
+		// A service that installed a newer build by itself is not out of
+		// date: offering to overwrite it with this (older) binary would be
+		// a downgrade.
+		t.outdatedVal[target.Scope] = service.Outdated(target) && !newerService(target)
 	}
 	return t.outdatedVal[target.Scope]
 }
@@ -644,7 +714,7 @@ func (t *tray) run(what string, root bool, args ...string) {
 		// desktop's dialog, and only run that part as root.
 		argv := append([]string{t.exe, "--dir", t.dir}, args...)
 		switch args[0] {
-		case "start", "stop", "restart":
+		case "start", "stop", "restart", "update":
 			argv = append(argv, "--password-dialog")
 		}
 		cmd := exec.Command(argv[0], argv[1:]...)

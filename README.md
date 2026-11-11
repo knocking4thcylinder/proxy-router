@@ -201,6 +201,41 @@ For an attached debugging session, use `proxy-router run --foreground`
 (or `sudo proxy-router run --tun --foreground`) and stop it with Ctrl-C.
 Foreground mode refuses to start while the service is running.
 
+## Updates
+
+`proxy-router update` checks GitHub, downloads the release for your
+platform, verifies its SHA-256 against the published `SHA256SUMS`, and
+replaces the binary atomically. If the background service is running, the
+new build is installed into the service and it is restarted; in TUN mode
+that asks for your password.
+
+```sh
+proxy-router update --check   # only report the current and latest version
+proxy-router update           # install the latest release
+proxy-router update v0.2.0    # pin a version
+proxy-router update --force   # reinstall, or downgrade
+```
+
+Updates also happen by themselves. `auto_update` in `config.yaml` is on by
+default, every 24 hours:
+
+- the background service installs a newer release into its own copy and
+  restarts (no password; it already runs as root in TUN mode);
+- the tray installs it over the binary it runs from (the running tray keeps
+  the old build until it restarts).
+
+Neither touches a local build (`dev-<commit>`). Turn it off with
+`enabled: false` or `interval: 0`:
+
+```yaml
+auto_update:
+  enabled: false
+```
+
+Windows builds are CLI-only: update them with `proxy-router update` (or
+download a new `.zip`). The installer and `install.sh` aren't needed after
+the first install.
+
 ## Tray icon
 
 ```sh
@@ -280,6 +315,7 @@ Quitting the tray leaves the service running.
 | `status` | is it running, which mode, server, listen addresses |
 | `logs [-f] [-n lines]` | the service's log |
 | `uninstall` | remove the service (config and servers are kept) |
+| `update [version] [--check] [--force]` | update to the latest release (or a version), verifying SHA-256 |
 | `tray` | tray / menu bar icon to connect, switch mode and pick servers |
 | `run [--foreground] [-r rules.yaml] [-s server] [--system-proxy] [--tun [--force]] [-v\|-vv]` | start in the background; `--foreground` stays attached |
 | `config [-r rules.yaml] [-q] [--tun]` | validate, and print the generated Xray config |
@@ -438,7 +474,7 @@ Everything is in `~/.config/proxy-router/` (override with `--dir` or
 `$PROXY_ROUTER_HOME`, which is ignored under sudo). Root only uses it if
 it's yours and nobody else can write to it or the directories above it:
 
-- `config.yaml`: listen addresses, interface binding, log level, update interval, User-Agent, geo URLs, ping and download test URLs, auto-switching
+- `config.yaml`: listen addresses, interface binding, log level, subscription and proxy-router update intervals, User-Agent, geo URLs, ping and download test URLs, auto-switching
 - `routing.yaml`: routing rules
 - `state.json`: subscriptions, cached servers, selected server (managed by the CLI, mode 0600)
 - `assets/`: geo files

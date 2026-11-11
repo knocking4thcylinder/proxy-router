@@ -34,6 +34,14 @@ access_log: false
 # runs. 0 disables automatic updates.
 update_interval: 12h
 
+# Check GitHub for a newer release and install it: the background service
+# updates its own copy and restarts, and the tray updates the binary it runs
+# from. "proxy-router update" does the same by hand. enabled: false or
+# interval: 0 turns it off.
+auto_update:
+  enabled: true
+  interval: 24h
+
 # User-Agent for subscription requests. Panels pick the format by it; the
 # default is Happ's, which gets full Xray configs including "Auto" pools.
 # user_agent: Happ/3.24.1

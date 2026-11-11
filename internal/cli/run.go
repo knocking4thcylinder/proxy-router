@@ -593,6 +593,15 @@ func run(ctx context.Context, o runOptions) error {
 		updates = t.C
 	}
 
+	// The service installs new releases into its own binary; the restart
+	// goes through the service manager (see errRestartForUpdate).
+	var installed <-chan string
+	if o.service {
+		ch := make(chan string, 1)
+		go autoUpdateLoop(ctx, ch)
+		installed = ch
+	}
+
 	// gen counts main instances, so a health check that went through one
 	// that has since been replaced is ignored.
 	gen := 0
@@ -672,6 +681,9 @@ func run(ctx context.Context, o runOptions) error {
 			reload("server addresses changed", false)
 		case <-updates:
 			refresh()
+		case tag := <-installed:
+			fmt.Printf("%s auto-update: installed %s; restarting\n", time.Now().Format(time.TimeOnly), tag)
+			return errRestartForUpdate
 		case t := <-watch.Trouble():
 			sw.trouble(ctx, o, inst, gen, t)
 		case <-sw.due:
