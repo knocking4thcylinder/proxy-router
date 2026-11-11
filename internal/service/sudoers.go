@@ -13,6 +13,14 @@ var (
 	sudoersArg = regexp.MustCompile(`^[A-Za-z0-9/._+-]+$`)
 )
 
+// SudoersPossible reports whether a rule for argLists can be written at
+// all: sudo matches a command's arguments joined with spaces, so a config
+// directory containing one has no rule, and the tray keeps asking for it.
+func SudoersPossible(argLists [][]string) bool {
+	_, err := sudoersRule("root", BinaryPath(Target{Scope: System}), argLists)
+	return err == nil
+}
+
 // sudoersRule lets user run bin as root without a password, with exactly
 // the given argument lists.
 func sudoersRule(user, bin string, argLists [][]string) (string, error) {

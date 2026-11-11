@@ -47,7 +47,7 @@ proxy-router is connected, and lets you connect and disconnect, switch
 between proxy and TUN mode, pick a server and update subscriptions.
 
 It controls the background service, like "start" and "stop" do; TUN mode
-asks for your password in a system dialog (on macOS only once for
+asks for your password in a system dialog (on macOS and Linux only once for
 connecting and disconnecting). "Start tray at login" in its menu makes the
 icon come back after a reboot.
 
@@ -105,7 +105,7 @@ menu. --foreground keeps it attached to the terminal instead.`,
 		},
 	}
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal")
-	cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the macOS password dialog)")
+	cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the password dialog)")
 	_ = cmd.Flags().MarkHidden("allow-sudo")
 	return cmd
 }
