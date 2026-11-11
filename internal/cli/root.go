@@ -66,6 +66,11 @@ func version() string {
 
 var flagDir, flagUID string
 
+// flagWriteSudoers accompanies a root action (the tray's first connect or
+// disconnect after installing this build): it writes the sudoers rule
+// before running, so the next ones don't ask for a password.
+var flagWriteSudoers bool
+
 // Execute runs the CLI.
 func Execute() error {
 	return newRootCmd(os.Args[1:]).Execute()
@@ -92,8 +97,17 @@ in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also star
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			config.SetTargetUID(flagUID)
-			_, err := config.TargetUser()
-			return err
+			if _, err := config.TargetUser(); err != nil {
+				return err
+			}
+			if flagWriteSudoers {
+				// The action still runs if the rule can't be written; only
+				// the next connect or disconnect asks again.
+				if err := allowSudo(); err != nil {
+					fmt.Fprintf(os.Stderr, "note: TUN connect and disconnect will keep asking for the password: %v\n", err)
+				}
+			}
+			return nil
 		},
 	}
 	root.PersistentFlags().StringVar(&flagDir, "dir", "", "config directory (default ~/.config/proxy-router, or $PROXY_ROUTER_HOME)")
@@ -101,6 +115,8 @@ in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also star
 	// unit: whose files and services root works with.
 	root.PersistentFlags().StringVar(&flagUID, "uid", "", "as root: the user to work for (default: the one sudo or pkexec reports)")
 	_ = root.PersistentFlags().MarkHidden("uid")
+	root.PersistentFlags().BoolVar(&flagWriteSudoers, "write-sudoers", false, "as root: let the user connect and disconnect TUN mode without a password (used by the tray)")
+	_ = root.PersistentFlags().MarkHidden("write-sudoers")
 	root.AddCommand(
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),

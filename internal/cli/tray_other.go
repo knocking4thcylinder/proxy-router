@@ -27,3 +27,7 @@ func trayCmd() *cobra.Command {
 // elevated would run argv as root after a password dialog; there's none
 // in this build.
 func elevated(argv []string) *exec.Cmd { return nil }
+
+// authCanceled reports whether the password dialog was dismissed; this
+// build has none.
+func authCanceled(error, string) bool { return false }

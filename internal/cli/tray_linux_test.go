@@ -147,6 +147,36 @@ func TestElevated(t *testing.T) {
 	}
 }
 
+// TestElevatedWritesSudoers: a connect or disconnect run by this build
+// also writes the sudoers rule, so the next ones don't ask. The service's
+// copy (another path) may predate the flag, and other actions don't write
+// it.
+func TestElevatedWritesSudoers(t *testing.T) {
+	self, err := selfExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := func(bin string, action ...string) []string {
+		return append([]string{bin, "--dir", "/home/u/.config/proxy-router", "--uid", "1000"}, action...)
+	}
+	for _, allow := range [][]string{argv(self, "start", "--tun"), argv(self, "stop", "--system")} {
+		got := elevated(allow).Args
+		if want := append([]string{"pkexec"}, append(allow, "--write-sudoers")...); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	}
+	for _, deny := range [][]string{
+		argv("/var/lib/proxy-router/proxy-router", "start", "--tun"),
+		argv(self, "restart"),
+		argv(self, "start", "--tun", "--force"),
+	} {
+		got := elevated(deny).Args
+		if want := append([]string{"pkexec"}, deny...); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("got %q, want no --write-sudoers (%q)", got, want)
+		}
+	}
+}
+
 func TestMenuLabel(t *testing.T) {
 	for in, want := range map[string]string{
 		"de_1":                     "de__1",

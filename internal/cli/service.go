@@ -256,10 +256,23 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	var c *exec.Cmd
 	passwordless := false
 	if passwordDialog {
-		// The tray's connect and disconnect on macOS, once the dialog has
-		// written the sudoers rule for them.
+		// The tray's connect and disconnect, once the dialog has written
+		// the sudoers rule for them (on macOS in the dialog itself; on
+		// Linux by the action, or by this build first for a service
+		// installed by an older one).
 		if c = passwordlessSudo(argv); c != nil {
 			passwordless = true
+		} else if c, err = sudoersThenSudo(argv); err != nil {
+			// A dismissed dialog is not an action failure: exit as
+			// pkexec does, so the tray reports it as a cancellation.
+			if authCanceled(err, "") {
+				os.Exit(126)
+			}
+			fmt.Fprintf(os.Stderr, "note: %v\n", err)
+		} else if c != nil {
+			passwordless = true
+		}
+		if c != nil {
 			fmt.Fprintf(os.Stderr, "%s; trying sudo without a password\n", why)
 		} else if c = elevated(argv); c == nil {
 			return errors.New("this build can't show a password dialog; run proxy-router in a terminal")

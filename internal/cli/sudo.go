@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -34,7 +35,7 @@ func runSudoWithFallback(cmd *exec.Cmd, dialog func() *exec.Cmd) error {
 }
 
 // sudoActions are the root halves of commands (as asRoot runs them) that
-// the macOS sudoers rule lets the tray's user run without a password:
+// the sudoers rule lets the tray's user run without a password:
 // connecting and disconnecting TUN mode. Switching modes and updating the
 // service still ask.
 var sudoActions = [][]string{{"start", "--tun"}, {"stop", "--system"}}
@@ -56,4 +57,14 @@ func sudoAction(argv []string) bool {
 		return false
 	}
 	return slices.ContainsFunc(sudoArgLists(argv[2], argv[4]), func(l []string) bool { return slices.Equal(l, argv[1:]) })
+}
+
+// selfExecutable is this process's binary with symlinks resolved, the path
+// asRoot uses when this build has to run as root.
+func selfExecutable() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(self)
 }

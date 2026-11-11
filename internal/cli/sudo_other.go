@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package cli
 
@@ -7,8 +7,9 @@ import (
 	"os/exec"
 )
 
-// passwordlessSudo is nil: only macOS gets the sudoers rule (Linux has
-// polkit; see packaging/linux).
+// passwordlessSudo is nil: only macOS and Linux get the sudoers rule.
 func passwordlessSudo([]string) *exec.Cmd { return nil }
 
-func allowSudo() error { return errors.New("--allow-sudo is only used on macOS") }
+func sudoersThenSudo([]string) (*exec.Cmd, error) { return nil, nil }
+
+func allowSudo() error { return errors.New("--allow-sudo is only used on macOS and Linux") }
