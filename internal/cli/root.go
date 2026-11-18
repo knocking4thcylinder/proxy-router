@@ -170,6 +170,10 @@ func load() (*env, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadFromDir(dir)
+}
+
+func loadFromDir(dir string) (*env, error) {
 	// The TUN service runs on the user's files but never writes to them.
 	if !config.Confined() {
 		if err := ensureFiles(dir, false); err != nil {
