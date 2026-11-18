@@ -118,9 +118,14 @@ func startServer(t *testing.T, inbound map[string]any) {
 	t.Helper()
 	inbound["listen"] = "127.0.0.1"
 	inst, err := Start(map[string]any{
-		"log":       map[string]any{"loglevel": "none"},
-		"inbounds":  []any{inbound},
-		"outbounds": []any{map[string]any{"protocol": "freedom"}},
+		"log":      map[string]any{"loglevel": "none"},
+		"inbounds": []any{inbound},
+		// The test server must reach the local HTTP fixtures. Xray's
+		// server-side freedom defaults block loopback and private IPs.
+		"outbounds": []any{map[string]any{
+			"protocol": "freedom",
+			"settings": map[string]any{"finalRules": []any{map[string]any{"action": "allow"}}},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("server: %v", err)

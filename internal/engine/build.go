@@ -247,11 +247,11 @@ func Build(p Plan) (map[string]any, []string, error) {
 		"inboundTag": []string{config.DirectDNSTag}, "outboundTag": "direct", "ruleTag": "dns_direct",
 	}}
 	if p.TUNListen != "" {
-		// Answer DNS that arrives through the TUN from Xray's own resolver
-		// (cached, DoH through the tunnel) instead of forwarding each UDP
-		// query through the servers, which loses some and is slow.
+		// Xray's DNS outbound answers A and AAAA using its cached resolver.
+		// Its default empty NOERROR response for other types lets clients
+		// that query HTTPS records continue with A and AAAA results.
 		outbounds = append(outbounds, map[string]any{
-			"tag": "dns-out", "protocol": "dns", "settings": map[string]any{"nonIPQuery": "reject"},
+			"tag": "dns-out", "protocol": "dns",
 		})
 		routingRules = append(routingRules, map[string]any{
 			"inboundTag": []string{"tun"}, "port": "53", "outboundTag": "dns-out", "ruleTag": "tun_dns",
