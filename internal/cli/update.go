@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -198,15 +197,14 @@ func applyServiceUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Verify and unpack the archive again in root's own directory.
-			// The initiating user's staged executable never crosses into root.
-			installed, err := service.RootBinary()
-			if err != nil {
+			if _, err := service.RootBinary(); err != nil {
 				return fmt.Errorf("check the installed TUN service: %w", err)
 			}
-			tmp, err := os.MkdirTemp(filepath.Dir(installed), ".release-")
+			// Stage in a private root-owned directory, ignoring the caller's TMPDIR.
+			// On SteamOS, this leaves /var free for the atomic replacement.
+			tmp, err := os.MkdirTemp("/tmp", "proxy-router-update-")
 			if err != nil {
-				return err
+				return fmt.Errorf("create a temporary directory for the TUN service update: %w", err)
 			}
 			defer os.RemoveAll(tmp)
 			rel.version = release.Version()
