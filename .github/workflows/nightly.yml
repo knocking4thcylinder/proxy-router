@@ -1,0 +1,124 @@
+name: Nightly
+
+# Rebuild the rolling "nightly" prerelease from master after every merged
+# PR, plus once a day as a heartbeat. The version lives in the release name
+# (the tag stays "nightly"), and install.sh / proxy-router update know how
+# to fetch it.
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never publish two nightlies at once; queue the next one instead of
+# cancelling it midway through an upload.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      previous: ${{ steps.version.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute the nightly version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n 1)"
+          previous="${previous:-v0.0.0}"
+          core="${previous#v}"
+          core="${core%%-*}"
+          IFS=. read -r major minor patch <<< "$core"
+          major="${major:-0}"
+          minor="${minor:-0}"
+          patch="${patch:-0}"
+          base="v${major}.${minor}.$((patch + 1))"
+          version="${base}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}.${GITHUB_SHA::7}"
+          {
+            echo "version=$version"
+            echo "previous=$previous"
+          } >> "$GITHUB_OUTPUT"
+          echo "Nightly version: $version (previous stable: $previous)"
+
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      channel: nightly
+
+  publish:
+    name: Publish nightly
+    needs:
+      - version
+      - build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Add the installer
+        run: cp install.sh artifacts/install.sh
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PREVIOUS: ${{ needs.version.outputs.previous }}
+        run: |
+          {
+            echo "Nightly build of \`master\` at [\`${GITHUB_SHA::7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            echo "Version: \`${VERSION}\`"
+            echo
+            echo "This is a prerelease, replaced by the next push to \`master\`. The latest stable release is unchanged."
+            echo
+            echo "### Changes since ${PREVIOUS}"
+            echo
+            git log --first-parent --no-decorate --pretty='- %s (%h)' "${PREVIOUS}..HEAD" | head -n 50
+            echo
+            echo "### Install or update"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly/install.sh | sh -s -- nightly"
+            echo "proxy-router update nightly"
+            echo '```'
+          } > nightly-notes.md
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: ${{ needs.version.outputs.version }}
+          body_path: nightly-notes.md
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: artifacts/*
+          fail_on_unmatched_files: true
