@@ -39,6 +39,9 @@ func TestCompare(t *testing.T) {
 		{"dev-abc123", "v0.1.0", -1},
 		{"v0.1.0", "dev-abc123", 1},
 		{"", "v0.1.0", -1},
+		{"v0.1.1", "v0.1.2-nightly.20261118.42.abc1234", -1},
+		{"v0.1.2", "v0.1.2-nightly.20261118.42.abc1234", 1},
+		{"v0.1.2-nightly.20261117.41.abc1234", "v0.1.2-nightly.20261118.42.abc1234", -1},
 		{"v1", "v1.0.0", 0},
 		{"v1.2.3.4", "v1.2.3.0", 0}, // both unparseable
 	}
@@ -59,6 +62,50 @@ func TestIsRelease(t *testing.T) {
 		if IsRelease(v) {
 			t.Errorf("IsRelease(%q) = true", v)
 		}
+	}
+}
+
+func TestReleaseVersion(t *testing.T) {
+	tests := []struct {
+		rel  Release
+		want string
+	}{
+		{Release{Tag: "v0.1.2"}, "v0.1.2"},
+		{Release{Tag: "v0.1.2", Name: "proxy-router v0.1.2"}, "v0.1.2"},
+		{Release{Tag: "nightly", Name: "v0.1.3-nightly.20261118.42.abc1234"}, "v0.1.3-nightly.20261118.42.abc1234"},
+		{Release{Tag: "nightly", Name: "Nightly build"}, ""},
+	}
+	for _, tt := range tests {
+		if got := tt.rel.Version(); got != tt.want {
+			t.Errorf("Release{Tag: %q, Name: %q}.Version() = %q, want %q", tt.rel.Tag, tt.rel.Name, got, tt.want)
+		}
+	}
+}
+
+func TestNightlyRelease(t *testing.T) {
+	const version = "v0.1.3-nightly.20261118.42.abc1234"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/"+Repo+"/releases/tags/"+NightlyTag {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tag_name": NightlyTag,
+			"name":     version,
+			"assets":   []map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	rel, err := (&Client{API: srv.URL}).Nightly(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Tag != NightlyTag {
+		t.Errorf("tag = %q, want %q", rel.Tag, NightlyTag)
+	}
+	if got := rel.Version(); got != version {
+		t.Errorf("version = %q, want %q", got, version)
 	}
 }
 

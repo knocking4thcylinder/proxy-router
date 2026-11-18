@@ -37,10 +37,13 @@ update_interval: 12h
 # Check GitHub for a newer release and install it: the background service
 # updates its own copy and restarts, and the tray updates the binary it runs
 # from. "proxy-router update" does the same by hand. enabled: false or
-# interval: 0 turns it off.
+# interval: 0 turns it off. channel: auto follows the build (stable, or
+# nightly if this binary came from a nightly build); "stable" and "nightly"
+# override that.
 auto_update:
   enabled: true
   interval: 24h
+  channel: auto
 
 # User-Agent for subscription requests. Panels pick the format by it; the
 # default is Happ's, which gets full Xray configs including "Auto" pools.

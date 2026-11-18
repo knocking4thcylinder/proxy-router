@@ -108,8 +108,9 @@ Linux (amd64 / arm64) and macOS arm64:
 curl -fsSL https://github.com/knocking4thcylinder/proxy-router/releases/latest/download/install.sh | sh
 ```
 
-Pin a version with `sh -s -- v0.1.0`, or set `BINDIR` to install elsewhere.
-The installer verifies `SHA256SUMS` and puts the binary in `~/.local/bin`.
+Pin a version with `sh -s -- v0.1.0`, install the latest nightly with
+`sh -s -- nightly`, or set `BINDIR` to install elsewhere. The installer
+verifies `SHA256SUMS` and puts the binary in `~/.local/bin`.
 
 For Windows, download the matching `.zip` from the
 [release](https://github.com/knocking4thcylinder/proxy-router/releases/latest)
@@ -117,7 +118,8 @@ and extract it. Windows builds are CLI-only: the tray and panel need Linux
 or macOS.
 
 Pushing a `v*` tag builds all five targets and publishes the archives,
-`install.sh`, and `SHA256SUMS`.
+`install.sh`, and `SHA256SUMS`. Pushes to `master` (and a daily run) publish
+a prerelease nightly with the same assets; see [Nightly builds](#nightly-builds).
 
 ## Quick start
 
@@ -211,10 +213,36 @@ that asks for your password.
 
 ```sh
 proxy-router update --check   # only report the current and latest version
-proxy-router update           # install the latest release
+proxy-router update           # latest build on this binary's channel
+proxy-router update nightly   # switch to nightly builds
+proxy-router update stable    # switch back to releases
 proxy-router update v0.2.0    # pin a version
 proxy-router update --force   # reinstall, or downgrade
 ```
+
+### Nightly builds
+
+Every push to `master` (so every merged PR) rebuilds the rolling
+[nightly prerelease](https://github.com/knocking4thcylinder/proxy-router/releases/tag/nightly),
+and a scheduled run does the same once a day. Its version looks like
+`v0.1.3-nightly.20261118.42.abc1234`; the date and run number keep it
+increasing, the tag stays `nightly`, and the version is carried in the
+release name. Being a prerelease, it never becomes the "latest" release.
+
+Install a nightly once and automatic updates keep following the nightly
+channel, because the build remembers where it came from:
+
+```sh
+curl -fsSL https://github.com/knocking4thcylinder/proxy-router/releases/download/nightly/install.sh | sh -s -- nightly
+# or, in a checkout:
+./install.sh nightly
+```
+
+`proxy-router update nightly` switches an existing install, and
+`proxy-router update stable` switches back. Without an argument, `update`
+follows the channel the binary was built for.
+
+### Automatic updates
 
 Updates also happen by themselves. `auto_update` in `config.yaml` is on by
 default, every 24 hours:
@@ -224,12 +252,16 @@ default, every 24 hours:
 - the tray installs it over the binary it runs from (the running tray keeps
   the old build until it restarts).
 
-Neither touches a local build (`dev-<commit>`). Turn it off with
-`enabled: false` or `interval: 0`:
+Neither touches a local build (`dev-<commit>`). `channel: auto` (the
+default) follows the binary: stable installs get releases, nightly installs
+get nightlies. Use `stable` or `nightly` to override that. Turn updates off
+with `enabled: false` or `interval: 0`:
 
 ```yaml
 auto_update:
-  enabled: false
+  enabled: true
+  interval: 24h
+  channel: auto   # auto, stable, or nightly
 ```
 
 Windows builds are CLI-only: update them with `proxy-router update` (or

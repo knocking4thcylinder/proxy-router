@@ -248,7 +248,7 @@ func (t *tray) autoUpdateLoop() {
 			continue
 		}
 		delay = iv
-		tag, err := t.updateSelf()
+		tag, err := t.updateSelf(updateChannel(cfg.AutoUpdate.Channel))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "auto-update: %v\n", err)
 			continue
@@ -262,22 +262,34 @@ func (t *tray) autoUpdateLoop() {
 	}
 }
 
-// updateSelf replaces the tray's executable with the latest release. It
-// returns the new tag, or "" when there was nothing to do.
-func (t *tray) updateSelf() (string, error) {
+// updateSelf replaces the tray's executable with the latest release from
+// channel. It returns the new version, or "" when there was nothing to do.
+func (t *tray) updateSelf(channel string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	client := update.NewClient()
-	rel, err := client.Latest(ctx)
+	var (
+		rel *update.Release
+		err error
+	)
+	if channel == update.NightlyChannel {
+		rel, err = client.Nightly(ctx)
+	} else {
+		rel, err = client.Latest(ctx)
+	}
 	if err != nil {
 		return "", err
 	}
+	target := rel.Version()
+	if target == "" {
+		return "", fmt.Errorf("release %s has no version", rel.Tag)
+	}
 	// The file may already be newer than this running process (another
 	// updater got there first).
-	if v, ok := binaryVersion(t.exe); ok && update.Compare(rel.Tag, v) <= 0 {
+	if v, ok := binaryVersion(t.exe); ok && update.Compare(target, v) <= 0 {
 		return "", nil
 	}
-	if update.Compare(rel.Tag, version()) <= 0 {
+	if update.Compare(target, version()) <= 0 {
 		return "", nil
 	}
 	err = update.Install(ctx, client, rel, update.InstallOptions{
@@ -289,7 +301,7 @@ func (t *tray) updateSelf() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return rel.Tag, nil
+	return target, nil
 }
 
 func (t *tray) poke() {
