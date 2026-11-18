@@ -122,16 +122,34 @@ func Install(s Spec) error {
 	if _, err := run("launchctl", "enable", svc); err != nil {
 		return err
 	}
-	// bootstrap right after bootout can fail with "Input/output error"
+	return bootstrap(s.Target)
+}
+
+func bootstrap(t Target) error {
+	// Bootstrap right after bootout can fail with "Input/output error"
 	// while launchd finishes tearing the old job down.
 	var err error
 	for range 10 {
-		if _, err = run("launchctl", "bootstrap", domain(s.Target), path); err == nil {
+		if _, err = run("launchctl", "bootstrap", domain(t), DefinitionPath(t)); err == nil {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return err
+}
+
+// RestartRunning reloads the existing job with its current arguments and
+// enablement. Let the previous process finish tearing down its TUN routes.
+func RestartRunning(t Target) error {
+	st, err := Query(t)
+	if err != nil || !st.Running {
+		return err
+	}
+	if _, err := run("launchctl", "bootout", domain(t)+"/"+Label); err != nil {
+		return err
+	}
+	waitExit(st.PID, 15*time.Second)
+	return bootstrap(t)
 }
 
 // Stop stops the service and keeps it from starting at boot/login.
@@ -207,3 +225,5 @@ func Query(t Target) (Status, error) {
 	}
 	return st, nil
 }
+
+func updateSystemBinary(source string) error { return replaceSystemBinary(source) }

@@ -105,28 +105,45 @@ func InstallBinary(t Target) (string, error) {
 		return "", err
 	}
 	dst := BinaryPath(t)
-	installed := dst
 	if os.Geteuid() == 0 {
-		// A rejected version probe must not leave an unsafe binary in place
-		// for the service manager to start. A missing binary is a fresh install.
-		installed, err = RootBinary()
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// Only inspect an existing system copy after validating its path.
+		if _, err := RootBinary(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return "", err
 		}
 	}
-	if installed != "" {
-		if same, _ := sameContents(src, installed); same {
-			return dst, nil
+	return dst, copyBinary(src, dst)
+}
+
+// UpdateBinary copies a verified release to the installed service location.
+func UpdateBinary(t Target, src string) error {
+	if t.Scope == System {
+		if os.Geteuid() != 0 {
+			return errors.New("the system service's binary must be updated as root")
 		}
+		source, err := secpath.CheckFile(src, 0)
+		if err != nil {
+			return fmt.Errorf("check the verified system update source: %w", err)
+		}
+		return updateSystemBinary(source)
+	}
+	if os.Geteuid() == 0 {
+		return errUserFilesAsRoot
+	}
+	return copyBinary(src, BinaryPath(t))
+}
+
+func copyBinary(src, dst string) error {
+	if same, _ := sameContents(src, dst); same {
+		return nil
 	}
 	in, err := os.Open(src)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer in.Close()
 	// A new file renamed over the old one: the running service keeps
 	// executing its (now unlinked) copy until it restarts.
-	return dst, writeAtomic(dst, in, 0o755)
+	return writeAtomic(dst, in, 0o755)
 }
 
 // RootBinary returns the system service's copy of proxy-router if it's

@@ -54,6 +54,7 @@ func TestSudoAction(t *testing.T) {
 	}
 	for _, bad := range [][]string{
 		argv("start", "--tun", "--force"), argv("restart", "--tun"), argv("uninstall", "--system"),
+		argv(applyServiceUpdate, "nightly", "v0.1.3-nightly.5", "--allow-downgrade"),
 		argv("stop"), argv("start"), argv(), {bin, "--uid", "501", "--dir", dir, "stop", "--system"},
 	} {
 		if sudoAction(bad) {

@@ -3,6 +3,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -43,4 +44,25 @@ func writeSudoers(u *user.User, argLists [][]string) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), SudoersPath)
+}
+
+// replaceSystemBinary revokes the rule before replacing its executable. An
+// explicitly selected old build may predate sudoers cleanup on uninstall.
+func replaceSystemBinary(source string) error {
+	path, err := RootBinary()
+	if err != nil {
+		return err
+	}
+	target := BinaryPath(Target{Scope: System})
+	fi, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("the installed service binary %s must be a regular file", target)
+	}
+	if err := os.Remove(SudoersPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("revoke the TUN sudoers rule before updating: %w", err)
+	}
+	return copyBinary(source, path)
 }

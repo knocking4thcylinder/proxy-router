@@ -47,6 +47,13 @@ running as you) gets root when you next approve one of those. `start`
 says `installing this build (...) as the TUN service's binary` when it's
 about to do that. Approve it only for a build you just installed.
 
+A manual `update` uses the installed service helper when it supports
+release updates. On older installations the password dialog authorizes the
+current CLI to upgrade the service. Root fetches the selected GitHub release
+and verifies its checksum before installing it. A manual service update
+revokes the previous tray rule so a downgrade can safely use an older
+build. On Linux a later polkit-authorized start can provision a new rule.
+
 Everything else (connecting or disconnecting an installed TUN service,
 switching to proxy mode, `stop`, `uninstall`) uses root's own copy once
 installed. On Linux, a copy that supports `--uid` and predates the

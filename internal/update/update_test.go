@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,7 @@ func TestReleaseVersion(t *testing.T) {
 		want string
 	}{
 		{Release{Tag: "v0.1.2"}, "v0.1.2"},
+		{Release{Tag: "v0.1.2", Name: "v0.2.0"}, "v0.1.2"},
 		{Release{Tag: "v0.1.2", Name: "proxy-router v0.1.2"}, "v0.1.2"},
 		{Release{Tag: "nightly", Name: "v0.1.3-nightly.20261118.42.abc1234"}, "v0.1.3-nightly.20261118.42.abc1234"},
 		{Release{Tag: "nightly", Name: "Nightly build"}, ""},
@@ -256,7 +258,7 @@ func releaseServer(t *testing.T, archiveName, binary string, contents []byte) (*
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"tag_name": "v9.9.9",
 				"assets": []map[string]any{
-					{"name": archiveName, "browser_download_url": srv.URL + "/download/" + archiveName, "size": buf.Len()},
+					{"name": archiveName, "browser_download_url": srv.URL + "/download/" + archiveName, "size": buf.Len(), "digest": fmt.Sprintf("sha256:%x", sum)},
 					{"name": "SHA256SUMS", "browser_download_url": srv.URL + "/download/SHA256SUMS", "size": len(sums)},
 				},
 			})
@@ -306,6 +308,65 @@ func TestInstall(t *testing.T) {
 	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o755 {
 		t.Errorf("mode = %o, want 755", fi.Mode().Perm())
 	}
+}
+
+func TestDownloadBinaryRefusesChangedAsset(t *testing.T) {
+	archiveName, binary, ok := AssetName(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		t.Skip("no release for this platform")
+	}
+	srv, _ := releaseServer(t, archiveName, binary, []byte("release"))
+	client := &Client{API: srv.URL}
+	rel, err := client.Latest(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := rel.Assets[archiveName]
+	if asset.Digest == "" {
+		t.Fatal("release metadata lost the archive digest")
+	}
+	asset.Digest = "sha256:" + strings.Repeat("0", 64)
+	rel.Assets[archiveName] = asset
+	if _, err := DownloadBinary(t.Context(), client, rel, t.TempDir()); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("expected changed archive error, got %v", err)
+	}
+}
+
+func TestInstallBeforeReplace(t *testing.T) {
+	archiveName, binary, ok := AssetName(runtime.GOOS, runtime.GOARCH)
+	if !ok {
+		t.Skip("no releases for this platform")
+	}
+	srv, _ := releaseServer(t, archiveName, binary, []byte("new binary"))
+	target := filepath.Join(t.TempDir(), binary)
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checkContents := func(path, want string) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != want {
+			t.Fatalf("read %s = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	client := &Client{API: srv.URL}
+	rel, err := client.Latest(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	errService := errors.New("service update failed")
+	err = Install(t.Context(), client, rel, InstallOptions{
+		Target: target,
+		BeforeReplace: func(source string) error {
+			checkContents(source, "new binary")
+			checkContents(target, "old binary")
+			return errService
+		},
+	})
+	if !errors.Is(err, errService) {
+		t.Fatalf("Install error = %v, want %v", err, errService)
+	}
+	checkContents(target, "old binary")
 }
 
 func TestInstallChecksumMismatch(t *testing.T) {

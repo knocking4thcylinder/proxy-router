@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -17,6 +18,10 @@ func main() {
 			os.Exit(75)
 		}
 		fmt.Fprintln(os.Stderr, "error:", err)
+		var exit *cli.ElevationError
+		if errors.As(err, &exit) {
+			os.Exit(exit.ExitCode())
+		}
 		os.Exit(1)
 	}
 }

@@ -14,7 +14,7 @@ import (
 // replaceBinary writes src over target atomically: a temporary file in the
 // same directory, then a rename. A running proxy-router keeps executing
 // the old, now unlinked file until it restarts.
-func replaceBinary(target, src string) error {
+func replaceBinary(target, src string, beforeReplace func(string) error) error {
 	real, err := resolveBinary(target)
 	if err != nil {
 		return err
@@ -57,6 +57,11 @@ func replaceBinary(target, src string) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if beforeReplace != nil {
+		if err := beforeReplace(src); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(name, real); err != nil {
 		return fmt.Errorf("replace %s: %w", real, err)
