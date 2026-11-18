@@ -165,19 +165,35 @@ func Remove(t Target) error {
 	if t.Scope == User && os.Geteuid() == 0 {
 		return errUserFilesAsRoot
 	}
+	if t.Scope == System {
+		lock, err := lockSystemService()
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+	}
 	if err := Stop(t); err != nil {
 		return err
 	}
-	if err := os.Remove(DefinitionPath(t)); err != nil && !os.IsNotExist(err) {
+	if err := removeUnitFiles(t.Scope, DefinitionPath(t), SudoersPath); err != nil {
 		return err
-	}
-	if t.Scope == System {
-		if err := os.Remove(SudoersPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 	}
 	_, _ = systemctl(t, "daemon-reload")
 	_ = os.RemoveAll(filepath.Dir(BinaryPath(t)))
+	return nil
+}
+
+func removeUnitFiles(scope Scope, definition, sudoers string) error {
+	// Keep the definition (and installed binary) if revoking the rule
+	// fails, so a subsequent uninstall or mode switch can retry it.
+	if scope == System {
+		if err := os.Remove(sudoers); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove the TUN sudoers rule: %w", err)
+		}
+	}
+	if err := os.Remove(definition); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 

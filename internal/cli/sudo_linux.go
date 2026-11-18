@@ -1,57 +1,31 @@
-//go:build linux
-
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
 )
 
-// sudoersThenSudo writes the sudoers rule with this build in one password
-// dialog, then returns the passwordless sudo command for argv. It handles
-// a TUN service installed by an older build, whose copy of proxy-router
-// can't write the rule itself: after this, connecting and disconnecting
-// don't ask again. nil means it doesn't apply -- not a sudo action, no
-// installed service, no sudo or pkexec, or this is the binary that would
-// run anyway (elevated adds --write-sudoers to it instead).
-func sudoersThenSudo(argv []string) (*exec.Cmd, error) {
-	if !sudoAction(argv) {
-		return nil, nil
+// allowInstalledSudo runs after a TUN start or restart authorized by polkit. Older
+// installed builds keep using polkit until a build with this lifecycle is
+// installed. A failed rule write can be retried on a later start.
+func allowInstalledSudo(t service.Target, dir string) {
+	if t.Scope != service.System || t.User == nil || t.User.Uid == "0" || os.Getenv("PKEXEC_UID") != t.User.Uid {
+		return
 	}
-	installed := service.BinaryPath(service.Target{Scope: service.System})
-	if argv[0] != installed {
-		return nil, nil
+	// configDir resolves symlinks for root, but sudo matches the spelling
+	// that the caller passes in --dir.
+	if flagDir != "" {
+		if abs, err := filepath.Abs(flagDir); err == nil {
+			dir = abs
+		}
 	}
-	if _, err := os.Stat(installed); err != nil {
-		return nil, nil
+	args := sudoArgLists(dir, t.User.Uid)
+	if service.SudoersPossible(args) {
+		if err := service.AllowSudo(t.User, args); err != nil {
+			fmt.Fprintf(os.Stderr, "note: could not enable passwordless TUN connect and disconnect: %v\n", err)
+		}
 	}
-	if _, err := exec.LookPath("sudo"); err != nil {
-		return nil, nil
-	}
-	if _, err := exec.LookPath("pkexec"); err != nil {
-		return nil, nil
-	}
-	// A config folder sudoers can't express (spaces, wildcard characters)
-	// gets no rule; don't ask for a password that won't help.
-	if !service.SudoersPossible(sudoArgLists(argv[2], argv[4])) {
-		return nil, nil
-	}
-	self, err := selfExecutable()
-	if err != nil || self == installed {
-		return nil, nil
-	}
-	// sudoAction checked that argv starts with --dir dir --uid uid.
-	cmd := exec.Command("pkexec", self, "--dir", argv[2], "--uid", argv[4], "tray", "--allow-sudo")
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("write the sudoers rule: %w", err)
-	}
-	if c := passwordlessSudo(argv); c != nil {
-		return c, nil
-	}
-	return nil, errors.New("wrote the sudoers rule, but sudo still doesn't allow the TUN service's copy")
 }

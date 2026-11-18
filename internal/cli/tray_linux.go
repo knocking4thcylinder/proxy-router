@@ -62,16 +62,9 @@ func menuLabel(s string) string {
 // elevated runs argv as root with pkexec, which asks for the password in
 // the desktop's polkit dialog. argv[0] runs directly, not through env, so
 // the dialog names it, and a polkit action for it (packaging/linux) can
-// apply. For the connect and disconnect actions, a build running itself
-// also writes the sudoers rule, so the next ones go through sudo without a
-// password; the service's copy from an older build doesn't know the flag,
-// so it's only added for this executable.
+// apply. Installed builds can handle their normal action arguments even
+// if they predate the sudoers rule.
 func elevated(argv []string) *exec.Cmd {
-	if sudoAction(argv) {
-		if self, err := selfExecutable(); err == nil && self == argv[0] {
-			argv = append(append([]string{}, argv...), "--write-sudoers")
-		}
-	}
 	return exec.Command("pkexec", argv...)
 }
 

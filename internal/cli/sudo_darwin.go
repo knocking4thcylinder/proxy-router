@@ -2,8 +2,7 @@
 
 package cli
 
-import "os/exec"
+import "github.com/knocking4thcylinder/proxy-router/internal/service"
 
-// sudoersThenSudo is Linux only: on macOS elevated writes the rule in the
-// same AppleScript that runs the action (see tray_darwin.go).
-func sudoersThenSudo([]string) (*exec.Cmd, error) { return nil, nil }
+// The macOS password dialog provisions the rule (see tray_darwin.go).
+func allowInstalledSudo(service.Target, string) {}

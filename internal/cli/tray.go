@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -47,9 +48,9 @@ proxy-router is connected, and lets you connect and disconnect, switch
 between proxy and TUN mode, pick a server and update subscriptions.
 
 It controls the background service, like "start" and "stop" do; TUN mode
-asks for your password in a system dialog (on macOS and Linux only once for
-connecting and disconnecting). "Start tray at login" in its menu makes the
-icon come back after a reboot.
+asks for your password in a system dialog. With a TUN service that has a
+sudoers rule, connecting and disconnecting can use sudo without a password.
+"Start tray at login" in its menu makes the icon come back after a reboot.
 
 The tray runs in the background and returns right away; quit it from its
 menu. --foreground keeps it attached to the terminal instead.`,
@@ -105,8 +106,10 @@ menu. --foreground keeps it attached to the terminal instead.`,
 		},
 	}
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "stay attached to the terminal")
-	cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the password dialog)")
-	_ = cmd.Flags().MarkHidden("allow-sudo")
+	if runtime.GOOS == "darwin" {
+		cmd.Flags().BoolVar(&allow, "allow-sudo", false, "as root: let the user connect and disconnect TUN mode without a password (run by the password dialog)")
+		_ = cmd.Flags().MarkHidden("allow-sudo")
+	}
 	return cmd
 }
 

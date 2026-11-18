@@ -170,6 +170,9 @@ func sameContents(a, b string) (same bool, err error) {
 	if err != nil {
 		return false, err
 	}
+	if os.SameFile(sa, sb) {
+		return true, nil
+	}
 	if sa.Size() != sb.Size() {
 		return false, nil
 	}

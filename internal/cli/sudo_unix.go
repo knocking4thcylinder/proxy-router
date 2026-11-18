@@ -22,7 +22,9 @@ func passwordlessSudo(argv []string) *exec.Cmd {
 	if !sudoAction(argv) || argv[0] != service.BinaryPath(service.Target{Scope: service.System}) {
 		return nil
 	}
-	if _, err := os.Stat(service.SudoersPath); err != nil {
+	// Some distributions restrict access to the sudoers directory. In
+	// that case sudo can check the rule even when we can't stat it.
+	if _, err := os.Stat(service.SudoersPath); err != nil && !os.IsPermission(err) {
 		return nil
 	}
 	if exec.Command("sudo", append([]string{"-n", "-l"}, argv...)...).Run() != nil {
@@ -31,10 +33,7 @@ func passwordlessSudo(argv []string) *exec.Cmd {
 	return exec.Command("sudo", append([]string{"-n"}, argv...)...)
 }
 
-// allowSudo writes the sudoers rule for sudoActions. It runs as root from
-// the password dialog, either as "tray --allow-sudo" or with the
-// --write-sudoers flag on the action itself, with the --dir and --uid
-// asRoot passed, which the rule then allows verbatim.
+// allowSudo handles the macOS password dialog's "tray --allow-sudo".
 func allowSudo() error {
 	if os.Geteuid() != 0 {
 		return errors.New("writing the sudoers rule has to run as root")

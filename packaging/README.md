@@ -21,16 +21,20 @@ still trusts.
   Root ignores `$PROXY_ROUTER_HOME`, `$XDG_CONFIG_HOME` and `$HOME`, and
   refuses a config directory that isn't owned by that user, or that
   another user could change (including through the directories above it).
-- **Connecting and disconnecting TUN mode** from the tray don't ask every
-  time. The first password dialog also writes
-  `/etc/sudoers.d/proxy-router`, which lets that user run the root-owned
+- **Connecting and disconnecting TUN mode** from the tray can use
+  `/etc/sudoers.d/proxy-router`. It lets that user run the root-owned
   copy above as root without a password, with exactly
   `--dir <config dir> --uid <your uid> start --tun` or the same with
-  `stop --system`. Nothing else matches the rule, so switching to proxy
-  mode, updating the service, `restart` and `uninstall` still ask. The
-  rule is removed with the system service (`uninstall`, or switching to
-  proxy mode). On Linux this needs `sudo`; without it, pkexec asks each
-  time.
+  `stop --system`. Switching to proxy mode, updating the service,
+  `restart` and `uninstall` still ask. On Linux a successful TUN start or
+  restart authorized by polkit verifies the installed executable and writes the rule
+  only if that copy matches the running build, which can remove its own
+  rule. A service upgraded in the background can acquire the rule on its
+  next successful start from the tray. On macOS the connect or
+  disconnect dialog writes the rule. Uninstalling or switching to proxy
+  mode revokes the rule. On Linux a revocation error leaves the unit and
+  executable in place so the removal can be retried. The tray uses the
+  password dialog when `sudo` or the rule is unavailable.
 
 ## What still trusts your proxy-router binary
 
@@ -44,13 +48,12 @@ says `installing this build (...) as the TUN service's binary` when it's
 about to do that. Approve it only for a build you just installed.
 
 Everything else (connecting or disconnecting an installed TUN service,
-switching to proxy mode, `stop`, `uninstall`) runs root's own copy and
-doesn't trust your binary. Two exceptions: a TUN service installed before
-`--uid` existed is updated with your binary the first time, and one
-installed before the sudoers rule existed runs your binary once (only
-`tray --allow-sudo`, which writes the rule) the first time you connect or
-disconnect from the tray; the action itself still runs the root-owned
-copy.
+switching to proxy mode, `stop`, `uninstall`) uses root's own copy once
+installed. On Linux, a copy that supports `--uid` and predates the
+sudoers rule continues to use polkit for tray actions until you upgrade
+or restart the service with the newer build. On Linux, installations
+that predate `--uid` require an explicit `restart` to upgrade. On macOS,
+the next service action can update an installation that predates `--uid`.
 
 On macOS `osascript` reports no uid, so `--uid` isn't cross-checked
 there. The config directory still has to be owned by that uid.
@@ -70,10 +73,9 @@ It only matches `/var/lib/proxy-router/proxy-router` (polkit compares the
 program's path). It doesn't apply to the install step, which runs your
 binary under the generic action. It stays `auth_admin`: relaxing it to
 `yes` or `auth_self` would let anything running as you control a root
-service that runs `--dir <any path>` without a password. Connecting and
-disconnecting from the tray stop asking after the first dialog because of
-the sudoers rule above, not because of this policy. On read-only `/usr`
-systems (SteamOS) it can't be installed. Nothing depends on it.
+service that runs `--dir <any path>` without a password. The tray uses
+the sudoers rule above for passwordless connect and disconnect. On
+read-only `/usr` systems (SteamOS) the optional polkit policy is skipped.
 
 ## The fixed design
 
