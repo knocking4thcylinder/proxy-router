@@ -11,7 +11,7 @@ import (
 
 // replaceBinary replaces target with src. A running .exe can be renamed
 // but not overwritten, so the old one is moved aside first.
-func replaceBinary(target, src string) error {
+func replaceBinary(target, src string, beforeReplace func(string) error) error {
 	real, err := resolveBinary(target)
 	if err != nil {
 		return err
@@ -38,6 +38,11 @@ func replaceBinary(target, src string) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if beforeReplace != nil {
+		if err := beforeReplace(src); err != nil {
+			return err
+		}
 	}
 
 	// A .old left by an earlier update may still be running (Windows

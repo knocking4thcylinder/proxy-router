@@ -66,3 +66,12 @@ func lockSystemService() (*os.File, error) {
 	}
 	return nil, fmt.Errorf("lock the TUN service: %w", err)
 }
+
+func updateSystemBinary(source string) error {
+	lock, err := lockSystemService()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return replaceSystemBinary(source)
+}

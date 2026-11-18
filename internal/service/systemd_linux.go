@@ -150,6 +150,13 @@ func Install(s Spec) error {
 	return nil
 }
 
+// RestartRunning restarts the existing unit, retaining its flags and
+// enablement. try-restart leaves an inactive unit alone.
+func RestartRunning(t Target) error {
+	_, err := systemctl(t, "try-restart", Unit)
+	return err
+}
+
 // Stop stops the service and keeps it from starting at boot/login.
 func Stop(t Target) error {
 	if !exists(DefinitionPath(t)) {

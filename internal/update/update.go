@@ -48,9 +48,10 @@ const (
 
 // Asset is one file attached to a release.
 type Asset struct {
-	Name string
-	URL  string
-	Size int64
+	Name   string
+	URL    string
+	Size   int64
+	Digest string
 }
 
 // Release is a GitHub release and its downloadable files.
@@ -67,7 +68,7 @@ func (r *Release) Version() string {
 	if r == nil {
 		return ""
 	}
-	if IsRelease(r.Name) {
+	if r.Tag == NightlyTag && IsRelease(r.Name) {
 		return NormalizeTag(r.Name)
 	}
 	if IsRelease(r.Tag) {
@@ -156,6 +157,7 @@ func (c *Client) release(ctx context.Context, path string) (*Release, error) {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 			Size               int64  `json:"size"`
+			Digest             string `json:"digest"`
 		} `json:"assets"`
 	}
 	dec := json.NewDecoder(io.LimitReader(resp.Body, maxMetadata))
@@ -170,7 +172,7 @@ func (c *Client) release(ctx context.Context, path string) (*Release, error) {
 		if a.Name == "" || a.BrowserDownloadURL == "" {
 			continue
 		}
-		rel.Assets[a.Name] = Asset{Name: a.Name, URL: a.BrowserDownloadURL, Size: a.Size}
+		rel.Assets[a.Name] = Asset{Name: a.Name, URL: a.BrowserDownloadURL, Size: a.Size, Digest: a.Digest}
 	}
 	return rel, nil
 }
@@ -211,20 +213,15 @@ type InstallOptions struct {
 	GOOS, GOARCH string
 	// Log, if set, reports progress.
 	Log func(format string, args ...any)
+	// BeforeReplace, if set, receives the verified executable after the
+	// replacement has been prepared, while the original target still exists.
+	// Returning an error cancels the replacement.
+	BeforeReplace func(source string) error
 }
 
 // Install downloads rel's archive for this platform, verifies its SHA-256
 // against the release's SHA256SUMS and atomically replaces the target.
 func Install(ctx context.Context, c *Client, rel *Release, o InstallOptions) error {
-	if rel == nil {
-		return errors.New("no release to install")
-	}
-	if o.GOOS == "" {
-		o.GOOS = runtime.GOOS
-	}
-	if o.GOARCH == "" {
-		o.GOARCH = runtime.GOARCH
-	}
 	if o.Target == "" {
 		exe, err := os.Executable()
 		if err != nil {
@@ -232,56 +229,80 @@ func Install(ctx context.Context, c *Client, rel *Release, o InstallOptions) err
 		}
 		o.Target = exe
 	}
-	logf := o.Log
-	if logf == nil {
-		logf = func(string, ...any) {}
-	}
-	archiveName, binaryName, ok := AssetName(o.GOOS, o.GOARCH)
-	if !ok {
-		return fmt.Errorf("there are no releases for %s/%s", o.GOOS, o.GOARCH)
-	}
-	archive, ok := rel.Asset(archiveName)
-	if !ok {
-		return fmt.Errorf("release %s doesn't include %s", rel.Tag, archiveName)
-	}
-	sums, ok := rel.Asset("SHA256SUMS")
-	if !ok {
-		return fmt.Errorf("release %s doesn't include SHA256SUMS", rel.Tag)
-	}
-
 	tmp, err := os.MkdirTemp("", "proxy-router-update-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
+	source, err := downloadBinary(ctx, c, rel, tmp, o.GOOS, o.GOARCH, o.Log)
+	if err != nil {
+		return err
+	}
+	if err := replaceBinary(o.Target, source, o.BeforeReplace); err != nil {
+		return err
+	}
+	if o.Log != nil {
+		o.Log("installed %s", filepath.Clean(o.Target))
+	}
+	return nil
+}
+
+// DownloadBinary verifies and extracts the current platform's release in a
+// private temporary directory supplied by the caller.
+func DownloadBinary(ctx context.Context, c *Client, rel *Release, dir string) (string, error) {
+	return downloadBinary(ctx, c, rel, dir, "", "", nil)
+}
+
+func downloadBinary(ctx context.Context, c *Client, rel *Release, tmp, goos, goarch string, logf func(string, ...any)) (string, error) {
+	if rel == nil {
+		return "", errors.New("no release to install")
+	}
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	archiveName, binaryName, ok := AssetName(goos, goarch)
+	if !ok {
+		return "", fmt.Errorf("there are no releases for %s/%s", goos, goarch)
+	}
+	archive, ok := rel.Asset(archiveName)
+	if !ok {
+		return "", fmt.Errorf("release %s doesn't include %s", rel.Tag, archiveName)
+	}
+	sums, ok := rel.Asset("SHA256SUMS")
+	if !ok {
+		return "", fmt.Errorf("release %s doesn't include SHA256SUMS", rel.Tag)
+	}
 
 	archivePath := filepath.Join(tmp, archiveName)
 	logf("downloading %s (%.1f MiB)", archiveName, float64(archive.Size)/(1<<20))
 	if err := download(ctx, c.httpClient(), archive.URL, archivePath, maxArchive); err != nil {
-		return err
+		return "", err
 	}
 	sumsPath := filepath.Join(tmp, "SHA256SUMS")
 	if err := download(ctx, c.httpClient(), sums.URL, sumsPath, maxMetadata); err != nil {
-		return err
+		return "", err
 	}
 	want, err := checksumFor(sumsPath, archiveName)
 	if err != nil {
-		return err
+		return "", err
+	}
+	// A rolling nightly can be replaced between reading the release metadata
+	// and downloading its archive and manifest.
+	if archive.Digest != "" && !strings.EqualFold(archive.Digest, "sha256:"+want) {
+		return "", errors.New("release archive changed after the update check; retry the update")
 	}
 	logf("verifying SHA-256")
 	if err := verifySHA256(archivePath, want); err != nil {
-		return err
+		return "", err
 	}
 
-	extracted, err := extract(archivePath, filepath.Join(tmp, "unpacked"), binaryName)
-	if err != nil {
-		return err
-	}
-	if err := replaceBinary(o.Target, extracted); err != nil {
-		return err
-	}
-	logf("installed %s", filepath.Clean(o.Target))
-	return nil
+	return extract(archivePath, filepath.Join(tmp, "unpacked"), binaryName)
 }
 
 // download fetches url into path, refusing to read more than limit bytes.

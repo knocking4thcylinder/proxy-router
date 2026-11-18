@@ -207,9 +207,9 @@ Foreground mode refuses to start while the service is running.
 
 `proxy-router update` checks GitHub, downloads the release for your
 platform, verifies its SHA-256 against the published `SHA256SUMS`, and
-replaces the binary atomically. If the background service is running, the
-new build is installed into the service and it is restarted; in TUN mode
-that asks for your password.
+replaces the binary atomically. It also updates installed service copies
+and restarts running services with their existing launch options. Stopped
+services stay stopped. Updating the TUN service copy asks for your password.
 
 ```sh
 proxy-router update --check   # only report the current and latest version

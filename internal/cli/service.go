@@ -225,18 +225,26 @@ const (
 	// This executable, which installs itself, unless the TUN service's
 	// copy is the same build (restart, which picks up a new build).
 	upgradeBinary
+	// The current executable, which applies a verified release before the
+	// CLI is replaced. The release may predate the update command's helper.
+	manualUpgradeBinary
 )
 
+// ElevationError preserves the status of a privileged command after cleanup.
+type ElevationError struct{ *exec.ExitError }
+
+func (e *ElevationError) Unwrap() error { return e.ExitError }
+
 // asRoot runs proxy-router as root with args, asking for the password with
-// sudo, or the desktop's dialog with --password-dialog. It returns when
-// that's done, or exits with its status if it failed. Only root's half of
-// the work goes there; the caller does the user's half as the user.
+// sudo, or the desktop's dialog with --password-dialog. Only root's half
+// of the work goes there; the caller does the user's half as the user.
 //
 // What runs as root is the TUN service's own copy of proxy-router when
 // it's installed and only root can change it, rather than this executable,
 // which the user (or anything running as them) can replace. This
 // executable runs as root only to install itself as that copy: the first
-// TUN-mode start, and restarts that update the service to a new build.
+// TUN-mode start and restarts that update the service. Manual updates
+// run the current executable to install the selected release.
 func asRoot(why string, which rootBinary, args ...string) error {
 	exe, err := rootExecutable(which)
 	if err != nil {
@@ -257,8 +265,7 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	var c *exec.Cmd
 	passwordless := false
 	if passwordDialog {
-		// The tray can use sudo for connect and disconnect once the
-		// installed service has a sudoers rule.
+		// The tray's rule covers only its connect and disconnect actions.
 		if c = passwordlessSudo(argv); c != nil {
 			passwordless = true
 			fmt.Fprintf(os.Stderr, "%s; trying sudo without a password\n", why)
@@ -282,6 +289,9 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
+		if which == manualUpgradeBinary {
+			return &ElevationError{ee}
+		}
 		if _, sysT, terr := targets(); terr == nil && exe == service.BinaryPath(sysT) && service.Outdated(sysT) {
 			if newerService(sysT) {
 				fmt.Fprintln(os.Stderr, `note: the TUN service has a newer build of proxy-router; "proxy-router update" updates this binary`)
@@ -307,6 +317,18 @@ func rootExecutable(which rootBinary) (string, error) {
 		return "", err
 	}
 	installed, err := service.RootBinary()
+	if which == manualUpgradeBinary {
+		// Probe as the invoking user. Prefer the protected installed helper
+		// when it understands the release tag and version arguments.
+		if err == nil {
+			help, err := exec.Command(installed, applyServiceUpdate, "--help").Output()
+			if err == nil && strings.Contains(string(help), applyServiceUpdate+" tag version") {
+				return installed, nil
+			}
+		}
+		fmt.Fprintf(os.Stderr, "using this build (%s) to authenticate the TUN service update\n", self)
+		return self, nil
+	}
 	switch {
 	case err == nil && !takesUID(installed):
 		if runtime.GOOS == "linux" && which != upgradeBinary {

@@ -105,7 +105,7 @@ in TUN mode); "stop", "restart", "status" and "logs" control it. "run" also star
 		initCmd(), subCmd(), addCmd(), removeCmd(), listCmd(), useCmd(),
 		pingCmd(), runCmd(), geoCmd(), configCmd(),
 		startCmd(), stopCmd(), restartCmd(), statusCmd(), logsCmd(), uninstallCmd(),
-		updateCmd(), trayCmd(),
+		updateCmd(), applyServiceUpdateCmd(), trayCmd(),
 	)
 	if c := panelCmd(); c != nil {
 		root.AddCommand(c)
