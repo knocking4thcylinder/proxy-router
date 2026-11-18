@@ -36,19 +36,25 @@ func menuLabel(s string) string {
 }
 
 // elevated runs argv as root through AppleScript, which asks for the
-// password in the standard macOS dialog. For connecting and disconnecting
-// TUN mode (sudoAction) the dialog also writes the sudoers rule first, so
-// asRoot can run them with sudo next time without asking; argv runs even
-// if writing the rule fails.
+// password in the standard macOS dialog. After a successful TUN action,
+// the same authorization sets up passwordless connect and disconnect.
 func elevated(argv []string) *exec.Cmd {
-	script, prompt := shellWords(argv), ""
-	if sudoAction(argv) {
+	return exec.Command("/usr/bin/osascript", "-e", fmt.Sprintf("do shell script %s with administrator privileges without altering line endings", appleString(elevatedShell(argv))))
+}
+
+func elevatedShell(argv []string) string {
+	script := shellWords(argv)
+	installed := service.BinaryPath(service.Target{Scope: service.System})
+	toggle := sudoAction(argv) && (argv[5] == "start" || argv[0] == installed)
+	restart := len(argv) >= 7 && argv[5] == "restart" && argv[6] == "--tun"
+	if toggle || restart {
+		// Initial installation (or migration) has to finish before the rule
+		// can name a verified binary. Report setup errors in the tray log,
+		// while keeping the exit status of the actual service action.
 		allow := append(slices.Clone(argv[:5]), "tray", "--allow-sudo")
-		script = shellWords(allow) + "; " + script
-		prompt = " with prompt " + appleString("proxy-router needs your password for TUN mode. "+
-			"Connecting and disconnecting from the menu bar won't ask again.")
+		script += " && { " + shellWords(allow) + " 2>&1 || :; }"
 	}
-	return exec.Command("osascript", "-e", fmt.Sprintf("do shell script %s%s with administrator privileges", appleString(script), prompt))
+	return script
 }
 
 func shellWords(argv []string) string {

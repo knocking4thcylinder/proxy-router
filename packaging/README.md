@@ -6,7 +6,7 @@ still trusts.
 ## What runs as root
 
 - **The TUN service** runs `/var/lib/proxy-router/proxy-router` (macOS:
-  `/Library/Application Support/proxy-router/proxy-router`), a copy owned
+  `/private/var/db/proxy-router/proxy-router`), a copy owned
   by root, as
   `proxy-router --dir <config dir> --uid <your uid> run --service --tun`.
 - **`start`, `stop`, `restart`, `uninstall`** do their root half through
@@ -30,8 +30,11 @@ still trusts.
   restart authorized by polkit verifies the installed executable and writes the rule
   only if that copy matches the running build, which can remove its own
   rule. A service upgraded in the background can acquire the rule on its
-  next successful start from the tray. On macOS the connect or
-  disconnect dialog writes the rule. Uninstalling or switching to proxy
+  next successful start from the tray. On macOS the dialog writes the rule
+  after a successful TUN action and verifies the installed executable.
+  The next authorized connect or restart moves existing macOS services
+  from `/Library/Application Support/proxy-router` to the new path, whose
+  ancestors are root-only. Uninstalling or switching to proxy
   mode revokes the rule. On Linux a revocation error leaves the unit and
   executable in place so the removal can be retried. The tray uses the
   password dialog when `sudo` or the rule is unavailable.

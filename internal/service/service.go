@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -109,6 +110,25 @@ func InstallBinary(t Target) (string, error) {
 		// Only inspect an existing system copy after validating its path.
 		if _, err := RootBinary(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return "", err
+		}
+		if runtime.GOOS == "darwin" {
+			// The tray has to traverse the directory to verify the binary.
+			// Set its mode explicitly even if the authorization shell has
+			// a restrictive umask.
+			dir := filepath.Dir(dst)
+			if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+				return "", err
+			}
+			info, err := os.Lstat(dir)
+			if err != nil {
+				return "", err
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("%s must be a directory", dir)
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				return "", err
+			}
 		}
 	}
 	return dst, copyBinary(src, dst)

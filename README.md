@@ -185,7 +185,7 @@ command you type only controls it.
   the rules file. The service watches its files the same way `run` does.
 - **After rebuilding proxy-router**, run `proxy-router restart`. The service
   runs its own copy of the binary (in `~/Library/Application Support/proxy-router/`,
-  `/Library/Application Support/proxy-router/`, `~/.local/share/proxy-router/`
+  `/private/var/db/proxy-router/`, `~/.local/share/proxy-router/`
   or `/var/lib/proxy-router/`), so a rebuild doesn't affect it until then.
   `status` notes when the copy is out of date. `start` doesn't update an
   installed TUN service's copy; only `restart` does.
@@ -307,10 +307,12 @@ the status and server. Its menu, top to bottom:
   root-owned copy. On Linux the rule is added after a successful TUN
   start or restart authorized by the tray's polkit dialog. Older installed builds
   that support `--uid` keep using polkit until you upgrade or restart the
-  service with a newer build. On macOS the connect or disconnect dialog
-  adds the rule. Switching to proxy mode, updating the service and
-  `restart` still ask for authorization. Switching the installed service
-  to proxy mode or running `uninstall` removes the rule. If the rule is
+  service with a newer build. On macOS the dialog adds the rule after a
+  successful TUN action. Existing macOS installations move to the new
+  service path the next time you connect or restart. Switching to proxy
+  mode, updating the service and `restart` still ask for authorization.
+  Switching the installed service to proxy mode or running `uninstall`
+  removes the rule. If the rule is
   unavailable or `sudo` is missing, the tray uses the password dialog.
 - **Copy Proxy Address**: the SOCKS5 / HTTP addresses (on Linux this uses
   `wl-copy`, `xclip`, `xsel` or KDE's clipboard)
