@@ -3,6 +3,7 @@
 #
 #   curl -fsSL https://github.com/knocking4thcylinder/proxy-router/releases/latest/download/install.sh | sh
 #   ./install.sh v0.1.0
+#   ./install.sh nightly
 #
 # Set BINDIR to choose where the binary goes (default: ~/.local/bin).
 
@@ -13,11 +14,13 @@ version="${1:-}"
 
 case "$version" in
   -h|--help)
-    echo "usage: $0 [version]"
-    echo "  version defaults to the latest release, e.g. v0.1.0"
+    echo "usage: $0 [version|nightly]"
+    echo "  version defaults to the latest stable release, e.g. v0.1.0"
+    echo "  nightly installs the latest build from master"
     exit 0
     ;;
   ""|latest) version="" ;;
+  nightly) ;;
   v*) ;;
   *) version="v$version" ;;
 esac
@@ -46,7 +49,9 @@ if [ "$asset_os" = "macos" ] && [ "$asset_arch" != "arm64" ]; then
 fi
 
 asset="proxy-router-$asset_os-$asset_arch.tar.gz"
-if [ -n "$version" ]; then
+if [ "$version" = "nightly" ]; then
+  base="https://github.com/$repo/releases/download/nightly"
+elif [ -n "$version" ]; then
   base="https://github.com/$repo/releases/download/$version"
 else
   base="https://github.com/$repo/releases/latest/download"

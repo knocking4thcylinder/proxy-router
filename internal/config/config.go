@@ -79,6 +79,9 @@ type Config struct {
 		Enabled bool `yaml:"enabled"`
 		// How often to check GitHub. 0 disables checking.
 		Interval Duration `yaml:"interval"`
+		// Which releases to follow: "auto" (the channel of this build),
+		// "stable" or "nightly".
+		Channel string `yaml:"channel"`
 	} `yaml:"auto_update"`
 	// Network interface for proxy-router's own connections: "auto" (bypass
 	// another VPN's tunnel if one owns the default route), "none", or a name.
@@ -162,6 +165,7 @@ func defaults() *Config {
 	c.UpdateInterval = Duration(12 * time.Hour)
 	c.AutoUpdate.Enabled = true
 	c.AutoUpdate.Interval = Duration(24 * time.Hour)
+	c.AutoUpdate.Channel = "auto"
 	c.Geo.GeoIP = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
 	c.Geo.GeoSite = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
 	c.Ping.URL = "https://www.gstatic.com/generate_204"
@@ -247,6 +251,13 @@ func (c *Config) validateAutoSwitch() error {
 }
 
 func (c *Config) validateAutoUpdate() error {
+	switch c.AutoUpdate.Channel {
+	case "", "auto":
+		c.AutoUpdate.Channel = "auto"
+	case "stable", "nightly":
+	default:
+		return errors.New(`auto_update.channel must be "auto", "stable" or "nightly"`)
+	}
 	if c.AutoUpdate.Interval == 0 {
 		c.AutoUpdate.Enabled = false
 		return nil

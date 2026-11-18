@@ -23,7 +23,7 @@ func autoUpdateLoop(ctx context.Context, ready chan<- string) {
 			fmt.Fprintf(os.Stderr, "auto-update: %v\n", err)
 		} else if a := e.cfg.AutoUpdate; a.Enabled && a.Interval.D() > 0 {
 			delay = a.Interval.D()
-			tag, err := autoUpdateOnce(ctx)
+			tag, err := autoUpdateOnce(ctx, updateChannel(a.Channel))
 			switch {
 			case err != nil:
 				fmt.Fprintf(os.Stderr, "auto-update: %v\n", err)
@@ -43,11 +43,12 @@ func autoUpdateLoop(ctx context.Context, ready chan<- string) {
 	}
 }
 
-// autoUpdateOnce installs the latest release over the service's binary and
-// returns its tag, or "" when it is already current. A newer file that
-// this process isn't running yet (another updater replaced it) is reported
-// as well, so the caller restarts into it without downloading it again.
-func autoUpdateOnce(ctx context.Context) (string, error) {
+// autoUpdateOnce installs the latest release from channel over the
+// service's binary and returns its version, or "" when it is already
+// current. A newer file that this process isn't running yet (another
+// updater replaced it) is reported as well, so the caller restarts into it
+// without downloading it again.
+func autoUpdateOnce(ctx context.Context, channel string) (string, error) {
 	// Local builds aren't releases; replacing them would make debugging
 	// confusing.
 	if !update.IsRelease(version()) {
@@ -61,18 +62,27 @@ func autoUpdateOnce(ctx context.Context) (string, error) {
 	defer cancel()
 
 	client := update.NewClient()
-	rel, err := client.Latest(ctx)
+	var rel *update.Release
+	if channel == update.NightlyChannel {
+		rel, err = client.Nightly(ctx)
+	} else {
+		rel, err = client.Latest(ctx)
+	}
 	if err != nil {
 		return "", err
 	}
-	if update.Compare(rel.Tag, version()) <= 0 {
+	target := rel.Version()
+	if target == "" {
+		return "", fmt.Errorf("release %s has no version", rel.Tag)
+	}
+	if update.Compare(target, version()) <= 0 {
 		return "", nil
 	}
-	if v, ok := binaryVersion(exe); ok && update.Compare(rel.Tag, v) <= 0 {
+	if v, ok := binaryVersion(exe); ok && update.Compare(target, v) <= 0 {
 		fmt.Fprintf(os.Stderr, "%s auto-update: %s is already installed; restarting into it\n", time.Now().Format(time.TimeOnly), v)
 		return v, nil
 	}
-	fmt.Fprintf(os.Stderr, "%s auto-update: installing %s\n", time.Now().Format(time.TimeOnly), rel.Tag)
+	fmt.Fprintf(os.Stderr, "%s auto-update: installing %s\n", time.Now().Format(time.TimeOnly), target)
 	err = update.Install(ctx, client, rel, update.InstallOptions{
 		Target: exe,
 		Log: func(format string, args ...any) {
@@ -82,7 +92,7 @@ func autoUpdateOnce(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return rel.Tag, nil
+	return target, nil
 }
 
 // sleepContext waits for d, returning false if ctx was cancelled first.

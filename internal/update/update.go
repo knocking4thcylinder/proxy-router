@@ -24,6 +24,17 @@ import (
 // Repo is the GitHub repository releases are published from.
 const Repo = "knocking4thcylinder/proxy-router"
 
+// Release channels. Stable is the default; nightly follows the rolling
+// prerelease that is rebuilt from master.
+const (
+	StableChannel  = "stable"
+	NightlyChannel = "nightly"
+	// NightlyTag is the fixed tag of the rolling nightly release. A release
+	// tag can't change, so the version is carried in the release name
+	// instead; see Release.Version.
+	NightlyTag = "nightly"
+)
+
 const (
 	// apiTimeout bounds the release metadata requests.
 	apiTimeout = 30 * time.Second
@@ -45,7 +56,24 @@ type Asset struct {
 // Release is a GitHub release and its downloadable files.
 type Release struct {
 	Tag    string
+	Name   string
 	Assets map[string]Asset
+}
+
+// Version is the release's version: its tag for a normal release, or its
+// name for the rolling nightly, whose tag stays "nightly". It returns ""
+// when neither is a version.
+func (r *Release) Version() string {
+	if r == nil {
+		return ""
+	}
+	if IsRelease(r.Name) {
+		return NormalizeTag(r.Name)
+	}
+	if IsRelease(r.Tag) {
+		return NormalizeTag(r.Tag)
+	}
+	return ""
 }
 
 // Asset returns the named asset.
@@ -84,6 +112,13 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	return c.release(ctx, "latest")
 }
 
+// Nightly returns the rolling nightly release. It is published as a
+// prerelease, so Latest never sees it, and its name holds the version of
+// the build.
+func (c *Client) Nightly(ctx context.Context) (*Release, error) {
+	return c.ByTag(ctx, NightlyTag)
+}
+
 // ByTag returns a release by tag ("v0.1.0" or "0.1.0").
 func (c *Client) ByTag(ctx context.Context, tag string) (*Release, error) {
 	tag = NormalizeTag(tag)
@@ -116,6 +151,7 @@ func (c *Client) release(ctx context.Context, path string) (*Release, error) {
 	}
 	var body struct {
 		TagName string `json:"tag_name"`
+		Name    string `json:"name"`
 		Assets  []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
@@ -129,7 +165,7 @@ func (c *Client) release(ctx context.Context, path string) (*Release, error) {
 	if body.TagName == "" {
 		return nil, errors.New("the latest GitHub release has no tag")
 	}
-	rel := &Release{Tag: NormalizeTag(body.TagName), Assets: map[string]Asset{}}
+	rel := &Release{Tag: NormalizeTag(body.TagName), Name: body.Name, Assets: map[string]Asset{}}
 	for _, a := range body.Assets {
 		if a.Name == "" || a.BrowserDownloadURL == "" {
 			continue
