@@ -23,13 +23,26 @@ func DefinitionPath(t Target) string {
 // BinaryPath is where the service's copy of proxy-router lives.
 func BinaryPath(t Target) string {
 	if t.Scope == System {
-		return "/Library/Application Support/proxy-router/proxy-router"
+		// /Library can be writable by the admin group. Use a path whose
+		// ancestors pass the root-only checks for privileged execution.
+		return "/private/var/db/proxy-router/proxy-router"
 	}
 	return filepath.Join(t.User.HomeDir, "Library", "Application Support", "proxy-router", "proxy-router")
 }
 
 // AllowSudo provisions the rule from the macOS password dialog.
 func AllowSudo(u *user.User, argLists [][]string) error {
+	t := Target{Scope: System}
+	installed, err := RootBinary()
+	if err != nil {
+		return fmt.Errorf("check the installed TUN service binary: %w", err)
+	}
+	if installed != BinaryPath(t) {
+		return fmt.Errorf("the TUN service binary path %q resolves to %q", BinaryPath(t), installed)
+	}
+	if _, err := os.Stat(DefinitionPath(t)); err != nil {
+		return fmt.Errorf("check the installed TUN service definition: %w", err)
+	}
 	return writeSudoers(u, argLists)
 }
 

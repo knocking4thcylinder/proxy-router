@@ -7,13 +7,14 @@ import (
 	"testing"
 )
 
-// TestSudoersRuleLints checks the rule with visudo, including the space in
-// the macOS binary path and the commands the tray allows on both systems.
+// TestSudoersRuleLints checks the commands the tray allows on both systems
+// and that paths with spaces still parse.
 func TestSudoersRuleLints(t *testing.T) {
 	for _, c := range []struct {
 		name, bin, dir string
 	}{
-		{"macOS", "/Library/Application Support/proxy-router/proxy-router", "/Users/alice/.config/proxy-router"},
+		{"macOS", "/private/var/db/proxy-router/proxy-router", "/Users/alice/.config/proxy-router"},
+		{"space in binary path", "/Library/Application Support/proxy-router/proxy-router", "/Users/alice/.config/proxy-router"},
 		{"Linux", "/var/lib/proxy-router/proxy-router", "/home/alice/.config/proxy-router"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
