@@ -137,13 +137,30 @@ func TestTrayAutostartEntry(t *testing.T) {
 	}
 }
 
-// TestElevated: pkexec runs the binary itself (so a polkit action for it
-// applies and the dialog names it), with no environment passed through.
+// pkexec runs the selected binary with the action as it was requested,
+// including when the installed copy predates sudoers support.
 func TestElevated(t *testing.T) {
-	argv := []string{"/var/lib/proxy-router/proxy-router", "--dir", "/home/u/.config/proxy-router", "--uid", "1000", "stop", "--system"}
-	got := elevated(argv).Args
-	if want := append([]string{"pkexec"}, argv...); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("got %q", got)
+	self, err := selfExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binary := range []string{self, "/var/lib/proxy-router/proxy-router"} {
+		for _, action := range [][]string{{"start", "--tun"}, {"stop", "--system"}, {"restart", "--tun"}} {
+			argv := append([]string{binary, "--dir", "/home/u/.config/proxy-router", "--uid", "1000"}, action...)
+			got := elevated(argv).Args
+			if want := append([]string{"pkexec"}, argv...); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		}
+	}
+}
+
+func TestLinuxSudoersFlags(t *testing.T) {
+	if newRootCmd(nil).PersistentFlags().Lookup("write-sudoers") != nil {
+		t.Error("Linux must provision the rule after a successful TUN start")
+	}
+	if trayCmd().Flags().Lookup("allow-sudo") != nil {
+		t.Error("Linux tray must not provision a rule for a different installed build")
 	}
 }
 

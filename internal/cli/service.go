@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -256,8 +257,8 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	var c *exec.Cmd
 	passwordless := false
 	if passwordDialog {
-		// The tray's connect and disconnect on macOS, once the dialog has
-		// written the sudoers rule for them.
+		// The tray can use sudo for connect and disconnect once the
+		// installed service has a sudoers rule.
 		if c = passwordlessSudo(argv); c != nil {
 			passwordless = true
 			fmt.Fprintf(os.Stderr, "%s; trying sudo without a password\n", why)
@@ -301,16 +302,16 @@ func takesUID(path string) bool {
 
 // rootExecutable picks what asRoot runs; see rootBinary.
 func rootExecutable(which rootBinary) (string, error) {
-	self, err := os.Executable()
+	self, err := selfExecutable()
 	if err != nil {
-		return "", err
-	}
-	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return "", err
 	}
 	installed, err := service.RootBinary()
 	switch {
 	case err == nil && !takesUID(installed):
+		if runtime.GOOS == "linux" && which != upgradeBinary {
+			return "", errors.New(`the installed TUN service predates --uid; run "proxy-router restart" to upgrade it`)
+		}
 		// Installed before --uid existed; it's root's, so this can't be
 		// faked. Such an install already trusts this executable, until
 		// it's updated.
@@ -325,8 +326,16 @@ func rootExecutable(which rootBinary) (string, error) {
 			return installed, nil
 		}
 	case errors.Is(err, fs.ErrNotExist):
+		if runtime.GOOS == "linux" && which != upgradeBinary {
+			if _, err := os.Lstat(service.DefinitionPath(service.Target{Scope: service.System})); !errors.Is(err, fs.ErrNotExist) {
+				return "", errors.New(`the installed TUN service binary is missing; run "proxy-router restart" to reinstall it`)
+			}
+		}
 	default:
 		// Not root's alone any more: don't run it, and don't hide that.
+		if runtime.GOOS == "linux" && which != upgradeBinary {
+			return "", fmt.Errorf(`the installed TUN service binary is unsafe; run "proxy-router restart" to reinstall it: %w`, err)
+		}
 		fmt.Fprintf(os.Stderr, "warning: not running the TUN service's binary as root: %v\n", err)
 	}
 	if which != installedBinary {
@@ -443,7 +452,11 @@ func startService(o startOptions, restart bool) error {
 	spec := service.Spec{Target: want, Binary: service.BinaryPath(want), Args: args}
 	if cur, _ := service.Query(want); cur.Running && !restart && service.UpToDate(spec) {
 		fmt.Println("already running")
-		return showStatus()
+		if err := showStatus(); err != nil {
+			return err
+		}
+		allowInstalledSudo(want, dir)
+		return nil
 	}
 	if useTUN && us.Installed {
 		// Through the user's service manager; no files are touched.
@@ -463,7 +476,11 @@ func startService(o startOptions, restart bool) error {
 		return err
 	}
 	fmt.Printf("started in %s mode (%s, %s)\n", modeName(want), want, autostart(want))
-	return waitStarted(dir, want, begin)
+	if err := waitStarted(dir, want, begin); err != nil {
+		return err
+	}
+	allowInstalledSudo(want, dir)
+	return nil
 }
 
 // tunInstalled reports whether the TUN (system) service is installed.

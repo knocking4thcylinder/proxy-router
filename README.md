@@ -300,14 +300,18 @@ the status and server. Its menu, top to bottom:
 - **Mode: _Proxy / All Traffic_**: switch modes; it restarts the service
   if it's running, or is used by the next Connect. TUN mode (All Traffic)
   asks for your password in the system's dialog
-  (polkit on Linux, the standard macOS prompt) instead of sudo. On macOS
-  that's once: the dialog also adds a sudoers rule
-  (`/etc/sudoers.d/proxy-router`) so connecting and disconnecting TUN mode
-  don't ask again. It allows only the root part of those two (`start
-  --tun` and `stop --system`, for your user and config folder), run by
-  the service's own root-owned copy of proxy-router, so switching modes
-  and updating the service to a new build still ask. Switching to proxy
-  mode and `uninstall` remove the rule.
+  (polkit on Linux, the standard macOS prompt). A sudoers rule
+  (`/etc/sudoers.d/proxy-router`) lets the tray connect and disconnect
+  without a password through `sudo`. It covers `start --tun` and
+  `stop --system` for your user and config folder, using the service's
+  root-owned copy. On Linux the rule is added after a successful TUN
+  start or restart authorized by the tray's polkit dialog. Older installed builds
+  that support `--uid` keep using polkit until you upgrade or restart the
+  service with a newer build. On macOS the connect or disconnect dialog
+  adds the rule. Switching to proxy mode, updating the service and
+  `restart` still ask for authorization. Switching the installed service
+  to proxy mode or running `uninstall` removes the rule. If the rule is
+  unavailable or `sudo` is missing, the tray uses the password dialog.
 - **Copy Proxy Address**: the SOCKS5 / HTTP addresses (on Linux this uses
   `wl-copy`, `xclip`, `xsel` or KDE's clipboard)
 - **More**: edit routing rules, show the log, open the config folder, and

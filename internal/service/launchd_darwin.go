@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,6 +26,11 @@ func BinaryPath(t Target) string {
 		return "/Library/Application Support/proxy-router/proxy-router"
 	}
 	return filepath.Join(t.User.HomeDir, "Library", "Application Support", "proxy-router", "proxy-router")
+}
+
+// AllowSudo provisions the rule from the macOS password dialog.
+func AllowSudo(u *user.User, argLists [][]string) error {
+	return writeSudoers(u, argLists)
 }
 
 // SystemLog is the TUN service's log. /var/log is writable only by root;

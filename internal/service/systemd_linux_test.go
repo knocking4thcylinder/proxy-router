@@ -1,8 +1,12 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -104,6 +108,43 @@ func TestDefinitionOneLine(t *testing.T) {
 		}
 		if bl[i] != dl[i] {
 			t.Fatalf("line %d changed: %q", i+1, dl[i])
+		}
+	}
+}
+
+func TestRemoveUnitFilesRetriesSudoersCleanup(t *testing.T) {
+	dir := t.TempDir()
+	definition, sudoers := filepath.Join(dir, "proxy-router.service"), filepath.Join(dir, "proxy-router")
+	if err := os.WriteFile(definition, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory makes removal fail even when running as root.
+	if err := os.Mkdir(sudoers, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sudoers, "blocking"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeUnitFiles(System, definition, sudoers); err == nil {
+		t.Fatal("expected the sudoers removal to fail")
+	}
+	if _, err := os.Stat(definition); err != nil {
+		t.Fatalf("unit definition must remain for a retry: %v", err)
+	}
+	if err := os.RemoveAll(sudoers); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sudoers, nil, 0o440); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := removeUnitFiles(System, definition, sudoers); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{definition, sudoers} {
+		if _, err := os.Stat(name); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s must be absent after removal: %v", name, err)
 		}
 	}
 }

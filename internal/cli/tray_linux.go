@@ -62,7 +62,8 @@ func menuLabel(s string) string {
 // elevated runs argv as root with pkexec, which asks for the password in
 // the desktop's polkit dialog. argv[0] runs directly, not through env, so
 // the dialog names it, and a polkit action for it (packaging/linux) can
-// apply.
+// apply. Installed builds can handle their normal action arguments even
+// if they predate the sudoers rule.
 func elevated(argv []string) *exec.Cmd {
 	return exec.Command("pkexec", argv...)
 }

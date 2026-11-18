@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package service
 
 import (
@@ -11,11 +13,8 @@ import (
 // like the temporary one.
 const SudoersPath = "/etc/sudoers.d/proxy-router"
 
-// AllowSudo lets u run the system service's copy of proxy-router as root
-// through sudo, without a password, with exactly the given argument lists.
-// It's that copy because it's root-owned: a rule for a file the user can
-// write would hand out root.
-func AllowSudo(u *user.User, argLists [][]string) error {
+// writeSudoers allows the given arguments for the system service's binary.
+func writeSudoers(u *user.User, argLists [][]string) error {
 	rule, err := sudoersRule(u.Username, BinaryPath(Target{Scope: System}), argLists)
 	if err != nil {
 		return err

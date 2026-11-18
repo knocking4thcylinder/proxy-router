@@ -8,24 +8,33 @@ import (
 )
 
 // TestSudoersRuleLints checks the rule with visudo, including the space in
-// the macOS binary path.
+// the macOS binary path and the commands the tray allows on both systems.
 func TestSudoersRuleLints(t *testing.T) {
-	rule, err := sudoersRule("alice", "/Library/Application Support/proxy-router/proxy-router", [][]string{
-		{"--dir", "/Users/alice/.config/proxy-router", "start", "--tun"},
-		{"--dir", "/Users/alice/.config/proxy-router", "stop"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := exec.LookPath("visudo"); err != nil {
-		t.Skip("no visudo")
-	}
-	path := filepath.Join(t.TempDir(), "proxy-router")
-	if err := os.WriteFile(path, []byte(rule), 0o440); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("visudo", "-c", "-q", "-f", path).CombinedOutput(); err != nil {
-		t.Fatalf("%v\n%s\n%s", err, out, rule)
+	for _, c := range []struct {
+		name, bin, dir string
+	}{
+		{"macOS", "/Library/Application Support/proxy-router/proxy-router", "/Users/alice/.config/proxy-router"},
+		{"Linux", "/var/lib/proxy-router/proxy-router", "/home/alice/.config/proxy-router"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rule, err := sudoersRule("alice", c.bin, [][]string{
+				{"--dir", c.dir, "--uid", "1000", "start", "--tun"},
+				{"--dir", c.dir, "--uid", "1000", "stop", "--system"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := exec.LookPath("visudo"); err != nil {
+				t.Skip("no visudo")
+			}
+			path := filepath.Join(t.TempDir(), "proxy-router")
+			if err := os.WriteFile(path, []byte(rule), 0o440); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command("visudo", "-c", "-q", "-f", path).CombinedOutput(); err != nil {
+				t.Fatalf("%v\n%s\n%s", err, out, rule)
+			}
+		})
 	}
 }
 
