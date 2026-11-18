@@ -293,10 +293,10 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	return err
 }
 
-// takesUID reports whether the proxy-router at path knows --uid (run as
-// the user, which is harmless).
+// takesUID reports whether the proxy-router at path knows --uid.
 func takesUID(path string) bool {
-	return exec.Command(path, "--uid", strconv.Itoa(os.Getuid()), "--version").Run() == nil
+	cmd, err := versionProbe(path, "--uid", strconv.Itoa(os.Getuid()))
+	return err == nil && cmd.Run() == nil
 }
 
 // rootExecutable picks what asRoot runs; see rootBinary.
@@ -358,11 +358,24 @@ func startService(o startOptions, restart bool) error {
 		}
 		o.rules = path
 	}
-	e, err := load()
+	dir, err := configDir()
 	if err != nil {
 		return err
 	}
-	dir := e.cfg.Dir()
+	// Check the user's foreground status before confinement restricts reads
+	// to the configuration files and the system service's status.
+	if st, ok := readRunStatus(dir); ok && !st.Service {
+		return fmt.Errorf("proxy-router is already running in the foreground (pid %d); stop it first", st.PID)
+	}
+	if os.Geteuid() == 0 {
+		if err := confineRoot(dir); err != nil {
+			return err
+		}
+	}
+	e, err := loadFromDir(dir)
+	if err != nil {
+		return err
+	}
 	userT, sysT, err := targets()
 	if err != nil {
 		return err
@@ -374,9 +387,6 @@ func startService(o startOptions, restart bool) error {
 	ss, _ := service.Query(sysT)
 	if restart && !us.Installed && !ss.Installed {
 		return errors.New(`no background service is installed; use "proxy-router start"`)
-	}
-	if st, ok := readRunStatus(dir); ok && !st.Service {
-		return fmt.Errorf("proxy-router is already running in the foreground (pid %d); stop it first", st.PID)
 	}
 
 	var useTUN bool

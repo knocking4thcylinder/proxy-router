@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -104,8 +105,19 @@ func InstallBinary(t Target) (string, error) {
 		return "", err
 	}
 	dst := BinaryPath(t)
-	if same, _ := sameContents(src, dst); same {
-		return dst, nil
+	installed := dst
+	if os.Geteuid() == 0 {
+		// A rejected version probe must not leave an unsafe binary in place
+		// for the service manager to start. A missing binary is a fresh install.
+		installed, err = RootBinary()
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	if installed != "" {
+		if same, _ := sameContents(src, installed); same {
+			return dst, nil
+		}
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -125,25 +137,62 @@ func RootBinary() (string, error) {
 	if path == "" {
 		return "", ErrUnsupported
 	}
-	return secpath.CheckFile(path, 0)
+	return secpath.CheckExecutable(path, 0)
+}
+
+// BinaryForInspection returns the service binary to compare or probe. Root
+// only inspects a verified system copy.
+func BinaryForInspection(t Target) (string, error) {
+	return binaryForInspection(t, os.Geteuid())
+}
+
+func binaryForInspection(t Target, euid int) (string, error) {
+	if euid != 0 {
+		return BinaryPath(t), nil
+	}
+	if t.Scope != System {
+		return "", errors.New("run as the user to inspect a user service's binary")
+	}
+	return RootBinary()
 }
 
 // UpToDate reports whether s is installed exactly as given, with the
 // running executable's build.
 func UpToDate(s Spec) bool {
+	if s.Scope == User && os.Geteuid() == 0 {
+		return false
+	}
 	data, err := os.ReadFile(DefinitionPath(s.Target))
-	return err == nil && bytes.Equal(data, Definition(s)) && !Outdated(s.Target)
+	if err != nil || !bytes.Equal(data, Definition(s)) {
+		return false
+	}
+	same, err := compareInstalledBinary(s.Target)
+	return err == nil && same
 }
 
 // Outdated reports whether the installed binary differs from the running
 // executable.
 func Outdated(t Target) bool {
+	same, err := compareInstalledBinary(t)
+	return err == nil && !same
+}
+
+func compareInstalledBinary(t Target) (bool, error) {
+	dst, err := BinaryForInspection(t)
+	if err != nil {
+		return false, err
+	}
 	src, err := os.Executable()
 	if err != nil {
-		return false
+		return false, err
 	}
-	same, err := sameContents(src, BinaryPath(t))
-	return err == nil && !same
+	if os.Geteuid() == 0 {
+		src, err = secpath.CheckExecutable(src, 0)
+		if err != nil {
+			return false, err
+		}
+	}
+	return sameContents(src, dst)
 }
 
 // sameContents compares two files without reading either whole: the

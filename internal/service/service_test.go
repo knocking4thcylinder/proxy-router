@@ -132,6 +132,18 @@ func TestUserFilesNotAsRoot(t *testing.T) {
 	}
 }
 
+func TestBinaryForInspectionScope(t *testing.T) {
+	// No user is needed to reject this. On supported platforms, resolving
+	// the binary path first would require dereferencing the user.
+	if path, err := binaryForInspection(Target{Scope: User}, 0); err == nil || path != "" {
+		t.Fatalf("root accepted a user service's binary: %q, %v", path, err)
+	}
+	target := Target{Scope: User, User: &user.User{HomeDir: t.TempDir()}}
+	if path, err := binaryForInspection(target, 1000); err != nil || path != BinaryPath(target) {
+		t.Fatalf("user inspection path = %q, %v; want %q", path, err, BinaryPath(target))
+	}
+}
+
 func TestRootLookPath(t *testing.T) {
 	// A program planted in $PATH is never picked.
 	dir := t.TempDir()

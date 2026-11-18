@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/knocking4thcylinder/proxy-router/internal/secpath"
 	"github.com/knocking4thcylinder/proxy-router/internal/service"
 	"github.com/knocking4thcylinder/proxy-router/internal/update"
 )
@@ -12,7 +14,11 @@ import (
 // background update) what release it is. It only reports release versions;
 // a dev build has no version to compare.
 func binaryVersion(path string) (string, bool) {
-	out, err := exec.Command(path, "--version").Output()
+	cmd, err := versionProbe(path)
+	if err != nil {
+		return "", false
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return "", false
 	}
@@ -25,6 +31,27 @@ func binaryVersion(path string) (string, bool) {
 	return "", false
 }
 
+func versionProbePath(path string, euid int) (string, error) {
+	if euid == 0 {
+		return secpath.CheckExecutable(path, 0)
+	}
+	return path, nil
+}
+
+func versionProbe(path string, args ...string) (*exec.Cmd, error) {
+	euid := os.Geteuid()
+	real, err := versionProbePath(path, euid)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(real, append(args, "--version")...)
+	if euid == 0 {
+		cmd.Dir = "/"
+		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}
+	}
+	return cmd, nil
+}
+
 // newerBinary reports whether the proxy-router at path is a newer release
 // than this process. Replacing it with this build would be a downgrade.
 func newerBinary(path string) bool {
@@ -34,5 +61,6 @@ func newerBinary(path string) bool {
 
 // newerService is newerBinary for a service's own copy.
 func newerService(t service.Target) bool {
-	return newerBinary(service.BinaryPath(t))
+	path, err := service.BinaryForInspection(t)
+	return err == nil && newerBinary(path)
 }
