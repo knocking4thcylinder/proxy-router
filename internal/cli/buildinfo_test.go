@@ -9,6 +9,9 @@ import (
 )
 
 func TestBinaryVersion(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("version reporting for user executables is tested without root")
+	}
 	dir := t.TempDir()
 	write := func(name, out string) string {
 		t.Helper()
@@ -33,5 +36,19 @@ func TestBinaryVersion(t *testing.T) {
 	}
 	if !newerBinary(path) {
 		t.Error("v9.9.9 wasn't reported as newer than this test build")
+	}
+}
+
+func TestVersionProbePath(t *testing.T) {
+	path := "proxy-router"
+	if got, err := versionProbePath(path, 1000); err != nil || got != path {
+		t.Fatalf("user probe path = %q, %v; want %q", got, err, path)
+	}
+	if got, err := versionProbePath(path, 0); err == nil || got != "" {
+		t.Fatalf("root accepted a relative probe path: %q, %v", got, err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	if got, err := versionProbePath(missing, 0); err == nil || got != "" {
+		t.Fatalf("root accepted an unverified absolute probe path: %q, %v", got, err)
 	}
 }

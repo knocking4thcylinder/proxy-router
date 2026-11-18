@@ -293,10 +293,10 @@ func asRoot(why string, which rootBinary, args ...string) error {
 	return err
 }
 
-// takesUID reports whether the proxy-router at path knows --uid (run as
-// the user, which is harmless).
+// takesUID reports whether the proxy-router at path knows --uid.
 func takesUID(path string) bool {
-	return exec.Command(path, "--uid", strconv.Itoa(os.Getuid()), "--version").Run() == nil
+	cmd, err := versionProbe(path, "--uid", strconv.Itoa(os.Getuid()))
+	return err == nil && cmd.Run() == nil
 }
 
 // rootExecutable picks what asRoot runs; see rootBinary.

@@ -58,6 +58,11 @@ func autoUpdateOnce(ctx context.Context, channel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Root must verify the on-disk copy before probing or updating it.
+	exe, err = versionProbePath(exe, os.Geteuid())
+	if err != nil {
+		return "", fmt.Errorf("cannot verify the update target: %w", err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 

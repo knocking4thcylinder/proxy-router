@@ -29,12 +29,8 @@ func Check(path string, uid int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		owner, ok := ownerOf(fi)
-		if !ok {
-			return "", fmt.Errorf("%s: can't tell who owns it", p)
-		}
-		if owner != uid && owner != 0 {
-			return "", fmt.Errorf("%s is owned by uid %d, not %s", p, owner, who(uid))
+		if err := checkOwner(p, fi, uid); err != nil {
+			return "", err
 		}
 		if fi.Mode().Perm()&0o022 != 0 && (leaf || fi.Mode()&fs.ModeSticky == 0) {
 			return "", fmt.Errorf("%s can be changed by other users (mode %o); chmod go-w it", p, fi.Mode().Perm())
@@ -57,6 +53,17 @@ func CheckFile(path string, uid int) (string, error) {
 		return "", errors.New(real + " isn't a regular file")
 	}
 	return real, nil
+}
+
+func checkOwner(path string, fi fs.FileInfo, uid int) error {
+	owner, ok := ownerOf(fi)
+	if !ok {
+		return fmt.Errorf("%s: can't tell who owns it", path)
+	}
+	if owner != uid && owner != 0 {
+		return fmt.Errorf("%s is owned by uid %d, not %s", path, owner, who(uid))
+	}
+	return nil
 }
 
 func who(uid int) string {
