@@ -22,12 +22,15 @@ func (discardLog) Handle(xlog.Message) {}
 // Ping measures a full HTTP request through each server, including the proxy
 // handshake. Downloads can start as soon as an entry finishes its latency
 // probes, using the fastest responding member for a pool. Both phases share
-// the overall and per-endpoint limits, except that latency probes may borrow
-// idle global slots (up to min(parallel, 4x per-endpoint)) when every
-// endpoint with queued work is at its per-endpoint limit. Downloads never
-// borrow. On cancellation, eligible downloads that have not started are
-// reported with SpeedErr. Ping silences Xray's global logger, so don't use it
-// next to a running proxy.
+// the overall limit, while the per-endpoint limit bounds concurrent latency
+// probes and concurrent downloads per IP separately: a download may overlap
+// in-flight latency probes (borrowed or normal), so total per-IP activity
+// can exceed per_endpoint. Latency probes may also borrow idle global slots
+// (up to min(parallel, 4x per-endpoint)) when every endpoint with queued
+// work is at its per-endpoint limit. Downloads never borrow. On
+// cancellation, eligible downloads that have not started are reported with
+// SpeedErr. Ping silences Xray's global logger, so don't use it next to a
+// running proxy.
 func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResult {
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
 	xlog.RegisterHandler(discardLog{})
@@ -48,9 +51,10 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	// slots go to those downloads instead of more borrowed probes. Speed
 	// tests never borrow either: downloads through one IP share bandwidth
 	// and would corrupt each other's measurement. A download may overlap
-	// in-flight borrowed probes, so the per-endpoint speed gate bounds
-	// concurrent downloads, not total activity: ep.active can pass the
-	// limit by the size of that overlap until the borrowed probes drain.
+	// in-flight latency probes (borrowed or normal), so the per-endpoint
+	// speed gate bounds concurrent downloads, not total activity:
+	// ep.active can pass the limit by the size of that overlap until the
+	// overlapping probes drain.
 	overflowLimit := min(parallel, 4*min(endpointLimit, parallel))
 	pending := pingQueue{limit: endpointLimit, overflowLimit: overflowLimit}
 	endpoints := make(map[string]*pingEndpoint)
@@ -385,11 +389,12 @@ func (q *pingQueue) canTake(ep *pingEndpoint, phase PingPhase) bool {
 		return false
 	}
 	if phase == PhaseSpeed {
-		// Borrowed latency can push ep.active past the limit, but only
-		// concurrent downloads contend for the endpoint's bandwidth, so the
-		// speed gate bounds activeSpeed within the same ceiling the
-		// no-borrow code allowed. Gating on ep.active instead would starve
-		// a queued download until the whole borrowed backlog drains.
+		// A download overlaps in-flight latency probes (borrowed or
+		// normal), so ep.active can pass the limit, but only concurrent
+		// downloads contend for the endpoint's bandwidth: the speed gate
+		// bounds activeSpeed within the same ceiling the no-overlap code
+		// allowed. Gating on ep.active instead would starve a queued
+		// download until the whole overlapping backlog drains.
 		if ep.activeSpeed >= q.limit {
 			return false
 		}

@@ -471,6 +471,45 @@ func TestPingNeverBorrowsEndpointSlotsForDownloads(t *testing.T) {
 	}
 }
 
+// TestPingFreedSlotFeedsDownloadNotBorrow pins the download half of
+// canOverflow: an endpoint with an active download must stop borrowing, so
+// a slot freed by a borrowed probe is left for the download backlog instead
+// of starting more borrowed latency probes.
+func TestPingFreedSlotFeedsDownloadNotBorrow(t *testing.T) {
+	proxies := newPingTestProxies(t)
+	var servers []*share.Server
+	for _, name := range []string{"a", "b", "c", "d"} {
+		servers = append(servers, proxies.server("127.0.0.1", name))
+	}
+	entries := pingTestEntries(servers...)
+	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 3, PerEndpoint: 2}, true)
+
+	// The endpoint's two normal slots run a and b; the idle third global
+	// slot is borrowed by c, so the backlog (d) waits behind the limit.
+	held := make(map[string]pingTestRequest)
+	for range 3 {
+		req := awaitPingTest(t, proxies.requests, "two normal probes and one borrow on the shared IP")
+		if req.path != "/ping" {
+			t.Fatalf("request = %s %s, want /ping", req.server, req.path)
+		}
+		held[req.server] = req
+	}
+	// Releasing a queues its download, which takes the freed slot even
+	// though c's borrowed probe keeps the endpoint over its limit.
+	held["a"].release()
+	expectPingTestRequest(t, proxies, "a", "/down")
+	// Releasing the borrowed probe frees the last global slot. It must not
+	// be borrowed for d while a's download is running: without the active
+	// download check in canOverflow, d's probe would start here.
+	held["c"].release()
+	expectNoPingTestRequest(t, proxies, "the freed slot to stay with the running download, not a borrow for d")
+	close(proxies.releaseAll)
+	checkPingTestResults(t, entries, awaitPingTest(t, finished, "results after the backlog drains"), true)
+	if peak := proxies.peaks(); peak.perIP != 3 {
+		t.Errorf("peak simultaneous requests per IP = %d, want 3 (two probes plus a download)", peak.perIP)
+	}
+}
+
 func TestPingRotatesBorrowedSlotsAcrossEndpoints(t *testing.T) {
 	proxies := newPingTestProxies(t)
 	var servers []*share.Server

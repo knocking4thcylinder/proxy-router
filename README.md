@@ -382,9 +382,11 @@ match, so another subscription can't take over the name.
 `ping` prints each result as it finishes, with an animated progress counter
 and elapsed time in a terminal. Latency requests and downloads share 16
 slots by default. Use `-j` to change the total. `ping.download_parallel`
-caps simultaneous downloads at four by default, within the overall limit
-and the `ping.per_endpoint` limit (two active probes per server IP by
-default). When every IP with queued work is at its limit, latency probes
+caps simultaneous downloads at four by default, within the overall limit,
+while `ping.per_endpoint` bounds concurrent latency probes and concurrent
+downloads per server IP separately (two of each by default; a download may
+overlap in-flight latency probes, so total per-IP activity can exceed it).
+When every IP with queued work is at its limit, latency probes
 may borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
 downloads never borrow. The download cap also applies to the panel, `use
 --fastest`, and auto-switch scans. Raise it to shorten scans of
@@ -815,8 +817,11 @@ when a port is taken and by which process.
   subscription URL.
 - `--system-proxy` is macOS only for now. It restores the previous settings
   on exit.
-- `ping` keeps at most `ping.per_endpoint` (default 2) probes per IP at
-  once. When every IP with queued work is at its limit, latency probes may
+- `ping` keeps at most `ping.per_endpoint` (default 2) concurrent latency
+  probes, and separately at most that many concurrent downloads, per IP at
+  once; a download may overlap in-flight latency probes, so total per-IP
+  activity can exceed that. When every IP with queued work is at its limit,
+  latency probes may
   borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
   downloads never borrow. Subscriptions often put dozens of "servers"
   behind one entry point, and testing them all at once makes that entry

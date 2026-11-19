@@ -127,10 +127,12 @@ type PingOptions struct {
 	URL      string
 	Timeout  time.Duration
 	Parallel int
-	// Max simultaneous tests per server IP (0 = no limit). When every
-	// endpoint with queued work is at its limit, latency probes may borrow
-	// idle global slots, up to min(Parallel, 4x PerEndpoint); downloads
-	// never borrow.
+	// Per-endpoint limit: max concurrent latency probes, and separately
+	// max concurrent downloads, per server IP (0 = no limit). A download
+	// may overlap in-flight latency probes, so total per-IP activity can
+	// exceed this. When every endpoint with queued work is at its limit,
+	// latency probes may borrow idle global slots, up to min(Parallel,
+	// 4x PerEndpoint); downloads never borrow.
 	PerEndpoint int
 	// Max simultaneous downloads within the overall and per-endpoint limits.
 	// A value of 0 uses the default of 4.
