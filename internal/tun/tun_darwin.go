@@ -114,8 +114,9 @@ func Down(o Options, keepKillSwitch bool) {
 }
 
 // Cleanup removes everything Up leaves behind after the process is gone:
-// the kill switch, the DNS override and the IPv6 reject routes. (Routes
-// into the TUN disappear with the interface.)
+// the kill switch, the DNS override, the IPv6 reject routes and scoped
+// defaults a crashed run left stale. (Routes into the TUN disappear with
+// the interface.)
 func Cleanup() error {
 	restoreDNS()
 	for _, r := range routes(false) {
@@ -123,7 +124,31 @@ func Cleanup() error {
 			_ = run("route", bsdDeleteArgs(r)...)
 		}
 	}
+	removeStaleScoped()
 	return clearKillSwitch()
+}
+
+// removeStaleScoped deletes scoped defaults on the uplink whose gateway
+// doesn't match it: crashed-run leftovers that break every socket bound to
+// the interface. One that matches stays: it is indistinguishable from
+// another VPN's, and routes bound sockets exactly like the system-wide
+// default anyway.
+func removeStaleScoped() {
+	for _, family := range []string{"inet", "inet6"} {
+		iface, gw, err := uplink(family, "")
+		if err != nil {
+			continue // no uplink: nothing is scoped to it anyway
+		}
+		have, err := scopedDefaults(family, iface)
+		if err != nil {
+			continue
+		}
+		for _, other := range have {
+			if other != gw {
+				_ = run("route", scopedDefault{iface, other}.args("delete", family)...)
+			}
+		}
+	}
 }
 
 // scopedDefault is a default route that only applies to sockets bound to
@@ -150,6 +175,13 @@ var (
 	added = map[string]scopedDefault{} // family -> route Up added
 )
 
+// Uplink and scopedDefaults are the netif lookups syncScoped verifies with;
+// tests replace them.
+var (
+	uplink         = netif.Uplink
+	scopedDefaults = netif.ScopedDefaults
+)
+
 // Sync follows network changes (Wi-Fi <-> Ethernet, new gateway, DHCP
 // rewriting DNS): it keeps a scoped default route on the physical
 // interface and DNS pointed into the TUN. Run it whenever the network may
@@ -161,13 +193,22 @@ func Sync(o Options) error {
 	return syncDNS()
 }
 
-// syncScoped adds the scoped default routes, for IPv6 too: its split routes
-// are always there, into the TUN or rejected.
+// syncScoped keeps a default route scoped to the physical interface, for
+// IPv6 too: its split routes are always there, into the TUN or rejected.
+//
+// The route table decides, not memory: macOS drops the route on sleep/wake
+// or interface teardown while the gateway stays put, and a crashed run
+// leaves one behind with an old gateway. So every call checks what's really
+// scoped to the uplink, replaces what doesn't match its current gateway,
+// and trusts what it verified. A mismatched scoped route on the primary
+// interface can only be a leftover — macOS scopes secondary interfaces'
+// own routes, never the primary one's — and it breaks every bound socket
+// until it's gone.
 func syncScoped(name string) error {
 	mu.Lock()
 	defer mu.Unlock()
 	for _, family := range []string{"inet", "inet6"} {
-		iface, gw, err := netif.Uplink(family, name)
+		iface, gw, err := uplink(family, name)
 		if err != nil {
 			if family == "inet6" {
 				continue // no IPv6 uplink: nothing to bypass
@@ -175,22 +216,27 @@ func syncScoped(name string) error {
 			return err
 		}
 		want := scopedDefault{iface, gw}
-		if added[family] == want {
-			continue
-		}
-		if old, ok := added[family]; ok {
+		// A different interface than last time (Wi-Fi <-> Ethernet): take
+		// ours off it.
+		if old, ok := added[family]; ok && old.iface != iface {
 			old.remove(family)
 			delete(added, family)
 		}
-		err = run("route", want.args("add", family)...)
-		switch {
-		case err == nil:
-			added[family] = want
-		case strings.Contains(err.Error(), "File exists"):
-			// macOS (or a crashed run) already has one; leave it alone.
-		default:
-			return fmt.Errorf("can't add a default route scoped to %s: %w", iface, err)
+		stale, _ := scopedDefaults(family, iface)
+		if !slices.Contains(stale, gw) {
+			for _, other := range stale {
+				_ = run("route", scopedDefault{iface, other}.args("delete", family)...)
+			}
+			switch err := run("route", want.args("add", family)...); {
+			case err == nil:
+			case strings.Contains(err.Error(), "File exists"):
+				// Added between the netstat and now (or netstat failed);
+				// the next Sync verifies it.
+			default:
+				return fmt.Errorf("can't add a default route scoped to %s: %w", iface, err)
+			}
 		}
+		added[family] = want
 	}
 	return nil
 }
