@@ -108,6 +108,9 @@ func TestScanFastest(t *testing.T) {
 				// The budget cut the sample short of the blocked server:
 				// exactly one entry measured, the rest stay unprobed.
 				line := progress.String()
+				if strings.ContainsAny(line, "\r\x1b") {
+					t.Errorf("non-terminal progress contains control codes: %q", line)
+				}
 				if !strings.Contains(line, fmt.Sprintf("%d/%d probed", len(entries)-1, len(entries))) {
 					t.Errorf("progress %q does not show the probe count", line)
 				}
@@ -340,6 +343,32 @@ func TestPlanFastestOrdersProbesByCachedSpeed(t *testing.T) {
 		if plan.probe[i].Server != want[i].Server {
 			t.Fatalf("probe order = %v, want %v first", serverNames(plan.probe), serverNames(want))
 		}
+	}
+}
+
+func TestPlanFastestProbesAReplacedDuplicate(t *testing.T) {
+	now := time.Now()
+	first := config.Entry{Index: 1, Group: "g", Server: &share.Server{
+		Name: "same", Outbound: json.RawMessage(`{"tag":"first"}`),
+	}}
+	second := config.Entry{Index: 2, Group: "g", Server: &share.Server{
+		Name: "same", Outbound: json.RawMessage(`{"tag":"second"}`),
+	}}
+	if serverFingerprint(first.Server) == serverFingerprint(second.Server) {
+		t.Fatal("different servers under one name share a fingerprint")
+	}
+	// The first server was measured a moment ago, but the name now resolves
+	// to a different server, so its record says nothing about the successor.
+	rec := cacheRecord(engine.PingResult{Entry: first, Latency: time.Second, Speed: 1e6}, now)
+	cache := pingCache{Records: map[string]pingCacheRecord{
+		pingKey(first.Group, first.Server.Name): rec,
+	}}
+	plan := planFastest([]config.Entry{first, second}, cache, now)
+	if len(plan.seed) != 1 || plan.seed[0].Entry.Server != first.Server {
+		t.Fatalf("seed = %+v, want only the measured first server", plan.seed)
+	}
+	if len(plan.probe) != 1 || plan.probe[0].Server != second.Server {
+		t.Fatalf("probe = %v, want the replaced duplicate", serverNames(plan.probe))
 	}
 }
 

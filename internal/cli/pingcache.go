@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -254,10 +255,12 @@ func (s scanSamples) add(p engine.PingProgress) {
 
 // records filters the samples down to what the cache keeps: only entries
 // whose probes finished, first occurrence of a duplicate name wins (matching
-// how State.Current resolves it).
+// how State.Current resolves it). Indices follow list order, so visiting them
+// in ascending order makes that first occurrence deterministic.
 func (s scanSamples) records(speedTest bool) map[string]pingCacheRecord {
 	records := make(map[string]pingCacheRecord, len(s))
-	for _, sample := range s {
+	for _, i := range slices.Sorted(maps.Keys(s)) {
+		sample := s[i]
 		// An unreachable entry never downloads; its failure is final.
 		if !sample.latencyDone || speedTest && sample.r.Err == nil && !sample.speedDone {
 			continue

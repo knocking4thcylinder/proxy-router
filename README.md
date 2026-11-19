@@ -414,14 +414,15 @@ means the latency test worked but the separate country lookup did not.
 Pools have a separate `POOL` column showing how many members responded;
 their latency, speed and exit come from the fastest responding member.
 
-`use --fastest` compares completed downloads for up to 10 seconds and picks
-the best measured candidate. It picks sooner if the scan finishes sooner.
-If the first successful download takes longer, it waits for that result
-or until every candidate has been tested. With downloads disabled, it uses
-latency. Among comparable candidates it prefers a single server to a pool.
+`use --fastest` picks the best measured download speed after about 10
+seconds, or sooner if all tests finish. Results from the last 5 minutes are
+reused without retesting, and the rest are probed previously-fastest first,
+so repeated runs cover more of the list. If nothing is measurable, it gives
+up after about 20 seconds. With downloads disabled, it uses latency. Among
+comparable candidates it prefers a single server to a pool.
 
 Use `proxy-router use --fastest --exhaustive` to wait for every candidate
-before selecting. Both modes accept `-g` to limit testing to one group.
+instead of giving up. Both modes accept `-g` to limit testing to one group.
 The panel's **Fastest Available** buttons use results from the current scan
 or a recent completed scan. The server list continues filling in after a
 quick pick. To include every server, let the panel scan finish and then

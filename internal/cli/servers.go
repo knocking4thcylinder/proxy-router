@@ -379,9 +379,11 @@ func currentScanWinner(state *config.State, winner config.Entry) (config.Entry, 
 // about 20s in total. Unexported so tests can shrink it.
 var fastestFailFloor = 10 * time.Second
 
-// scanDisplay renders the budgeted scan's single refreshing stderr line.
+// scanDisplay renders the budgeted scan's single refreshing stderr line, or
+// plain lines when stderr is not a terminal (as pingWithProgress does).
 type scanDisplay struct {
 	out      io.Writer
+	width    int
 	total    int
 	done     int
 	best     engine.PingResult
@@ -421,13 +423,17 @@ func (d *scanDisplay) draw() {
 			line += " " + speedText(d.best.Speed)
 		}
 	}
+	if d.width == 0 {
+		fmt.Fprintln(d.out, line)
+		return
+	}
 	fmt.Fprintf(d.out, "\r\x1b[2K%s", line)
 }
 
 // finish parks the line: redraw the latest state, then end it.
 func (d *scanDisplay) finish() {
 	d.draw()
-	if d.out != nil {
+	if d.out != nil && d.width > 0 {
 		fmt.Fprint(d.out, "\n")
 	}
 }
@@ -481,6 +487,9 @@ func scanFastest(ctx context.Context, plan fastestPlan, opts engine.PingOptions,
 
 	samples := scanSamples{}
 	disp := scanDisplay{out: out, total: len(plan.probe)}
+	if out != nil && os.Getenv("TERM") != "dumb" {
+		disp.width = pingTerminalWidth(out)
+	}
 	// Fresh cached samples compete with everything this run measures.
 	best, _ := pickFastest(plan.seed)
 	// Every return keeps what was measured for the next run.
