@@ -85,10 +85,14 @@ func pfRules(o Options) string {
 	pfSet(&b, "inet6", v6)
 	b.WriteString("pass out quick inet proto udp from any port 68 to any port 67\n")
 	b.WriteString("pass out quick inet6 proto icmp6 all icmp6-type { routersol, neighbrsol, neighbradv }\n")
+	// proxy-router's own sockets first, like the mark on Linux: a server
+	// or a configured resolver may live on port 53 or 853. Everyone else's
+	// plain DNS stays blocked, so mDNSResponder keeps going through the
+	// TUN (where Xray answers it).
+	b.WriteString("pass out quick proto { tcp, udp } from any to any user root\n")
 	b.WriteString("block return out quick proto { tcp, udp } from any to any port { 53, 853 }\n")
 	pfSet(&b, "inet", lan4)
 	pfSet(&b, "inet6", lan6)
-	b.WriteString("pass out quick proto { tcp, udp } from any to any user root\n")
 	b.WriteString("block return out quick all\n")
 	return b.String()
 }
