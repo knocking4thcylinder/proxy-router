@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -160,15 +161,71 @@ type panel struct {
 
 	mu         sync.Mutex
 	results    map[string]engine.PingResult // by group + "\x00" + name
-	testing    bool
+	testDone   chan struct{}                // closed when the active full or partial test finishes
+	fullScan   *panelScan
 	done       int
 	total      int
 	speedDone  int
 	speedTotal int
-	rev        int // changes whenever a result does
-	testedAt   time.Time
+	rev        int    // changes whenever a result does
 	page       string // "home" or "servers"
 	shown      string // what's on screen, to skip rebuilding it
+}
+
+// panelScan holds the results eligible for Fastest Available. The displayed
+// results also contain latencies from earlier scans and unfinished rechecks.
+// The panel mutex guards both.
+type panelScan struct {
+	cfg      *config.Config
+	started  time.Time
+	finished time.Time
+	results  map[string]engine.PingResult
+	sample   chan struct{} // set while an action waits for a usable result
+}
+
+func (s *panelScan) usable(cfg *config.Config, now time.Time) bool {
+	return s != nil && (s.finished.IsZero() || now.Sub(s.finished) < panelRescan) && reflect.DeepEqual(s.cfg, cfg)
+}
+
+func (s *panelScan) wake() {
+	if s.sample != nil {
+		close(s.sample)
+		s.sample = nil
+	}
+}
+
+func (s *panelScan) pick(entries []config.Entry) (best engine.PingResult, ok, covered bool) {
+	speedTest := s.cfg.Ping.DownloadURL != ""
+	var candidates, measured []engine.PingResult
+	covered = true
+	seen := make(map[string]bool, len(entries))
+	for _, en := range entries {
+		k := pingKey(en.Group, en.Server.Name)
+		if seen[k] {
+			continue // State.Current resolves a duplicate name to the first entry.
+		}
+		seen[k] = true
+		r, exists := s.results[k]
+		if !exists || !reflect.DeepEqual(en.Server, r.Entry.Server) {
+			covered = false
+			continue
+		}
+		r.Entry = en
+		candidates = append(candidates, r)
+		if speedTest && r.Speed > 0 && r.SpeedErr == nil {
+			measured = append(measured, r)
+		}
+	}
+	if !covered && !s.finished.IsZero() {
+		return engine.PingResult{}, false, false
+	}
+	if speedTest {
+		if best, ok = pickFastest(measured); ok || s.finished.IsZero() {
+			return best, ok, covered
+		}
+	}
+	best, ok = pickFastest(candidates)
+	return best, ok, covered
 }
 
 const (
@@ -536,23 +593,30 @@ func (p *panel) show(page string) {
 
 // refresh rebuilds the page when anything on it changed.
 func (p *panel) refresh() {
-	m := p.t.model()
+	m, e := p.t.modelWithEnv()
 	st, live := readRunStatus(p.t.dir)
 	var offset float32
-	if p.page == "servers" && p.scroll != nil {
-		offset = p.scroll.Offset.Y
+	var fastest engine.PingResult
+	if p.page == "servers" {
+		fastest = p.fastestPreview(e)
+		if p.scroll != nil {
+			offset = p.scroll.Offset.Y
+		}
 	}
 	var obj fyne.CanvasObject
 	var key string
 	p.mu.Lock()
-	key = fmt.Sprintf("%s|%#v|%v|%d|%d|%v|%d", p.page, m, st, len(p.results), p.done, p.testing, p.rev)
+	key = fmt.Sprintf("%s|%#v|%v|%d|%d|%v|%d", p.page, m, st, len(p.results), p.done, p.testDone != nil, p.rev)
 	p.mu.Unlock()
+	if fastest.Entry.Server != nil {
+		key += fmt.Sprintf("|%s|%v|%g", fastest.Entry.String(), fastest.Latency, fastest.Speed)
+	}
 	if key == p.shown {
 		return
 	}
 	p.shown = key
 	if p.page == "servers" {
-		obj = p.servers(m)
+		obj = p.servers(m, fastest)
 	} else {
 		obj = p.home(m, st, live)
 	}
@@ -572,59 +636,67 @@ func (p *panel) refresh() {
 
 // ping tests every server, updating the page as results come in.
 func (p *panel) ping() {
-	e, err := load()
+	e, err := loadFromDir(p.t.dir)
 	if err != nil {
 		return
 	}
-	p.test(e.state.Entries(), true)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if entries := e.state.Entries(); p.testDone == nil && len(entries) > 0 {
+		p.startTest(e, entries, true)
+	}
 }
 
 // autoTest runs on a timer: a full scan now and then, and cheap rechecks of
 // the selected and failing servers in between.
 func (p *panel) autoTest() {
-	p.mu.Lock()
-	testing, at := p.testing, p.testedAt
-	p.mu.Unlock()
-	if testing {
-		return
-	}
-	if at.IsZero() || time.Since(at) >= panelRescan {
-		p.ping()
-		return
-	}
-	p.recheck()
-}
-
-// recheck re-tests only the selected server and the ones that failed, so a
-// timeout that has cleared shows up without waiting for a full scan.
-func (p *panel) recheck() {
-	e, err := load()
+	e, err := loadFromDir(p.t.dir)
 	if err != nil {
 		return
 	}
-	var entries, failed []config.Entry
-	for _, en := range e.state.Entries() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entries := e.state.Entries()
+	if p.testDone != nil || len(entries) == 0 {
+		return
+	}
+	covered := false
+	if p.fullScan.usable(e.cfg, time.Now()) {
+		_, _, covered = p.fullScan.pick(entries)
+	}
+	if !covered {
+		p.startTest(e, entries, true)
+		return
+	}
+	var recheck, failed []config.Entry
+	for _, en := range entries {
 		selected := e.state.Selected != nil && en.Group == e.state.Selected.Group && en.Server.Name == e.state.Selected.Name
-		r, ok := p.result(en.Group, en.Server.Name)
+		r, ok := p.results[pingKey(en.Group, en.Server.Name)]
 		switch {
 		case selected:
-			entries = append(entries, en)
+			recheck = append(recheck, en)
 		case ok && (r.Err != nil || r.SpeedErr != nil) && len(failed) < panelRecheckMax:
 			failed = append(failed, en)
 		}
 	}
-	p.test(append(entries, failed...), false)
+	if len(recheck)+len(failed) > 0 {
+		p.startTest(e, append(recheck, failed...), false)
+	}
 }
 
-// test pings entries and merges every progress update into the results, so
-// latencies appear while speeds are still being measured.
-func (p *panel) test(entries []config.Entry, full bool) {
-	p.mu.Lock()
-	if p.testing || len(entries) == 0 {
-		p.mu.Unlock()
-		return
+// startTest reserves the scanner with p.mu held so the startup refresh and
+// the Fastest Available action can share the same full scan.
+func (p *panel) startTest(e *env, entries []config.Entry, full bool) {
+	p.testDone = make(chan struct{})
+	var scan *panelScan
+	if full {
+		scan = &panelScan{
+			cfg:     e.cfg,
+			started: time.Now(),
+			results: make(map[string]engine.PingResult, len(entries)),
+		}
+		p.fullScan = scan
 	}
-	p.testing = true
 	p.done, p.total = 0, len(entries)
 	p.speedDone, p.speedTotal = 0, 0
 	if p.results == nil {
@@ -633,9 +705,8 @@ func (p *panel) test(entries []config.Entry, full bool) {
 	for _, en := range entries {
 		k := pingKey(en.Group, en.Server.Name)
 		r, ok := p.results[k]
-		if !ok {
-			// Leave untested servers out of the map so the page shows
-			// "…" until their first result arrives.
+		if !ok || !reflect.DeepEqual(en.Server, r.Entry.Server) {
+			delete(p.results, k)
 			continue
 		}
 		r.Entry = en
@@ -643,42 +714,163 @@ func (p *panel) test(entries []config.Entry, full bool) {
 		p.results[k] = r
 	}
 	p.rev++
-	p.mu.Unlock()
-	defer func() {
-		p.mu.Lock()
-		p.testing = false
-		if full {
-			p.testedAt = time.Now()
-		}
-		p.rev++
-		p.mu.Unlock()
-		fyne.Do(p.refresh)
-	}()
+	go p.test(e, entries, scan)
+}
 
-	e, err := load()
-	if err != nil {
-		return
-	}
+// test keeps the list up to date while the full scan runs to exhaustion.
+func (p *panel) test(e *env, entries []config.Entry, scan *panelScan) {
 	o, _ := e.pingOptions(16)
 	o.OnProgress = func(u engine.PingProgress) {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.results == nil {
-			p.results = map[string]engine.PingResult{}
-		}
-		p.results[pingKey(u.Result.Entry.Group, u.Result.Entry.Server.Name)] = u.Result
-		p.speedTotal = u.SpeedTotal
-		switch u.Phase {
-		case engine.PhaseSpeed:
-			p.speedDone = u.Completed
-		default:
-			if u.EntryDone {
-				p.done++
-			}
-		}
-		p.rev++
+		p.testProgress(e.cfg, scan, u)
 	}
 	engine.Ping(context.Background(), entries, o)
+	p.finishTest(scan)
+}
+
+func (p *panel) finishTest(scan *panelScan) {
+	p.mu.Lock()
+	if scan != nil {
+		scan.finished = time.Now()
+		scan.wake()
+	}
+	close(p.testDone)
+	p.testDone = nil
+	p.rev++
+	p.mu.Unlock()
+	p.queueRefresh()
+}
+
+func (p *panel) testProgress(cfg *config.Config, scan *panelScan, u engine.PingProgress) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r := u.Result
+	k := pingKey(r.Entry.Group, r.Entry.Server.Name)
+	p.results[k] = r
+	p.speedTotal = u.SpeedTotal
+	if u.Phase == engine.PhaseSpeed {
+		p.speedDone = u.Completed
+	} else if u.EntryDone {
+		p.done++
+	}
+	p.rev++
+
+	speedTest := cfg.Ping.DownloadURL != ""
+	if scan != nil {
+		old, exists := scan.results[k]
+		if (u.EntryDone || u.Phase == engine.PhaseSpeed) && (!exists || old.Entry.Index >= r.Entry.Index) {
+			scan.results[k] = r
+			if r.Err == nil && (!speedTest || r.Speed > 0 && r.SpeedErr == nil) {
+				scan.wake()
+			}
+		}
+	} else if full := p.fullScan; full.usable(cfg, time.Now()) {
+		// An unfinished recheck leaves the previous sample in place. A
+		// definitive result supersedes it without extending its freshness.
+		final := u.Phase == engine.PhaseSpeed || u.EntryDone && (!speedTest || r.Err != nil)
+		if old, ok := full.results[k]; ok && final && reflect.DeepEqual(r.Entry.Server, old.Entry.Server) {
+			full.results[k] = r
+		}
+	}
+}
+
+func (p *panel) queueRefresh() {
+	if p.win != nil {
+		fyne.Do(p.refresh)
+	}
+}
+
+func (p *panel) fastestPreview(e *env) engine.PingResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e != nil && p.fullScan.usable(e.cfg, time.Now()) {
+		if best, ok, _ := p.fullScan.pick(e.state.Entries()); ok {
+			return best
+		}
+	}
+	return engine.PingResult{}
+}
+
+const panelFastestAction = "Testing servers…"
+
+// selectFastest is the Fastest Available action on both pages.
+func (p *panel) selectFastest() {
+	if !p.t.beginAction(panelFastestAction) {
+		return
+	}
+	p.queueRefresh()
+	go func() {
+		defer func() {
+			p.t.endAction()
+			p.queueRefresh()
+		}()
+		best, err := p.useFastest()
+		if err != nil {
+			p.t.actionFailed(panelFastestAction, err.Error(), err)
+			return
+		}
+		msg := fmt.Sprintf("fastest: %s (%s)", clean(best.Entry.String()), pingSummary(best))
+		fmt.Fprintln(os.Stderr, msg)
+		notify("proxy-router", msg)
+	}()
+}
+
+func (p *panel) useFastest() (engine.PingResult, error) {
+	for {
+		// Re-read state after each wait so the choice uses current server
+		// identities and saving it preserves recent state changes.
+		e, err := loadFromDir(p.t.dir)
+		if err != nil {
+			return engine.PingResult{}, err
+		}
+		entries := e.state.Entries()
+		if len(entries) == 0 {
+			return engine.PingResult{}, errors.New("no servers to test")
+		}
+
+		p.mu.Lock()
+		now := time.Now()
+		scan := p.fullScan
+		if scan.usable(e.cfg, now) {
+			if delay := scan.started.Add(fastestScanBudget).Sub(now); scan.finished.IsZero() && delay > 0 {
+				done := p.testDone
+				p.mu.Unlock()
+				timer := time.NewTimer(delay)
+				select {
+				case <-done:
+				case <-timer.C:
+				}
+				timer.Stop()
+				continue
+			}
+			best, found, covered := scan.pick(entries)
+			if found {
+				p.mu.Unlock()
+				e.state.SelectAuto(best.Entry, "")
+				return best, e.state.Save()
+			}
+			if scan.finished.IsZero() {
+				// The budget passed without a usable sample. Wait for the
+				// next good one or for the exhaustive scan to finish.
+				scan.sample = make(chan struct{})
+				sample := scan.sample
+				p.mu.Unlock()
+				<-sample
+				continue
+			}
+			if covered {
+				p.mu.Unlock()
+				return engine.PingResult{}, errors.New("no server responded")
+			}
+		}
+		if p.testDone == nil {
+			p.startTest(e, entries, true)
+			p.mu.Unlock()
+			continue
+		}
+		done := p.testDone
+		p.mu.Unlock()
+		<-done
+	}
 }
 
 func (p *panel) result(group, name string) (engine.PingResult, bool) {
@@ -736,7 +928,7 @@ func (p *panel) home(m trayModel, st runStatus, live bool) fyne.CanvasObject {
 	card := rounded(pCard, pLine, 12, container.NewVBox(rows...))
 
 	// Actions.
-	fastest := iconButton("icons/bolt-ink.png", "Fastest Available", pAccInk, func() { p.t.run("Testing servers…", false, "use", "--fastest") })
+	fastest := iconButton("icons/bolt-ink.png", "Fastest Available", pAccInk, p.selectFastest)
 	acts := []fyne.CanvasObject{fastest}
 	if len(m.addrs) > 0 {
 		addr := m.addrs[0].addr
@@ -766,7 +958,7 @@ func (p *panel) actionErrBanner(m trayModel) fyne.CanvasObject {
 	left := container.NewHBox(container.NewVBox(layout.NewSpacer(), txt("⚠", 15, pWarn, true, false), layout.NewSpacer()), gap(9), text)
 	row := container.NewBorder(nil, nil, left, txt("Log ›", 11.5, pAccInk, false, false))
 	return newTap(rounded(pCard, pLine, 9, pad(9, 9, 10, 10, row)), func() {
-		openText(filepath.Join(p.t.dir, "tray.log"))
+		openText(filepath.Join(p.t.dir, "panel.log"))
 	})
 }
 
@@ -1035,7 +1227,7 @@ func freezeCountries(order []panelOrder, ok, dead []panelCountry) ([]panelCountr
 	return frozenOK, frozenDead
 }
 
-func (p *panel) countries(m trayModel, testing bool) (ok, dead []panelCountry, fastest *panelCountry) {
+func (p *panel) countries(m trayModel, testing bool) (ok, dead []panelCountry) {
 	cs, other := byCountry(m.groups)
 	if cs == nil {
 		// A short list: one row per subscription.
@@ -1090,9 +1282,6 @@ func (p *panel) countries(m trayModel, testing bool) (ok, dead []panelCountry, f
 		}
 		return 0
 	})
-	if len(ok) > 0 && ok[0].working > 0 {
-		fastest = &ok[0]
-	}
 	// Live results update the row contents, not their places. The split
 	// is frozen too, so a country can't jump to the footer mid-scan.
 	// Once the scan ends the list sorts itself again.
@@ -1100,35 +1289,42 @@ func (p *panel) countries(m trayModel, testing bool) (ok, dead []panelCountry, f
 		ok, dead = freezeCountries(p.order, ok, dead)
 	}
 	p.order = countryOrder(ok, dead)
-	return ok, dead, fastest
+	return ok, dead
 }
 
-func (p *panel) servers(m trayModel) fyne.CanvasObject {
+func (p *panel) servers(m trayModel, fastest engine.PingResult) fyne.CanvasObject {
 	back := newTap(txt("‹", 16, pMute, false, false), func() { p.show("home") })
 	top := container.NewBorder(nil, nil, container.NewHBox(back, gap(10), txt("Choose a Server", 14, pText, true, false)), imageOf(theme.SearchIcon(), 15))
 
 	p.mu.Lock()
-	testing, done, total, speedDone, speedTotal, at := p.testing, p.done, p.total, p.speedDone, p.speedTotal, p.testedAt
+	testing, done, total, speedDone, speedTotal := p.testDone != nil, p.done, p.total, p.speedDone, p.speedTotal
+	var at time.Time
+	if p.fullScan != nil {
+		at = p.fullScan.finished
+	}
 	p.mu.Unlock()
 	sortLine := container.NewBorder(nil, nil, txt("Fastest first · working only", 11.5, pDim, false, false), newTap(txt(scanNote(testing, done, total, speedDone, speedTotal, at), 11.5, pMute, false, false), func() { go p.ping() }))
 
-	ok, dead, fastest := p.countries(m, testing)
-	var rows []fyne.CanvasObject
-	if fastest != nil {
-		s := fastest.bestServer
-		label := s.label
-		if fastest.flag != "" {
-			label += " · " + fastest.name
-		}
-		detail := fmt.Sprintf("%d ms", fastest.best.Latency.Milliseconds())
-		if fastest.best.Speed > 0 {
-			detail = speedText(fastest.best.Speed) + " · " + detail
-		}
-		inner := container.NewBorder(nil, nil,
-			container.NewHBox(container.NewVBox(layout.NewSpacer(), iconImage("icons/bolt-white.png", 15), layout.NewSpacer()), gap(10), container.NewVBox(txt("Fastest Available", 13, color.White, true, false), txt(shorten(label, 30), 11.5, color.NRGBA{255, 255, 255, 215}, false, false))),
-			container.NewHBox(container.NewVBox(layout.NewSpacer(), imageBytes(flagIcon(fastest.flag), 15), layout.NewSpacer()), gap(5), container.NewVBox(layout.NewSpacer(), txt(detail, 12, color.White, false, true), layout.NewSpacer())))
-		rows = append(rows, newTap(rounded(pAcc, pNone, 9, pad(8, 8, 10, 10, inner)), func() { p.t.run("Testing servers…", false, "use", "--fastest") }), gap(4))
+	ok, dead := p.countries(m, testing)
+	title := "Fastest Available"
+	if m.busy && m.status == panelFastestAction {
+		title = m.status
 	}
+	fastestText := container.NewVBox(txt(title, 13, color.White, true, false))
+	var fastestDetail fyne.CanvasObject
+	if fastest.Entry.Server != nil {
+		flag, label := splitFlag(fastest.Entry.Server.Name)
+		detail := fmt.Sprintf("%d ms", fastest.Latency.Milliseconds())
+		if fastest.Speed > 0 {
+			detail = speedText(fastest.Speed) + " · " + detail
+		}
+		fastestText.Add(txt(shorten(label, 30), 11.5, color.NRGBA{255, 255, 255, 215}, false, false))
+		fastestDetail = container.NewHBox(container.NewVBox(layout.NewSpacer(), imageBytes(flagIcon(flag), 15), layout.NewSpacer()), gap(5), container.NewVBox(layout.NewSpacer(), txt(detail, 12, color.White, false, true), layout.NewSpacer()))
+	}
+	inner := container.NewBorder(nil, nil,
+		container.NewHBox(container.NewVBox(layout.NewSpacer(), iconImage("icons/bolt-white.png", 15), layout.NewSpacer()), gap(10), fastestText),
+		fastestDetail)
+	rows := []fyne.CanvasObject{newTap(rounded(pAcc, pNone, 9, pad(8, 8, 10, 10, inner)), p.selectFastest), gap(4)}
 	for _, c := range ok {
 		rows = append(rows, p.countryRow(c))
 	}

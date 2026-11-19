@@ -345,7 +345,7 @@ Quitting the tray leaves the service running.
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
-| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy`; `--fastest` picks the fastest download and [switches automatically](#auto-switching) |
+| `use <server> [-g group]` / `use --fastest [-g group] [--exhaustive]` | select a server by name or test candidates and enable [auto-switching](#auto-switching) |
 | `ping [server...] [-g group] [-j n] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
@@ -409,9 +409,18 @@ means the latency test worked but the separate country lookup did not.
 Pools have a separate `POOL` column showing how many members responded;
 their latency, speed and exit come from the fastest responding member.
 
-`use --fastest` picks the server the download arrived fastest through. It
-picks a pool only if no single server works: a pool's own health check is
-a short request, which can't see a member that connects and then stalls.
+`use --fastest` compares completed downloads for up to 10 seconds and picks
+the best measured candidate. It picks sooner if the scan finishes sooner.
+If the first successful download takes longer, it waits for that result
+or until every candidate has been tested. With downloads disabled, it uses
+latency. Among comparable candidates it prefers a single server to a pool.
+
+Use `proxy-router use --fastest --exhaustive` to wait for every candidate
+before selecting. Both modes accept `-g` to limit testing to one group.
+The panel's **Fastest Available** buttons use results from the current scan
+or a recent completed scan. The server list continues filling in after a
+quick pick. To include every server, let the panel scan finish and then
+click **Fastest Available**.
 
 `ping` (and `use --fastest`) always connect to servers directly. In TUN
 mode they go around the TUN, past the kill switch, instead of through the
@@ -456,7 +465,7 @@ connections) doesn't count, and nothing is downloaded while traffic flows
 fine. On trouble, it downloads `ping.download_url` through the server. When
 that fails `auto_switch.failures` (2) times in a row (10 seconds apart),
 because the download stalls or takes longer than `auto_switch.timeout`
-(15s), it tests the other servers like `use --fastest` and switches to the
+(15s), it tests the other eligible servers and switches to the
 fastest working one. With `use --fastest -g group`, it stays within that
 subscription. If the server turns out fine, further trouble is ignored for
 a minute, doubling up to 10 minutes while it keeps turning out fine. A

@@ -336,9 +336,9 @@ func (q *pingQueue) canTake(ep *pingEndpoint, phase PingPhase) bool {
 	if len(ep.jobs[phase]) == 0 || ep.active >= q.limit {
 		return false
 	}
-	// Reserve one slot for queued latency. A latency probe that is already
-	// running can use that slot while downloads occupy the other slots.
-	return phase == PhaseLatency || len(ep.jobs[PhaseLatency]) == 0 || ep.activeSpeed < q.limit-1
+	// With one endpoint slot, let the scheduler alternate phases. With more
+	// slots, reserve one for latency whenever latency work is queued.
+	return phase == PhaseLatency || q.limit == 1 || len(ep.jobs[PhaseLatency]) == 0 || ep.activeSpeed < q.limit-1
 }
 
 func (q *pingQueue) take(phase PingPhase) (pingJob, *pingEndpoint) {

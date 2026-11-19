@@ -3,12 +3,232 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/knocking4thcylinder/proxy-router/internal/config"
+	"github.com/knocking4thcylinder/proxy-router/internal/engine"
+	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
+
+func TestPanelFastestJoinsScanAndRevalidatesState(t *testing.T) {
+	p, e := panelFastestFixture(t, true)
+	synctest.Test(t, func(t *testing.T) {
+		scan := p.fullScan
+		p.testDone = make(chan struct{})
+		scan.started = time.Now()
+		entries := e.state.Entries()
+		for i, en := range entries {
+			p.testProgress(e.cfg, scan, engine.PingProgress{
+				Phase: engine.PhaseSpeed, Result: engine.PingResult{Entry: en, Speed: float64(2 - i)},
+			})
+		}
+		done := startPanelFastest(p)
+		synctest.Wait()
+		time.Sleep(fastestScanBudget - time.Millisecond)
+		synctest.Wait()
+		requirePanelFastestWaiting(t, done)
+
+		// A subscription update can replace an endpoint under the same
+		// name and persist unrelated state while the action is waiting.
+		state, err := config.LoadState(p.t.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state.Manual[0].Port++
+		state.HWID = "new-device-id"
+		if err := state.Save(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+		got := awaitPanelFastest(t, done)
+		if got.err != nil || got.name != "second" {
+			t.Fatalf("selection at the deadline = %+v, want second", got)
+		}
+		if p.fullScan != scan || p.testDone == nil {
+			t.Fatal("the full scan should still be filling the list")
+		}
+		state, err = config.LoadState(p.t.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (config.Selection{Group: config.ManualGroup, Name: "second", Auto: true}); state.Selected == nil || *state.Selected != want {
+			t.Fatalf("saved selection = %+v, want %+v", state.Selected, want)
+		}
+		if state.HWID != "new-device-id" || state.Manual[0].Port != entries[0].Server.Port+1 {
+			t.Fatalf("saving the selection discarded concurrent state changes: %+v", state)
+		}
+	})
+}
+
+func TestPanelFastestWaitsForUsableSampleOrExhaustion(t *testing.T) {
+	tests := []struct {
+		name      string
+		speedTest bool
+		exhaust   bool
+		expired   bool
+	}{
+		{name: "late speed", speedTest: true, expired: true},
+		{name: "latency only", expired: true},
+		{name: "early exhaustion", speedTest: true, exhaust: true},
+		{name: "late exhaustion", speedTest: true, exhaust: true, expired: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, e := panelFastestFixture(t, tt.speedTest)
+			synctest.Test(t, func(t *testing.T) {
+				scan := p.fullScan
+				p.testDone = make(chan struct{})
+				scan.started = time.Now()
+				if tt.expired {
+					scan.started = scan.started.Add(-fastestScanBudget)
+				}
+				en := e.state.Entries()[0]
+				if tt.speedTest {
+					r := engine.PingResult{Entry: en, Latency: time.Millisecond}
+					p.testProgress(e.cfg, scan, engine.PingProgress{Result: r, EntryDone: true})
+					r.SpeedErr = engine.ErrStalled
+					p.testProgress(e.cfg, scan, engine.PingProgress{Phase: engine.PhaseSpeed, Result: r})
+				}
+				done := startPanelFastest(p)
+				synctest.Wait()
+				requirePanelFastestWaiting(t, done)
+
+				switch {
+				case tt.exhaust:
+					p.finishTest(scan)
+				case tt.speedTest:
+					p.testProgress(e.cfg, scan, engine.PingProgress{
+						Phase: engine.PhaseSpeed, Result: engine.PingResult{Entry: en, Speed: 5},
+					})
+				default:
+					p.testProgress(e.cfg, scan, engine.PingProgress{
+						EntryDone: true, Result: engine.PingResult{Entry: en, Latency: time.Millisecond},
+					})
+				}
+				if got := awaitPanelFastest(t, done); got.err != nil || got.name != "first" {
+					t.Fatalf("selection = %+v, want first", got)
+				}
+			})
+		})
+	}
+}
+
+func TestPanelFastestUsesRecentFullScanAndDefinitiveRechecks(t *testing.T) {
+	p, e := panelFastestFixture(t, true)
+	synctest.Test(t, func(t *testing.T) {
+		scan := p.fullScan
+		p.testDone = make(chan struct{})
+		scan.started = time.Now()
+		entries := e.state.Entries()
+		for i, en := range entries {
+			p.testProgress(e.cfg, scan, engine.PingProgress{
+				Phase: engine.PhaseSpeed, Result: engine.PingResult{Entry: en, Speed: float64(2 - i)},
+			})
+		}
+		p.finishTest(scan)
+		finished := scan.finished
+
+		p.testDone = make(chan struct{})
+		result := engine.PingResult{Entry: entries[0], Latency: time.Millisecond}
+		p.testProgress(e.cfg, nil, engine.PingProgress{Result: result, EntryDone: true})
+		if got := awaitPanelFastest(t, startPanelFastest(p)); got.err != nil || got.name != "first" {
+			t.Fatalf("selection during an unfinished recheck = %+v, want first", got)
+		}
+		result.SpeedErr = engine.ErrStalled
+		p.testProgress(e.cfg, nil, engine.PingProgress{Phase: engine.PhaseSpeed, Result: result})
+		if got := awaitPanelFastest(t, startPanelFastest(p)); got.err != nil || got.name != "second" {
+			t.Fatalf("selection after a failed download = %+v, want second", got)
+		}
+		for _, en := range entries {
+			p.testProgress(e.cfg, nil, engine.PingProgress{
+				EntryDone: true, Result: engine.PingResult{Entry: en, Err: errors.New("latency failed")},
+			})
+		}
+		if got := awaitPanelFastest(t, startPanelFastest(p)); got.err == nil || got.err.Error() != "no server responded" {
+			t.Fatalf("selection after both servers failed = %+v, want an error", got)
+		}
+		p.finishTest(nil)
+		if scan.finished != finished || scan.usable(e.cfg, finished.Add(panelRescan)) {
+			t.Fatal("partial rechecks extended the full scan's freshness")
+		}
+	})
+}
+
+func panelFastestFixture(t *testing.T, speedTest bool) (*panel, *env) {
+	t.Helper()
+	t.Setenv("XRAY_LOCATION_ASSET", "")
+	dir := t.TempDir()
+	if !speedTest {
+		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("ping:\n  download_url: ''\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e, err := loadFromDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.state.Manual = []*share.Server{
+		{Name: "first", Address: "127.0.0.1", Port: 8080},
+		{Name: "second", Address: "127.0.0.1", Port: 8081},
+	}
+	if err := e.state.Save(); err != nil {
+		t.Fatal(err)
+	}
+	e.state, err = config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &panel{
+		t:        &tray{dir: dir},
+		fullScan: &panelScan{cfg: e.cfg, results: make(map[string]engine.PingResult)},
+		results:  make(map[string]engine.PingResult),
+	}
+	return p, e
+}
+
+type panelFastestOutcome struct {
+	name string
+	err  error
+}
+
+func startPanelFastest(p *panel) <-chan panelFastestOutcome {
+	done := make(chan panelFastestOutcome, 1)
+	go func() {
+		best, err := p.useFastest()
+		outcome := panelFastestOutcome{err: err}
+		if best.Entry.Server != nil {
+			outcome.name = best.Entry.Server.Name
+		}
+		done <- outcome
+	}()
+	return done
+}
+
+func requirePanelFastestWaiting(t *testing.T, done <-chan panelFastestOutcome) {
+	t.Helper()
+	select {
+	case got := <-done:
+		t.Fatalf("action returned before it could select from the scan: %+v", got)
+	default:
+	}
+}
+
+func awaitPanelFastest(t *testing.T, done <-chan panelFastestOutcome) panelFastestOutcome {
+	t.Helper()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(time.Second):
+		t.Fatal("action did not return after a usable result became available")
+		return panelFastestOutcome{}
+	}
+}
 
 func TestScanNoteShowsOverlappingProgress(t *testing.T) {
 	at := time.Now().Add(-2 * time.Minute)

@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -213,30 +216,44 @@ func address(s *share.Server) string {
 	return fmt.Sprintf("%s:%d", s.Address, s.Port)
 }
 
+const fastestScanBudget = 10 * time.Second
+
 func useCmd() *cobra.Command {
-	var fastest bool
+	var fastest, exhaustive bool
 	var group string
 	cmd := &cobra.Command{
-		Use:   "use <server> | --fastest",
+		Use:   "use <server> | --fastest [--exhaustive]",
 		Short: "Select the server used by the \"proxy\" outbound (index, name, or group/name)",
 		Long: `Select the server used by the "proxy" outbound.
 
 <server> can be the index from "list", the exact name, "group/name", or a
 unique part of the name. A running "proxy-router run" switches automatically.
 
---fastest downloads a test file through every server (ping.download_url)
-and picks the one it arrives fastest through. A running proxy-router then
-watches its connections to that server (auto_switch in config.yaml): when
-they show trouble, such as data stopping mid-transfer, it checks the server
-and moves to the fastest working one, within --group if given, if it
-stopped carrying traffic. Selecting a server by name turns this off.`,
+--fastest picks the best measured download speed after about 10 seconds,
+or sooner if all tests finish. If no download speed is available by then,
+it waits for the first successful measurement or for all tests to finish.
+With ping.download_url disabled, it uses latency. Add --exhaustive to
+wait for every test.
+
+A running proxy-router watches its connections to the selected server
+(auto_switch in config.yaml). When the server stops carrying traffic, it
+moves to the fastest working one, within --group if given. Selecting a
+server by name turns this off.`,
 		ValidArgsFunction: completeSelectedServer,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if exhaustive && !fastest {
+				return fmt.Errorf("--exhaustive requires --fastest")
+			}
+			ctx := cmd.Context()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			e, err := load()
 			if err != nil {
 				return err
 			}
 			var entry config.Entry
+			var best engine.PingResult
 			switch {
 			case fastest:
 				if len(args) > 0 {
@@ -254,13 +271,28 @@ stopped carrying traffic. Selecting a server by name turns this off.`,
 				if note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
-				results := engine.Ping(cmd.Context(), entries, opts)
-				best, ok := pickFastest(results)
+				budget := fastestScanBudget
+				if exhaustive {
+					budget = 0
+				}
+				var ok bool
+				best, ok = scanFastest(ctx, entries, opts, budget)
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if !ok {
 					return fmt.Errorf("no server responded")
 				}
-				entry = best.Entry
-				fmt.Printf("fastest: %s (%s)\n", clean(entry.String()), pingSummary(best))
+				// The scan may have outlasted a subscription refresh. Save
+				// against the latest state and resolve the winner's new index.
+				e.state, err = config.LoadState(e.cfg.Dir())
+				if err != nil {
+					return err
+				}
+				entry, err = currentScanWinner(e.state, best.Entry)
+				if err != nil {
+					return err
+				}
 			case len(args) == 1:
 				if entry, err = e.state.FindInGroup(args[0], group); err != nil {
 					return err
@@ -273,8 +305,14 @@ stopped carrying traffic. Selecting a server by name turns this off.`,
 			} else {
 				e.state.Select(entry)
 			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := e.state.Save(); err != nil {
 				return err
+			}
+			if fastest {
+				fmt.Fprintf(cmd.OutOrStdout(), "fastest: %s (%s)\n", clean(entry.String()), pingSummary(best))
 			}
 			fmt.Printf("using %s\n", clean(entry.String()))
 			if fastest && e.cfg.AutoSwitch.Enabled && e.cfg.Ping.DownloadURL != "" && entry.Server.Pool == nil {
@@ -283,10 +321,85 @@ stopped carrying traffic. Selecting a server by name turns this off.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&fastest, "fastest", false, "test all servers, pick the fastest, and switch automatically when it fails")
+	cmd.Flags().BoolVar(&fastest, "fastest", false, "pick the fastest server measured in about 10 seconds and switch automatically if it fails")
+	cmd.Flags().BoolVar(&exhaustive, "exhaustive", false, "wait for all server tests with --fastest")
 	cmd.Flags().StringVarP(&group, "group", "g", "", "only select from this subscription (or manual)")
 	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
+}
+
+func currentScanWinner(state *config.State, winner config.Entry) (config.Entry, error) {
+	selection := selectionOf(winner)
+	for _, entry := range state.Entries() {
+		if selectionOf(entry) != selection {
+			continue
+		}
+		// Selection resolves duplicate names to the first entry, as State.Current does.
+		a, b := entry.Server, winner.Server
+		if bytes.Equal(a.Outbound, b.Outbound) && reflect.DeepEqual(a.Chain, b.Chain) && reflect.DeepEqual(a.Pool, b.Pool) {
+			return entry, nil
+		}
+		return config.Entry{}, fmt.Errorf("%s changed during the scan", clean(entry.String()))
+	}
+	return config.Entry{}, fmt.Errorf("%s was removed during the scan", clean(winner.String()))
+}
+
+func scanFastest(ctx context.Context, entries []config.Entry, opts engine.PingOptions, budget time.Duration) (engine.PingResult, bool) {
+	if budget == 0 {
+		return pickFastest(engine.Ping(ctx, entries, opts))
+	}
+
+	// Ping drains active probes on cancellation. Some can still be setting
+	// up or resolving addresses, so choose from progress without waiting for
+	// that cleanup to finish.
+	scanCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	progress := opts.OnProgress
+	updates := make(chan engine.PingProgress)
+	opts.OnProgress = func(p engine.PingProgress) {
+		select {
+		case updates <- p:
+		case <-scanCtx.Done():
+		}
+	}
+	deadline := time.Now().Add(budget)
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	budgetDone := timer.C
+	finished := make(chan []engine.PingResult, 1)
+	go func() { finished <- engine.Ping(scanCtx, entries, opts) }()
+
+	var best engine.PingResult
+	for ctx.Err() == nil {
+		if best.Entry.Server != nil && !time.Now().Before(deadline) {
+			return best, true
+		}
+		select {
+		case <-ctx.Done():
+		case <-budgetDone:
+			budgetDone = nil
+		case results := <-finished:
+			if best.Entry.Server != nil {
+				return best, true
+			}
+			return pickFastest(results)
+		case p := <-updates:
+			r := p.Result
+			measured := p.Phase == engine.PhaseSpeed && r.SpeedErr == nil && r.Speed > 0
+			if opts.DownloadURL == "" {
+				measured = p.Phase == engine.PhaseLatency && p.EntryDone
+			}
+			// Break ties by list order, since probes can finish in any order.
+			if measured && r.Err == nil && (best.Entry.Server == nil || better(r, best) ||
+				(r.Entry.Index < best.Entry.Index && !better(best, r))) {
+				best = r
+			}
+			if progress != nil {
+				progress(p)
+			}
+		}
+	}
+	return engine.PingResult{}, false
 }
 
 func pingCmd() *cobra.Command {

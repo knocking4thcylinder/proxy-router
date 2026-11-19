@@ -219,6 +219,20 @@ func TestPingSerialPrefersReadyLatency(t *testing.T) {
 	}
 }
 
+func TestPingDownloadsBeforeSingleSlotEndpointFinishesLatency(t *testing.T) {
+	proxies := newPingTestProxies(t)
+	a := proxies.server("127.0.0.1", "a")
+	b := proxies.server("127.0.0.1", "b")
+	entries := pingTestEntries(a, b, b)
+	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 2, PerEndpoint: 1}, true)
+
+	expectPingTestRequest(t, proxies, "a", "/ping").release()
+	expectPingTestRequest(t, proxies, "a", "/down").release()
+	expectPingTestRequest(t, proxies, "b", "/ping")
+	close(proxies.releaseAll)
+	checkPingTestResults(t, entries, awaitPingTest(t, finished, "single-slot endpoint results"), true)
+}
+
 func TestPingSerialDownloadsWhileWaitingForDNS(t *testing.T) {
 	proxies := newPingTestProxies(t)
 	a := proxies.server("127.0.0.1", "a")
