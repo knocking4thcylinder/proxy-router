@@ -55,6 +55,9 @@ func Dir() (string, error) {
 	return filepath.Join(home, ".config", "proxy-router"), nil
 }
 
+// DefaultPingDownloadParallel is the default limit on simultaneous ping downloads.
+const DefaultPingDownloadParallel = 4
+
 // Config is config.yaml.
 type Config struct {
 	Listen struct {
@@ -98,6 +101,8 @@ type Config struct {
 		// Max simultaneous tests against one server IP. Providers often
 		// put many "servers" behind one entry point that drops bursts.
 		PerEndpoint int `yaml:"per_endpoint"`
+		// Max simultaneous downloads within the overall and per-endpoint limits.
+		DownloadParallel int `yaml:"download_parallel"`
 		// Downloaded through each server after the latency test: a server
 		// whose transfer stalls fails (censors cutting connections after
 		// ~16 KB), and how fast it arrives ranks "use --fastest". Empty
@@ -171,6 +176,7 @@ func defaults() *Config {
 	c.Ping.URL = "https://www.gstatic.com/generate_204"
 	c.Ping.Timeout = Duration(5 * time.Second)
 	c.Ping.PerEndpoint = 2
+	c.Ping.DownloadParallel = DefaultPingDownloadParallel
 	c.Ping.DownloadURL = "https://speed.cloudflare.com/__down?bytes=262144"
 	c.AutoSwitch.Enabled = true
 	c.AutoSwitch.Stall = Duration(10 * time.Second)

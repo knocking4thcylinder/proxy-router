@@ -63,6 +63,8 @@ ping:
   # Max simultaneous tests per server IP. Providers often put dozens of
   # "servers" behind one entry point that drops bursts of connections.
   per_endpoint: 2
+  # Max simultaneous downloads within the overall and per-IP limits.
+  download_parallel: 4
   # Downloaded through each server after the latency request. Censors often
   # let a connection to a server start and cut it after ~16 KB, which the
   # latency request never notices: a server whose download stalls fails.

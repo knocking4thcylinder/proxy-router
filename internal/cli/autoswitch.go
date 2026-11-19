@@ -406,6 +406,7 @@ func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []
 	}
 	opts.URL, opts.Timeout = e.cfg.Ping.URL, e.cfg.Ping.Timeout.D()
 	opts.Parallel, opts.PerEndpoint = 16, e.cfg.Ping.PerEndpoint
+	opts.DownloadParallel = e.cfg.Ping.DownloadParallel
 	opts.DownloadURL = e.cfg.Ping.DownloadURL
 	fmt.Printf("%s auto-switch: testing %d other servers...\n", now(), len(entries))
 	r.best, r.ok = pickFastest(engine.Ping(ctx, entries, opts))

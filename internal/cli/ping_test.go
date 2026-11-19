@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,32 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/engine"
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 )
+
+func TestPingDownloadParallelConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		want          int
+	}{
+		{"legacy", "", 4},
+		{"configured", "  download_parallel: 7\n", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			yaml := "bind_interface: none\nresolve_locally: false\nping:\n  per_endpoint: 2\n" + tc.setting
+			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts, _ := (&env{cfg: cfg}).pingOptions(16)
+			if opts.DownloadParallel != tc.want {
+				t.Errorf("DownloadParallel = %d, want %d", opts.DownloadParallel, tc.want)
+			}
+		})
+	}
+}
 
 func TestPingPrintsResultsWhileOtherProbesArePending(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -190,6 +218,73 @@ func TestPingTerminalProgressStaysOnOneLine(t *testing.T) {
 	if !strings.Contains(out.String(), "#8 fast server | 176ms") {
 		t.Fatalf("result was not printed on a single line: %q", out.String())
 	}
+}
+
+func TestPingTerminalProgressShowsOverlappingLatencyAndSpeeds(t *testing.T) {
+	var out bytes.Buffer
+	entry := func(index int, name string) config.Entry {
+		return config.Entry{Index: index, Server: &share.Server{Name: name}}
+	}
+	first := engine.PingResult{Entry: entry(1, "first"), Latency: 20 * time.Millisecond}
+	p := pingDisplay{out: &out, total: 4, width: 120, start: time.Now()}
+	p.update(engine.PingProgress{Result: first, Completed: 3, Total: 10, SpeedTotal: 1, EntryDone: true})
+	if status := pingStatus(out.String()); !strings.Contains(status, "speeds 0/1") {
+		t.Fatalf("first eligible download missing from progress: %q", status)
+	}
+	first.Speed = 1e6
+	p.update(engine.PingProgress{Result: first, Completed: 1, Total: 2, SpeedTotal: 2, Phase: engine.PhaseSpeed})
+	status := pingStatus(out.String())
+	for _, want := range []string{"1/4 servers", "probes 3/10", "speeds 1/2"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("status %q is missing %q", status, want)
+		}
+	}
+
+	// The speed total only covers reachable servers found so far, so it
+	// grows while latency probes are still running.
+	p.update(engine.PingProgress{Result: first, Completed: 2, Total: 4, SpeedTotal: 4, Phase: engine.PhaseSpeed})
+	status = pingStatus(out.String())
+	for _, want := range []string{"probes 3/10", "speeds 2/4"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("status %q is missing %q after the speed total grew", status, want)
+		}
+	}
+
+	// Once every latency probe has finished, its counter leaves the line.
+	second := engine.PingResult{Entry: entry(2, "second"), Latency: 30 * time.Millisecond}
+	p.update(engine.PingProgress{Result: second, Completed: 10, Total: 10, SpeedTotal: 4, EntryDone: true})
+	status = pingStatus(out.String())
+	if strings.Contains(status, "probes") || !strings.Contains(status, "speeds 2/4") {
+		t.Fatalf("finished latency probes still shown, or speeds lost: %q", status)
+	}
+}
+
+func TestPingTerminalProgressKeepsBothCountsWhenNarrow(t *testing.T) {
+	var out bytes.Buffer
+	entry := config.Entry{Index: 1, Server: &share.Server{Name: "one"}}
+	p := pingDisplay{out: &out, total: 110, width: 40, start: time.Now()}
+	p.update(engine.PingProgress{
+		Result:    engine.PingResult{Entry: entry, Latency: 20 * time.Millisecond},
+		Completed: 1, Total: 118, EntryDone: true,
+	})
+	p.update(engine.PingProgress{
+		Result:    engine.PingResult{Entry: entry, Latency: 20 * time.Millisecond, Speed: 1e6},
+		Completed: 1, Total: 2, SpeedTotal: 2, Phase: engine.PhaseSpeed,
+	})
+	status := pingStatus(out.String())
+	if len(status) >= p.width || strings.Contains(status, "\n") {
+		t.Fatalf("status wraps: %q", status)
+	}
+	for _, want := range []string{"1/110", "probes 1/118", "speeds 1/2"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("narrow status %q is missing %q", status, want)
+		}
+	}
+}
+
+func pingStatus(out string) string {
+	parts := strings.Split(out, "\r\x1b[2K")
+	return parts[len(parts)-1]
 }
 
 // connectProxy starts an HTTP proxy that answers every request tunnelled

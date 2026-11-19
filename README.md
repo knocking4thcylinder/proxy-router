@@ -346,7 +346,7 @@ Quitting the tray leaves the service running.
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
 | `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy`; `--fastest` picks the fastest download and [switches automatically](#auto-switching) |
-| `ping [server...] [-g group] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
+| `ping [server...] [-g group] [-j n] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
 | `restart` | restart it (picks up a rebuilt binary) |
@@ -380,8 +380,21 @@ any unique part of the name. After `group/`, only that group's servers
 match, so another subscription can't take over the name.
 
 `ping` prints each result as it finishes, with an animated progress counter
-and elapsed time in a terminal. After the latency request it downloads
-`ping.download_url` (256 KB from speed.cloudflare.com) through each server.
+and elapsed time in a terminal. Latency requests and downloads share 16
+slots by default. Use `-j` to change the total. `ping.download_parallel`
+caps simultaneous downloads at four by default, within the overall limit
+and the `ping.per_endpoint` limit of two active probes per server IP by
+default. The download cap also applies to the panel, `use --fastest`, and
+auto-switch scans. Raise it to shorten scans of independent endpoints on a
+fast link, or lower it to reduce contention when downloads share bandwidth.
+When an IP is busy, other IPs can use the available slots.
+
+Each reachable server joins the download queue as soon as its latency test
+finishes. A pool joins once all its members have been tested, using the
+member with the lowest successful latency. The speed counter shows completed
+tests out of all entries that qualify so far. Each test downloads
+`ping.download_url` (256 KB from speed.cloudflare.com by default).
+
 A server whose download stalls fails with `download stalled after 16 KB
 (connection cut, likely blocked)`: censors often let a connection to a
 server start and then cut it after ~16 KB, so a short request (and an
