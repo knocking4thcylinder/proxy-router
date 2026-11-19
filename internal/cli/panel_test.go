@@ -160,6 +160,68 @@ func TestPanelFastestUsesRecentFullScanAndDefinitiveRechecks(t *testing.T) {
 	})
 }
 
+func TestPanelSeedsFullScanFromPingCache(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replace bool
+	}{
+		{"instant pick", false},
+		{"replaced server stays uncovered", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, e := panelFastestFixture(t, true)
+			p.fullScan = nil
+			entries := e.state.Entries()
+			// A finished CLI scan left its measurements behind.
+			second := pingCacheRecord{Server: serverFingerprint(entries[1].Server), Speed: 1e6, Latency: time.Millisecond, At: time.Now()}
+			if tc.replace {
+				second.Server = "another server"
+			}
+			savePingCache(p.t.dir, map[string]pingCacheRecord{
+				pingKey(entries[0].Group, entries[0].Server.Name): {Server: serverFingerprint(entries[0].Server), Speed: 2e6, Latency: time.Millisecond, At: time.Now()},
+				pingKey(entries[1].Group, entries[1].Server.Name): second,
+			})
+
+			if got := awaitPanelFastest(t, startPanelFastest(p)); got.err != nil || got.name != "first" {
+				t.Fatalf("selection = %+v, want first straight from the cache", got)
+			}
+			if p.testDone != nil {
+				t.Fatal("the seeded scan should serve the pick without starting a test")
+			}
+			// pick() still reports a replaced server as uncovered.
+			if _, _, covered := p.fullScan.pick(entries); covered == tc.replace {
+				t.Fatalf("covered = %v, want %v", covered, !tc.replace)
+			}
+			if !p.fullScan.usable(e.cfg, time.Now()) {
+				t.Fatal("the seeded scan should be usable")
+			}
+		})
+	}
+}
+
+func TestPanelWritesPingCacheOnScanCompletion(t *testing.T) {
+	p, e := panelFastestFixture(t, true)
+	scan := p.fullScan
+	p.testDone = make(chan struct{})
+	for i, en := range e.state.Entries() {
+		p.testProgress(e.cfg, scan, engine.PingProgress{
+			Phase: engine.PhaseSpeed, Result: engine.PingResult{Entry: en, Latency: time.Millisecond, Speed: float64(2 - i)},
+		})
+	}
+	p.finishTest(scan)
+
+	cache := loadPingCache(p.t.dir)
+	if len(cache.Records) != 2 {
+		t.Fatalf("cached %d records, want 2: %+v", len(cache.Records), cache.Records)
+	}
+	for _, en := range e.state.Entries() {
+		rec, ok := cache.Records[pingKey(en.Group, en.Server.Name)]
+		if !ok || rec.Server != serverFingerprint(en.Server) || rec.Speed == 0 {
+			t.Fatalf("record for %s = %+v, want this scan's measurement", en.Server.Name, rec)
+		}
+	}
+}
+
 func panelFastestFixture(t *testing.T, speedTest bool) (*panel, *env) {
 	t.Helper()
 	t.Setenv("XRAY_LOCATION_ASSET", "")

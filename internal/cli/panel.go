@@ -253,8 +253,6 @@ const (
 	panelIdleExit = panelRescan
 )
 
-func pingKey(group, name string) string { return group + "\x00" + name }
-
 func (p *panel) run() error {
 	// One panel serves every click: a second launch brings the running
 	// window forward instead of opening another one. The lock lasts for
@@ -660,6 +658,7 @@ func (p *panel) autoTest() {
 	if p.testDone != nil || len(entries) == 0 {
 		return
 	}
+	p.seedScanFromCache(e)
 	covered := false
 	if p.fullScan.usable(e.cfg, time.Now()) {
 		_, _, covered = p.fullScan.pick(entries)
@@ -732,12 +731,51 @@ func (p *panel) finishTest(scan *panelScan) {
 	if scan != nil {
 		scan.finished = time.Now()
 		scan.wake()
+		// Share the finished scan with CLI runs through the ping cache.
+		// savePingCache documents the last-writer race with a CLI scan.
+		p.saveScanCache(scan)
 	}
 	close(p.testDone)
 	p.testDone = nil
 	p.rev++
 	p.mu.Unlock()
 	p.queueRefresh()
+}
+
+// saveScanCache records a full scan's definitive results in the ping cache.
+func (p *panel) saveScanCache(scan *panelScan) {
+	speedTest := scan.cfg != nil && scan.cfg.Ping.DownloadURL != ""
+	records := make(map[string]pingCacheRecord, len(scan.results))
+	for k, r := range scan.results {
+		if cacheableResult(r, speedTest) {
+			records[k] = cacheRecord(r, time.Now())
+		}
+	}
+	savePingCache(p.t.dir, records)
+}
+
+// seedScanFromCache fills an empty fullScan from the ping cache, so a
+// relaunched panel is instantly useful instead of rescanning. Only fresh
+// records for the current servers act as samples; pick()'s identity and
+// coverage checks then apply as usual.
+func (p *panel) seedScanFromCache(e *env) {
+	if p.fullScan != nil {
+		return
+	}
+	cache := loadPingCache(p.t.dir)
+	if len(cache.Records) == 0 || cache.At.IsZero() {
+		return
+	}
+	now := time.Now()
+	scan := &panelScan{cfg: e.cfg, started: now, finished: cache.At, results: make(map[string]engine.PingResult, len(cache.Records))}
+	for _, en := range e.state.Entries() {
+		rec, ok := cache.Records[pingKey(en.Group, en.Server.Name)]
+		if !ok || rec.Server != serverFingerprint(en.Server) || now.Sub(rec.At) >= panelRescan {
+			continue
+		}
+		scan.results[pingKey(en.Group, en.Server.Name)] = cacheResult(en, rec)
+	}
+	p.fullScan = scan
 }
 
 func (p *panel) testProgress(cfg *config.Config, scan *panelScan, u engine.PingProgress) {
@@ -829,6 +867,7 @@ func (p *panel) useFastest() (engine.PingResult, error) {
 
 		p.mu.Lock()
 		now := time.Now()
+		p.seedScanFromCache(e)
 		scan := p.fullScan
 		if scan.usable(e.cfg, now) {
 			if delay := scan.started.Add(fastestScanBudget).Sub(now); scan.finished.IsZero() && delay > 0 {

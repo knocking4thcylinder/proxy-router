@@ -230,10 +230,11 @@ func useCmd() *cobra.Command {
 unique part of the name. A running "proxy-router run" switches automatically.
 
 --fastest picks the best measured download speed after about 10 seconds,
-or sooner if all tests finish. If no download speed is available by then,
-it waits for the first successful measurement or for all tests to finish.
-With ping.download_url disabled, it uses latency. Add --exhaustive to
-wait for every test.
+or sooner if all tests finish. Results from the last 5 minutes are reused
+without retesting, and the rest are probed previously-fastest first, so
+repeated runs cover more of the list. If nothing is measurable, it gives up
+after about 20 seconds; add --exhaustive to wait for every test.
+With ping.download_url disabled, it uses latency.
 
 A running proxy-router watches its connections to the selected server
 (auto_switch in config.yaml). When the server stops carrying traffic, it
@@ -266,22 +267,51 @@ server by name turns this off.`,
 				if len(entries) == 0 {
 					return fmt.Errorf("no servers to test")
 				}
-				fmt.Fprintf(os.Stderr, "testing %d servers...\n", len(entries))
 				opts, note := e.pingOptions(16)
 				if note != "" {
 					fmt.Fprintln(os.Stderr, note)
 				}
 				budget := fastestScanBudget
+				// --exhaustive retests everything; otherwise reuse what
+				// the ping cache already covers and probe the rest.
+				plan := fastestPlan{probe: entries, total: len(entries)}
 				if exhaustive {
 					budget = 0
+					fmt.Fprintf(os.Stderr, "testing %d servers...\n", len(entries))
+				} else {
+					cache := loadPingCache(e.cfg.Dir())
+					plan = planFastest(entries, cache, time.Now())
+					if len(plan.probe) == 0 {
+						// Every entry was measured within the reuse
+						// window; pick without probing again.
+						var ok bool
+						best, ok = pickFastest(plan.seed)
+						if !ok {
+							return fmt.Errorf("no server responded")
+						}
+						k := pingKey(best.Entry.Group, best.Entry.Server.Name)
+						fmt.Fprintf(os.Stderr, "picked from a recent scan (%s); use --exhaustive to retest\n", scanAgo(time.Since(cache.Records[k].At)))
+					} else {
+						if len(plan.probe) < len(entries) {
+							fmt.Fprintf(os.Stderr, "testing %d of %d servers...\n", len(plan.probe), len(entries))
+						} else {
+							fmt.Fprintf(os.Stderr, "testing %d servers...\n", len(entries))
+						}
+					}
 				}
-				var ok bool
-				best, ok = scanFastest(ctx, entries, opts, budget)
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if !ok {
-					return fmt.Errorf("no server responded")
+				if best.Entry.Server == nil {
+					var ok bool
+					var scanErr error
+					best, ok, scanErr = scanFastest(ctx, plan, opts, budget, e.cfg.Dir(), os.Stderr)
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					if scanErr != nil {
+						return scanErr
+					}
+					if !ok {
+						return fmt.Errorf("no server responded")
+					}
 				}
 				// The scan may have outlasted a subscription refresh. Save
 				// against the latest state and resolve the winner's new index.
@@ -344,9 +374,85 @@ func currentScanWinner(state *config.State, winner config.Entry) (config.Entry, 
 	return config.Entry{}, fmt.Errorf("%s was removed during the scan", clean(winner.String()))
 }
 
-func scanFastest(ctx context.Context, entries []config.Entry, opts engine.PingOptions, budget time.Duration) (engine.PingResult, bool) {
+// fastestFailFloor is how long a budgeted scan keeps waiting past its budget
+// for the first usable sample before giving up: with the default 10s budget,
+// about 20s in total. Unexported so tests can shrink it.
+var fastestFailFloor = 10 * time.Second
+
+// scanDisplay renders the budgeted scan's single refreshing stderr line.
+type scanDisplay struct {
+	out      io.Writer
+	total    int
+	done     int
+	best     engine.PingResult
+	measured map[int]bool
+	last     time.Time
+}
+
+// scanDrawInterval throttles redraws: measured speeds can arrive in bursts.
+const scanDrawInterval = time.Second
+
+func (d *scanDisplay) update(p engine.PingProgress, best engine.PingResult, measured bool) {
+	if p.Phase == engine.PhaseLatency && p.EntryDone {
+		d.done++
+	}
+	if measured {
+		if d.measured == nil {
+			d.measured = map[int]bool{}
+		}
+		d.measured[p.Result.Entry.Index] = true
+	}
+	d.best = best
+	if d.out == nil || time.Since(d.last) < scanDrawInterval {
+		return
+	}
+	d.draw()
+}
+
+func (d *scanDisplay) draw() {
+	if d.out == nil {
+		return
+	}
+	d.last = time.Now()
+	line := fmt.Sprintf("%d/%d probed", d.done, d.total)
+	if d.best.Entry.Server != nil {
+		line += " · best: " + clean(d.best.Entry.Server.Name)
+		if d.best.Speed > 0 {
+			line += " " + speedText(d.best.Speed)
+		}
+	}
+	fmt.Fprintf(d.out, "\r\x1b[2K%s", line)
+}
+
+// finish parks the line: redraw the latest state, then end it.
+func (d *scanDisplay) finish() {
+	d.draw()
+	if d.out != nil {
+		fmt.Fprint(d.out, "\n")
+	}
+}
+
+// partialNote says the budget cut the sample short of the whole group.
+func (d *scanDisplay) partialNote(plan fastestPlan) {
+	if d.out == nil || d.done >= len(plan.probe) {
+		return
+	}
+	measured := len(d.measured) + len(plan.seed)
+	fmt.Fprintf(d.out, "picked the best of %d measured; use --exhaustive to test all %d\n", measured, plan.total)
+}
+
+// scanFastest runs a budgeted or exhaustive fastest scan of plan.probe,
+// seeded with the plan's fresh cached samples, and records what it measures
+// in the ping cache. A budgeted scan reports progress on out, and gives up
+// when nothing is measurable by budget + grace; an exhaustive one waits for
+// every test as before.
+func scanFastest(ctx context.Context, plan fastestPlan, opts engine.PingOptions, budget time.Duration, dir string, out io.Writer) (engine.PingResult, bool, error) {
+	speedTest := opts.DownloadURL != ""
 	if budget == 0 {
-		return pickFastest(engine.Ping(ctx, entries, opts))
+		results := engine.Ping(ctx, plan.probe, opts)
+		saveScanCache(dir, results, speedTest, time.Now())
+		best, ok := pickFastest(results)
+		return best, ok, nil
 	}
 
 	// Ping drains active probes on cancellation. Some can still be setting
@@ -366,27 +472,51 @@ func scanFastest(ctx context.Context, entries []config.Entry, opts engine.PingOp
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	budgetDone := timer.C
+	// Full exhaustion can take minutes on a mostly dead subscription, so
+	// bound the wait for the first usable sample.
+	failTimer := time.NewTimer(budget + fastestFailFloor)
+	defer failTimer.Stop()
 	finished := make(chan []engine.PingResult, 1)
-	go func() { finished <- engine.Ping(scanCtx, entries, opts) }()
+	go func() { finished <- engine.Ping(scanCtx, plan.probe, opts) }()
 
-	var best engine.PingResult
+	samples := scanSamples{}
+	disp := scanDisplay{out: out, total: len(plan.probe)}
+	// Fresh cached samples compete with everything this run measures.
+	best, _ := pickFastest(plan.seed)
+	// Every return keeps what was measured for the next run.
+	defer func() { savePingCache(dir, samples.records(speedTest)) }()
 	for ctx.Err() == nil {
 		if best.Entry.Server != nil && !time.Now().Before(deadline) {
-			return best, true
+			disp.finish()
+			disp.partialNote(plan)
+			return best, true, nil
 		}
 		select {
 		case <-ctx.Done():
+			disp.finish()
 		case <-budgetDone:
 			budgetDone = nil
-		case results := <-finished:
-			if best.Entry.Server != nil {
-				return best, true
+		case <-failTimer.C:
+			// The budget passed without a usable sample: stop waiting
+			// instead of draining every dead server. Latency-only scans
+			// still wait for exhaustion, as before.
+			if best.Entry.Server == nil && speedTest {
+				disp.finish()
+				return engine.PingResult{}, false, fmt.Errorf(
+					"no server measured a download speed within %s (%d of %d probed); use --exhaustive to keep waiting",
+					(budget + fastestFailFloor).Round(time.Second), disp.done, len(plan.probe))
 			}
-			return pickFastest(results)
+		case results := <-finished:
+			disp.finish()
+			if best.Entry.Server != nil {
+				return best, true, nil
+			}
+			best, ok := pickFastest(results)
+			return best, ok, nil
 		case p := <-updates:
 			r := p.Result
 			measured := p.Phase == engine.PhaseSpeed && r.SpeedErr == nil && r.Speed > 0
-			if opts.DownloadURL == "" {
+			if !speedTest {
 				measured = p.Phase == engine.PhaseLatency && p.EntryDone
 			}
 			// Break ties by list order, since probes can finish in any order.
@@ -394,12 +524,15 @@ func scanFastest(ctx context.Context, entries []config.Entry, opts engine.PingOp
 				(r.Entry.Index < best.Entry.Index && !better(best, r))) {
 				best = r
 			}
+			samples.add(p)
+			disp.update(p, best, measured)
 			if progress != nil {
 				progress(p)
 			}
 		}
 	}
-	return engine.PingResult{}, false
+	disp.finish()
+	return engine.PingResult{}, false, nil
 }
 
 func pingCmd() *cobra.Command {
@@ -497,6 +630,17 @@ func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
 	iface, note := e.outboundInterface()
 	o.Interface, o.Resolve = iface, e.resolverIf(iface)
 	return o, note
+}
+
+// scanAgo names how old a cached scan is, for the reuse note.
+func scanAgo(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%d min ago", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%d h ago", int(d.Hours()))
 }
 
 // pickFastest picks the best working result: the fastest download, else (no
