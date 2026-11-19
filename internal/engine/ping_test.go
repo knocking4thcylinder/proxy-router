@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -123,7 +125,19 @@ func TestPingProgressStreamsAndAggregatesPools(t *testing.T) {
 // host:port. (Xray's http outbound always tunnels with CONNECT.)
 func connectProxy(t *testing.T, serve http.HandlerFunc) string {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return connectProxyAt(t, "127.0.0.1", serve)
+}
+
+func connectProxyAt(t *testing.T, host string, serve http.HandlerFunc) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if host == "::1" && (errors.Is(err, syscall.EADDRNOTAVAIL) || errors.Is(err, syscall.EAFNOSUPPORT)) {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
 			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
 			return
@@ -141,7 +155,9 @@ func connectProxy(t *testing.T, serve http.HandlerFunc) string {
 		rec := httptest.NewRecorder()
 		serve(rec, req.WithContext(r.Context()))
 		_ = rec.Result().Write(conn)
-	}))
+	})
+	srv := &httptest.Server{Listener: listener, Config: &http.Server{Handler: handler}}
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
 }

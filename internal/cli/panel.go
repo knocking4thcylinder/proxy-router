@@ -667,9 +667,10 @@ func (p *panel) test(entries []config.Entry, full bool) {
 			p.results = map[string]engine.PingResult{}
 		}
 		p.results[pingKey(u.Result.Entry.Group, u.Result.Entry.Server.Name)] = u.Result
+		p.speedTotal = u.SpeedTotal
 		switch u.Phase {
 		case engine.PhaseSpeed:
-			p.speedDone, p.speedTotal = u.Completed, u.Total
+			p.speedDone = u.Completed
 		default:
 			if u.EntryDone {
 				p.done++
@@ -1109,14 +1110,7 @@ func (p *panel) servers(m trayModel) fyne.CanvasObject {
 	p.mu.Lock()
 	testing, done, total, speedDone, speedTotal, at := p.testing, p.done, p.total, p.speedDone, p.speedTotal, p.testedAt
 	p.mu.Unlock()
-	note := "tested " + panelAgo(at) + " · ↻"
-	if testing {
-		note = fmt.Sprintf("testing %d/%d…", done, total)
-		if speedTotal > 0 {
-			note = fmt.Sprintf("speeds %d/%d…", speedDone, speedTotal)
-		}
-	}
-	sortLine := container.NewBorder(nil, nil, txt("Fastest first · working only", 11.5, pDim, false, false), newTap(txt(note, 11.5, pMute, false, false), func() { go p.ping() }))
+	sortLine := container.NewBorder(nil, nil, txt("Fastest first · working only", 11.5, pDim, false, false), newTap(txt(scanNote(testing, done, total, speedDone, speedTotal, at), 11.5, pMute, false, false), func() { go p.ping() }))
 
 	ok, dead, fastest := p.countries(m, testing)
 	var rows []fyne.CanvasObject
@@ -1165,6 +1159,23 @@ func (p *panel) servers(m trayModel) fyne.CanvasObject {
 	}
 	body.Add(scroll)
 	return container.NewStack(canvas.NewRectangle(pBg), body)
+}
+
+// scanNote is the servers header's progress text. Downloads overlap the
+// remaining latency probes, and their total only covers servers found
+// reachable so far, so keep both counts visible during a scan.
+func scanNote(testing bool, done, total, speedDone, speedTotal int, at time.Time) string {
+	if !testing {
+		return "tested " + panelAgo(at) + " · ↻"
+	}
+	switch {
+	case speedTotal == 0:
+		return fmt.Sprintf("testing %d/%d…", done, total)
+	case done < total:
+		return fmt.Sprintf("%d/%d · speeds %d/%d…", done, total, speedDone, speedTotal)
+	default:
+		return fmt.Sprintf("speeds %d/%d…", speedDone, speedTotal)
+	}
 }
 
 func (p *panel) countryRow(c panelCountry) fyne.CanvasObject {

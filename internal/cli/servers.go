@@ -357,12 +357,13 @@ func pingCmd() *cobra.Command {
 // that leave around it (see tun.ServeOutside).
 func (e *env) pingOptions(parallel int) (engine.PingOptions, string) {
 	o := engine.PingOptions{
-		URL:         e.cfg.Ping.URL,
-		Timeout:     e.cfg.Ping.Timeout.D(),
-		Parallel:    parallel,
-		PerEndpoint: e.cfg.Ping.PerEndpoint,
-		DownloadURL: e.cfg.Ping.DownloadURL,
-		Config:      e.cfg,
+		URL:              e.cfg.Ping.URL,
+		Timeout:          e.cfg.Ping.Timeout.D(),
+		Parallel:         parallel,
+		PerEndpoint:      e.cfg.Ping.PerEndpoint,
+		DownloadParallel: e.cfg.Ping.DownloadParallel,
+		DownloadURL:      e.cfg.Ping.DownloadURL,
+		Config:           e.cfg,
 	}
 	if own := e.ownTUN(); own != "" {
 		path := outsidePath()

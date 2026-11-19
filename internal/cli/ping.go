@@ -70,10 +70,11 @@ type pingDisplay struct {
 }
 
 func (p *pingDisplay) update(u engine.PingProgress) {
+	p.speedTotal = u.SpeedTotal
 	if u.Phase == engine.PhaseSpeed {
 		// A failed speed test doesn't make the server unreachable; it
 		// stays in the reachable count and the table shows why.
-		p.speedDone, p.speedTotal = u.Completed, u.Total
+		p.speedDone = u.Completed
 		if u.Result.SpeedErr != nil {
 			p.speedFailed++
 		}
@@ -116,24 +117,56 @@ func (p *pingDisplay) draw() {
 	if p.width <= 0 {
 		return
 	}
+	p.clear()
+	fmt.Fprint(p.out, p.status())
+}
+
+// status is the live line. Latency probes and downloads overlap, so both
+// counters stay visible while each still has work. The speed total is only
+// the reachable servers found so far, so it can grow during the scan.
+func (p *pingDisplay) status() string {
 	elapsed := time.Since(p.start)
 	spinner := "|/-\\"[int(elapsed/(100*time.Millisecond))%4]
-	status := fmt.Sprintf("%c %d/%d servers | %d reachable, %d failed | %.1fs", spinner, p.done, p.total, p.ok, p.failed, elapsed.Seconds())
-	switch {
-	case p.speedTotal > 0:
-		status += fmt.Sprintf(" | speeds %d/%d", p.speedDone, p.speedTotal)
-	case p.probes > p.total:
-		status += fmt.Sprintf(" | %d/%d probes", p.completed, p.probes)
+	var phases []string
+	if p.probes > p.completed && p.probes > p.total {
+		phases = append(phases, fmt.Sprintf("probes %d/%d", p.completed, p.probes))
 	}
-	// Leave the last column unused so the status never wraps onto another line.
-	if len(status) >= p.width {
-		status = fmt.Sprintf("%c %d/%d servers | %.1fs", spinner, p.done, p.total, elapsed.Seconds())
-		if len(status) >= p.width {
-			status = status[:p.width-1]
+	if p.speedTotal > 0 {
+		phases = append(phases, fmt.Sprintf("speeds %d/%d", p.speedDone, p.speedTotal))
+	}
+	base := fmt.Sprintf("%c %d/%d servers", spinner, p.done, p.total)
+	health := fmt.Sprintf(" | %d reachable, %d failed", p.ok, p.failed)
+	took := fmt.Sprintf(" | %.1fs", elapsed.Seconds())
+	phase := ""
+	if len(phases) > 0 {
+		phase = " | " + strings.Join(phases, " | ")
+	}
+
+	candidates := []string{base + health + took + phase}
+	if phase != "" {
+		// Keep the changing counters on a narrow terminal: drop the
+		// elapsed time and the relatively static health counts before
+		// abbreviating the entry count.
+		candidates = append(candidates,
+			base+health+phase,
+			base+took+phase,
+			base+phase,
+			fmt.Sprintf("%c %d/%d%s", spinner, p.done, p.total, phase),
+		)
+	}
+	candidates = append(candidates, base+took, base)
+	for _, status := range candidates {
+		// Leave the last column unused so the status never wraps onto
+		// another line.
+		if len(status) < p.width {
+			return status
 		}
 	}
-	p.clear()
-	fmt.Fprint(p.out, status)
+	status := base
+	if len(status) >= p.width {
+		status = status[:p.width-1]
+	}
+	return status
 }
 
 func writePingResults(out io.Writer, results []engine.PingResult, current int, exit bool) error {

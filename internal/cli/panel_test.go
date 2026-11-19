@@ -10,6 +10,30 @@ import (
 	"time"
 )
 
+func TestScanNoteShowsOverlappingProgress(t *testing.T) {
+	at := time.Now().Add(-2 * time.Minute)
+	tests := []struct {
+		name                               string
+		testing                            bool
+		done, total, speedDone, speedTotal int
+		want                               string
+	}{
+		{"idle", false, 0, 0, 0, 0, "tested 2 min ago · ↻"},
+		{"latency only", true, 3, 10, 0, 0, "testing 3/10…"},
+		{"overlap", true, 3, 10, 1, 2, "3/10 · speeds 1/2…"},
+		{"speed total grew", true, 4, 10, 2, 5, "4/10 · speeds 2/5…"},
+		{"latency done", true, 10, 10, 2, 4, "speeds 2/4…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scanNote(tt.testing, tt.done, tt.total, tt.speedDone, tt.speedTotal, at)
+			if got != tt.want {
+				t.Fatalf("scanNote() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFreezeCountriesKeepsOrderAndSplit(t *testing.T) {
 	ok := []panelCountry{
 		{trayCountry: trayCountry{flag: "🇨🇭", name: "Switzerland"}, working: 2},

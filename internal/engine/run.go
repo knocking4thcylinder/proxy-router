@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	xlog "github.com/xtls/xray-core/common/log"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/common/session"
@@ -130,6 +129,9 @@ type PingOptions struct {
 	Parallel int
 	// Max simultaneous tests per server IP (0 = no limit).
 	PerEndpoint int
+	// Max simultaneous downloads within the overall and per-endpoint limits.
+	// A value of 0 uses the default of 4.
+	DownloadParallel int
 	// Interface to bind to ("" = system routing).
 	Interface string
 	// Config whose Happ-style tweaks (fragment, mux, ...) apply to tests.
@@ -141,11 +143,10 @@ type PingOptions struct {
 	// ExitURL, when set, is fetched through each server after the latency
 	// test; its body (e.g. a country code) is reported as Exit.
 	ExitURL string
-	// DownloadURL, when set, is downloaded through each server after the
-	// latency test. A server whose transfer stalls fails, and Speed is
-	// how fast it arrived.
+	// DownloadURL, when set, is downloaded through each reachable entry
+	// as it finishes latency testing. A stalled download sets SpeedErr.
 	DownloadURL string
-	// OnProgress is called after each server (or pool member) finishes.
+	// OnProgress is called after each latency probe or download finishes.
 	// Calls are serialized; the callback should return promptly.
 	OnProgress func(PingProgress)
 }
@@ -163,9 +164,14 @@ const (
 
 // PingProgress contains a snapshot of an entry and overall probe progress.
 type PingProgress struct {
-	Result           PingResult
+	Result PingResult
+	// Completed and Total count probes in this phase. Speed Total can
+	// grow as more entries finish latency testing and qualify for downloads.
 	Completed, Total int
-	// EntryDone means all members of this entry have finished this phase.
+	// SpeedTotal counts eligible downloads, including those still queued.
+	// It updates on latency completions even while all downloads are pending.
+	SpeedTotal int
+	// EntryDone means all members of this entry have finished latency testing.
 	EntryDone bool
 	// Phase is PhaseLatency for reachability results and PhaseSpeed for
 	// download-speed updates. Speed updates never set EntryDone.
@@ -189,171 +195,6 @@ type PingResult struct {
 	SpeedErr error
 	// For pools: how many members answered, out of how many.
 	Alive, Members int
-}
-
-// Ping measures a full HTTP request through each server ("real delay":
-// includes the proxy handshake), testing up to `parallel` at once.
-//
-// It runs in two passes. The latency pass tests every server first, so a
-// list fills in as servers answer instead of waiting for each download.
-// The speed pass then downloads DownloadURL through the servers that
-// answered. A failed download is reported as SpeedErr, not Err: the
-// server is reachable even when the speed test site is blocked for it.
-// It silences Xray's global logger, so don't use it next to a running proxy.
-func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResult {
-	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
-	xlog.RegisterHandler(discardLog{})
-	results := make([]PingResult, len(entries))
-
-	// One semaphore per resolved server IP.
-	var mu sync.Mutex
-	endpoints := map[string]chan struct{}{}
-	endpointSem := func(addr string) chan struct{} {
-		key := addr
-		switch {
-		case isIPOrCIDR(addr):
-		case o.Resolve != nil:
-			// Same lookups as pinning, so server names stay off plain DNS.
-			if ip, err := o.Resolve(addr); err == nil {
-				key = ip
-			}
-		default:
-			if ips, err := net.DefaultResolver.LookupHost(ctx, addr); err == nil && len(ips) > 0 {
-				key = ips[0]
-			}
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if endpoints[key] == nil {
-			endpoints[key] = make(chan struct{}, o.PerEndpoint)
-		}
-		return endpoints[key]
-	}
-	acquire := func(addr string) func() {
-		if o.PerEndpoint <= 0 {
-			return func() {}
-		}
-		ep := endpointSem(addr)
-		ep <- struct{}{}
-		return func() { <-ep }
-	}
-
-	// Pools are tested member by member; each job is one server.
-	type job struct {
-		result int
-		server *share.Server
-	}
-	var jobs []job
-	remaining := make([]int, len(entries))
-	for i, e := range entries {
-		results[i] = PingResult{Entry: e}
-		if members := e.Server.Members(); members != nil {
-			results[i].Members = len(members)
-			for _, m := range members {
-				jobs = append(jobs, job{i, m})
-			}
-			remaining[i] = len(members)
-			continue
-		}
-		jobs = append(jobs, job{i, e.Server})
-		remaining[i] = 1
-	}
-
-	// The latency pass. bestMember is the member the speed pass will use:
-	// for a pool, the one that answered fastest.
-	bestMember := make([]*share.Server, len(entries))
-	completed := 0
-	run := func(j job) {
-		release := acquire(j.server.Address)
-		d, exit, err := pingLatency(ctx, j.server, o)
-		release()
-
-		mu.Lock()
-		defer mu.Unlock()
-		r := &results[j.result]
-		if err == nil {
-			r.Alive++
-			if r.Latency == 0 || d < r.Latency {
-				r.Latency, r.Exit, r.Err = d, exit, nil
-				bestMember[j.result] = j.server
-			}
-		} else if r.Latency == 0 {
-			r.Err = err
-		}
-		completed++
-		remaining[j.result]--
-		if o.OnProgress != nil {
-			o.OnProgress(PingProgress{
-				Result: *r, Completed: completed, Total: len(jobs),
-				EntryDone: remaining[j.result] == 0, Phase: PhaseLatency,
-			})
-		}
-	}
-	// A fixed set of workers: a provider's pool can have any number of
-	// members, and each test starts an Xray instance.
-	runJobs(jobs, o.Parallel, run)
-
-	// The speed pass. Only servers that answered the latency pass are
-	// downloaded through, so a blocked speed test site can't make a
-	// reachable server look dead.
-	if o.DownloadURL == "" || ctx.Err() != nil {
-		return results
-	}
-	type speedJob struct {
-		result int
-		server *share.Server
-	}
-	var speeds []speedJob
-	for i := range entries {
-		if results[i].Err == nil && bestMember[i] != nil {
-			speeds = append(speeds, speedJob{i, bestMember[i]})
-		}
-	}
-	done := 0
-	download := func(j speedJob) {
-		release := acquire(j.server.Address)
-		speed, err := pingSpeed(ctx, j.server, o)
-		release()
-
-		mu.Lock()
-		defer mu.Unlock()
-		r := &results[j.result]
-		if err != nil {
-			if r.Speed == 0 {
-				r.SpeedErr = err
-			}
-		} else {
-			r.Speed, r.SpeedErr = speed, nil
-		}
-		done++
-		if o.OnProgress != nil {
-			o.OnProgress(PingProgress{
-				Result: *r, Completed: done, Total: len(speeds), Phase: PhaseSpeed,
-			})
-		}
-	}
-	runJobs(speeds, o.Parallel, download)
-	return results
-}
-
-// runJobs runs fn for every job with at most parallel workers.
-func runJobs[T any](jobs []T, parallel int, fn func(T)) {
-	queue := make(chan T)
-	var wg sync.WaitGroup
-	for range min(max(parallel, 1), maxPingParallel, max(len(jobs), 1)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range queue {
-				fn(j)
-			}
-		}()
-	}
-	for _, j := range jobs {
-		queue <- j
-	}
-	close(queue)
-	wg.Wait()
 }
 
 // ControlSockets runs ctl on every socket Xray opens in this process,
@@ -390,13 +231,6 @@ var (
 	controlMu         sync.Mutex
 	controlRegistered bool
 )
-
-// maxPingParallel caps how many servers Ping tests at once.
-const maxPingParallel = 64
-
-type discardLog struct{}
-
-func (discardLog) Handle(xlog.Message) {}
 
 // pingLatency measures the request and, when asked, the exit country.
 func pingLatency(ctx context.Context, s *share.Server, o PingOptions) (time.Duration, string, error) {
