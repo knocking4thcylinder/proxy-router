@@ -141,6 +141,7 @@ func removeStaleScoped() {
 		}
 		have, err := scopedDefaults(family, iface)
 		if err != nil {
+			warn("can't check the routes scoped to %s: %v", iface, err)
 			continue
 		}
 		for _, other := range have {
@@ -203,7 +204,11 @@ func Sync(o Options) error {
 // and trusts what it verified. A mismatched scoped route on the primary
 // interface can only be a leftover — macOS scopes secondary interfaces'
 // own routes, never the primary one's — and it breaks every bound socket
-// until it's gone.
+// until it's gone. A matching one is adopted and removed at Down: it's
+// either a crashed run's leftover with an unchanged gateway, or another
+// VPN's — indistinguishable, but routed identically to the system-wide
+// default, so deleting it changes nothing. (Cleanup, with no run to take
+// over for, leaves matching routes alone; see removeStaleScoped.)
 func syncScoped(name string) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -222,7 +227,17 @@ func syncScoped(name string) error {
 			old.remove(family)
 			delete(added, family)
 		}
-		stale, _ := scopedDefaults(family, iface)
+		stale, err := scopedDefaults(family, iface)
+		if err != nil {
+			if family == "inet6" {
+				continue // no IPv6 answer; try again next Sync
+			}
+			// An unread table must not become a made-up "nothing scoped":
+			// with a crash leftover sitting there, the add below would
+			// fail File exists, be swallowed, and record a route that was
+			// never verified.
+			return fmt.Errorf("can't read the routes scoped to %s: %w", iface, err)
+		}
 		if !slices.Contains(stale, gw) {
 			for _, other := range stale {
 				_ = run("route", scopedDefault{iface, other}.args("delete", family)...)

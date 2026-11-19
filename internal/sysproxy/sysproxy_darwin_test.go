@@ -117,6 +117,31 @@ func TestSetLeavesDisabledPACAlone(t *testing.T) {
 	)
 }
 
+func TestDiscoveryFailureWarns(t *testing.T) {
+	// An unreadable auto-discovery state must not be silent: WPAD left on
+	// would keep shadowing the manual proxies, the exact failure this
+	// exists to remove.
+	_, notes, done := stubSetup(t, func(args []string) string {
+		switch args[0] {
+		case "-listallnetworkservices":
+			return "legend\nWi-Fi"
+		case "-getautoproxyurl":
+			return "URL: \nEnabled: No"
+		case "-getproxyautodiscovery":
+			return "" // the stub errors on empty replies
+		}
+		return "Enabled: No\nServer: \nPort: 0"
+	})
+	defer done()
+
+	if _, err := Set("", 0, "127.0.0.1", 10808); err != nil {
+		t.Fatal(err)
+	}
+	if len(*notes) != 1 || !strings.Contains((*notes)[0], "auto-discovery") {
+		t.Fatalf("warnings: %v", *notes)
+	}
+}
+
 func TestCurrentPACAndDiscovery(t *testing.T) {
 	p, err := currentPACFromOutput("URL: http://x/proxy.pac\nEnabled: Yes")
 	if err != nil || !p.enabled || p.url != "http://x/proxy.pac" {

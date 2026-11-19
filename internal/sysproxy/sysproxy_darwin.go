@@ -194,8 +194,9 @@ func current(service, kind string) (saved, error) {
 }
 
 // currentPAC reads a service's auto-proxy (PAC) settings. A PAC failure is
-// the caller's to warn about; discovery is best-effort, as some services
-// don't answer that question.
+// the caller's to warn about; a discovery failure warns here, since a
+// silently unknown discovery state is exactly the shadowing this exists to
+// remove.
 func currentPAC(service string) (pacSaved, error) {
 	p := pacSaved{service: service}
 	out, err := runSetup("-getautoproxyurl", service)
@@ -217,6 +218,8 @@ func currentPAC(service string) (pacSaved, error) {
 	}
 	if out, err := runSetup("-getproxyautodiscovery", service); err == nil {
 		p.discovery = discoveryOn(out)
+	} else {
+		warn("can't check proxy auto-discovery on %s: %v; the system proxy may not take effect", service, err)
 	}
 	return p, nil
 }
