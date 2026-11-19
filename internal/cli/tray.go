@@ -329,6 +329,11 @@ func (t *tray) refresh() {
 }
 
 func (t *tray) model() trayModel {
+	m, _ := t.modelWithEnv()
+	return m
+}
+
+func (t *tray) modelWithEnv() (trayModel, *env) {
 	t.mu.Lock()
 	busy, wantTUN, actionErr := t.busy, t.wantTUN, t.lastError
 	t.mu.Unlock()
@@ -437,7 +442,7 @@ func (t *tray) model() trayModel {
 	if busy != "" {
 		m.status, m.busy = busy, true
 	}
-	return m
+	return m, e
 }
 
 func (t *tray) outdated(target service.Target) bool {
@@ -603,7 +608,7 @@ func (t *tray) serverMenu(m trayModel) {
 		servers.AddSubMenuItem(`No servers yet ("proxy-router sub add <url>")`, "").Disable()
 		return
 	}
-	t.onClick(servers.AddSubMenuItem("⚡ Fastest Available", "Test every server and pick the fastest one that works"), m.busy, func() {
+	t.onClick(servers.AddSubMenuItem("⚡ Fastest Available", "Pick the fastest measured server"), m.busy, func() {
 		t.run("Testing servers…", false, "use", "--fastest")
 	})
 	servers.AddSeparator()
@@ -687,6 +692,12 @@ func modeFlag(tun bool) string {
 }
 
 func (t *tray) selectServer(group, name string) {
+	t.mu.Lock()
+	busy := t.busy != ""
+	t.mu.Unlock()
+	if busy {
+		return
+	}
 	e, err := load()
 	if err == nil {
 		err = fmt.Errorf("%s/%s no longer exists", group, name)
@@ -704,26 +715,43 @@ func (t *tray) selectServer(group, name string) {
 	t.poke()
 }
 
-// run runs proxy-router with args in the background, showing what's
-// happening in the menu. root says it may ask for the password (in the
-// system's dialog); dismissing that isn't an error.
-func (t *tray) run(what string, root bool, args ...string) {
+func (t *tray) beginAction(what string) bool {
 	t.mu.Lock()
 	if t.busy != "" {
 		t.mu.Unlock()
-		return
+		return false
 	}
 	t.lastError = ""
 	t.busy = what
 	t.mu.Unlock()
 	t.poke()
+	return true
+}
+
+func (t *tray) endAction() {
+	t.mu.Lock()
+	t.busy = ""
+	t.mu.Unlock()
+	t.poke()
+}
+
+func (t *tray) actionFailed(what, msg string, err error) {
+	t.mu.Lock()
+	t.lastError = msg
+	t.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "action failed: %s: %v\n", msg, err)
+	notify("proxy-router: "+strings.TrimSuffix(strings.ToLower(what), "…")+" failed", msg)
+}
+
+// run runs proxy-router with args in the background, showing what's
+// happening in the menu. root says it may ask for the password (in the
+// system's dialog); dismissing that isn't an error.
+func (t *tray) run(what string, root bool, args ...string) {
+	if !t.beginAction(what) {
+		return
+	}
 	go func() {
-		defer func() {
-			t.mu.Lock()
-			t.busy = ""
-			t.mu.Unlock()
-			t.poke()
-		}()
+		defer t.endAction()
 		// Commands run as the tray's user. Those that need root for part
 		// of their work ask for the password themselves, in the
 		// desktop's dialog, and only run that part as root.
@@ -751,11 +779,7 @@ func (t *tray) run(what string, root bool, args ...string) {
 			if msg == "" {
 				msg = err.Error()
 			}
-			t.mu.Lock()
-			t.lastError = msg
-			t.mu.Unlock()
-			fmt.Fprintf(os.Stderr, "action failed: %s: %v\n", msg, err)
-			notify("proxy-router: "+strings.TrimSuffix(strings.ToLower(what), "…")+" failed", msg)
+			t.actionFailed(what, msg, err)
 			return
 		}
 		if args[0] == "use" {

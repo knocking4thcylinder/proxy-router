@@ -21,10 +21,16 @@ func (discardLog) Handle(xlog.Message) {}
 
 // Ping measures a full HTTP request through each server, including the proxy
 // handshake. Downloads can start as soon as an entry finishes its latency
-// probes, using the fastest responding member for a pool. Both phases share the
-// overall and per-endpoint limits. On cancellation, eligible downloads that
-// have not started are reported with SpeedErr. Ping silences Xray's global
-// logger, so don't use it next to a running proxy.
+// probes, using the fastest responding member for a pool. Both phases share
+// the overall limit, while the per-endpoint limit bounds concurrent latency
+// probes and concurrent downloads per IP separately: a download may overlap
+// in-flight latency probes (borrowed or normal), so total per-IP activity
+// can exceed per_endpoint. Latency probes may also borrow idle global slots
+// (up to min(parallel, 4x per-endpoint)) when every endpoint with queued
+// work is at its per-endpoint limit. Downloads never borrow. On
+// cancellation, eligible downloads that have not started are reported with
+// SpeedErr. Ping silences Xray's global logger, so don't use it next to a
+// running proxy.
 func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResult {
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
 	xlog.RegisterHandler(discardLog{})
@@ -37,7 +43,20 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	if endpointLimit <= 0 {
 		endpointLimit = parallel
 	}
-	pending := pingQueue{limit: endpointLimit}
+	// Endpoint limits keep probes polite and within provider rate limits, but
+	// a long backlog behind one IP would otherwise leave the global budget
+	// idle. Latency probes may borrow up to 4x the limit in that case, so
+	// borrowing stays bounded and only uses slots nobody else wants. An
+	// endpoint with queued or active downloads stops borrowing, so freed
+	// slots go to those downloads instead of more borrowed probes. Speed
+	// tests never borrow either: downloads through one IP share bandwidth
+	// and would corrupt each other's measurement. A download may overlap
+	// in-flight latency probes (borrowed or normal), so the per-endpoint
+	// speed gate bounds concurrent downloads, not total activity:
+	// ep.active can pass the limit by the size of that overlap until the
+	// overlapping probes drain.
+	overflowLimit := min(parallel, 4*min(endpointLimit, parallel))
+	pending := pingQueue{limit: endpointLimit, overflowLimit: overflowLimit}
 	endpoints := make(map[string]*pingEndpoint)
 	endpointFor := func(key string) *pingEndpoint {
 		if endpoints[key] == nil {
@@ -109,31 +128,13 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		pending.add(endpointFor(key), PhaseLatency, waitingForIP[lookup.host]...)
 		delete(waitingForIP, lookup.host)
 	}
-	startProbe := func(phase PingPhase) bool {
-		if phase == PhaseSpeed {
-			limit := min(downloadParallel, parallel)
-			// Leave room for a ready latency probe even if DNS or endpoint
-			// capacity is currently holding back the remaining latency work.
-			if parallel > 1 && completed[PhaseLatency] < total[PhaseLatency] {
-				limit = min(limit, parallel-1)
-			}
-			if activeSpeed >= limit {
-				return false
-			}
-		}
-		job, ep := pending.take(phase)
-		if ep == nil {
-			return false
-		}
+	// Every admitted job owns one global slot and one endpoint slot until its
+	// single completion is handled, regardless of which queue admitted it.
+	startJob := func(job pingJob, ep *pingEndpoint, phase PingPhase) {
 		active++
 		if phase == PhaseSpeed {
 			activeSpeed++
 			speedPending[job.entry] = false
-		}
-		// With multiple workers, alternate so downloads can overlap latency.
-		// A single worker always gives ready latency the first slot.
-		if parallel > 1 && phase == phases[0] {
-			phases[0], phases[1] = phases[1], phases[0]
 		}
 		opts := o
 		if pin := pins[job.server.Address]; pin != nil {
@@ -150,6 +151,42 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 			}
 			probes <- p
 		}()
+	}
+	startProbe := func(phase PingPhase) bool {
+		if phase == PhaseSpeed {
+			limit := min(downloadParallel, parallel)
+			// Leave room for a ready latency probe even if DNS or endpoint
+			// capacity is currently holding back the remaining latency work.
+			if parallel > 1 && completed[PhaseLatency] < total[PhaseLatency] {
+				limit = min(limit, parallel-1)
+			}
+			if activeSpeed >= limit {
+				return false
+			}
+		}
+		job, ep := pending.take(phase)
+		if ep == nil {
+			return false
+		}
+		// With multiple workers, alternate so downloads can overlap latency.
+		// A single worker always gives ready latency the first slot.
+		if parallel > 1 && phase == phases[0] {
+			phases[0], phases[1] = phases[1], phases[0]
+		}
+		startJob(job, ep, phase)
+		return true
+	}
+	// Only called after both normal queues came up empty, so the slot would
+	// otherwise sit idle. Latency only: see overflowLimit for why downloads
+	// must not borrow. The phase-alternation swap from startProbe is
+	// intentionally skipped: a ready admissible speed job was already offered
+	// the slot and did not take it, so a borrow cannot jump the speed queue.
+	startOverflowProbe := func() bool {
+		job, ep := pending.takeOverflow()
+		if ep == nil {
+			return false
+		}
+		startJob(job, ep, PhaseLatency)
 		return true
 	}
 
@@ -219,7 +256,12 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		}
 		for active < parallel && ctx.Err() == nil {
 			if !startProbe(phases[0]) && !startProbe(phases[1]) {
-				break
+				// Normal rotation left the global slot idle because every
+				// endpoint with queued work sits at its own limit. Let a
+				// backlogged latency queue borrow the slot.
+				if !startOverflowProbe() {
+					break
+				}
 			}
 		}
 		if active == 0 && activeLookups == 0 {
@@ -311,13 +353,17 @@ type pingEndpoint struct {
 	active, activeSpeed int
 	jobs                [2][]pingJob
 	queued              [2]bool
+	overflowing         bool
 }
 
 // pingQueue rotates through endpoints with available slots, so a large
 // backlog for one IP doesn't occupy probe slots or need to be scanned.
+// Endpoints over their limit wait in a second rotation for a borrowed slot;
+// borrowing rotates too, so one backlog can't monopolize the idle capacity.
 type pingQueue struct {
-	limit int
-	ready [2][]*pingEndpoint
+	limit, overflowLimit int
+	ready                [2][]*pingEndpoint
+	overflow             []*pingEndpoint
 }
 
 func (q *pingQueue) add(ep *pingEndpoint, phase PingPhase, jobs ...pingJob) {
@@ -330,15 +376,45 @@ func (q *pingQueue) markReady(ep *pingEndpoint, phase PingPhase) {
 		ep.queued[phase] = true
 		q.ready[phase] = append(q.ready[phase], ep)
 	}
+	// A speed take can also push a busy endpoint over its limit while
+	// latency work waits, so check overflow for every state change.
+	if !ep.overflowing && q.canOverflow(ep) {
+		ep.overflowing = true
+		q.overflow = append(q.overflow, ep)
+	}
 }
 
 func (q *pingQueue) canTake(ep *pingEndpoint, phase PingPhase) bool {
-	if len(ep.jobs[phase]) == 0 || ep.active >= q.limit {
+	if len(ep.jobs[phase]) == 0 {
 		return false
 	}
-	// Reserve one slot for queued latency. A latency probe that is already
-	// running can use that slot while downloads occupy the other slots.
-	return phase == PhaseLatency || len(ep.jobs[PhaseLatency]) == 0 || ep.activeSpeed < q.limit-1
+	if phase == PhaseSpeed {
+		// A download overlaps in-flight latency probes (borrowed or
+		// normal), so ep.active can pass the limit, but only concurrent
+		// downloads contend for the endpoint's bandwidth: the speed gate
+		// bounds activeSpeed within the same ceiling the no-overlap code
+		// allowed. Gating on ep.active instead would starve a queued
+		// download until the whole overlapping backlog drains.
+		if ep.activeSpeed >= q.limit {
+			return false
+		}
+	} else if ep.active >= q.limit {
+		return false
+	}
+	// With one endpoint slot, let the scheduler alternate phases. With more
+	// slots, reserve one for latency whenever latency work is queued.
+	return phase == PhaseLatency || q.limit == 1 || len(ep.jobs[PhaseLatency]) == 0 || ep.activeSpeed < q.limit-1
+}
+
+// canOverflow reports whether an endpoint that already reached its limit has
+// latency work for a borrowed global slot, within the capped burst. Endpoints
+// with queued or active downloads never borrow: their freed slots must go to
+// those downloads, which the relaxed speed gate then admits promptly.
+func (q *pingQueue) canOverflow(ep *pingEndpoint) bool {
+	if len(ep.jobs[PhaseSpeed]) > 0 || ep.activeSpeed > 0 {
+		return false
+	}
+	return len(ep.jobs[PhaseLatency]) > 0 && ep.active >= q.limit && ep.active < q.overflowLimit
 }
 
 func (q *pingQueue) take(phase PingPhase) (pingJob, *pingEndpoint) {
@@ -354,6 +430,9 @@ func (q *pingQueue) take(phase PingPhase) (pingJob, *pingEndpoint) {
 		ep.queued[phase] = false
 		// Since the endpoint queued, other jobs may have arrived or started.
 		if !q.canTake(ep, phase) {
+			// A latency backlog that lost its normal slot may have become
+			// eligible to borrow one instead.
+			q.markReady(ep, phase)
 			continue
 		}
 		jobs := ep.jobs[phase]
@@ -365,6 +444,32 @@ func (q *pingQueue) take(phase PingPhase) (pingJob, *pingEndpoint) {
 			ep.activeSpeed++
 		}
 		q.markReady(ep, phase)
+		return j, ep
+	}
+	return pingJob{}, nil
+}
+
+// takeOverflow borrows a slot for one latency job from an endpoint at its
+// limit. The scheduler only calls it when a normal take would leave the
+// global budget idle.
+func (q *pingQueue) takeOverflow() (pingJob, *pingEndpoint) {
+	for len(q.overflow) > 0 {
+		ready := q.overflow
+		ep := ready[0]
+		ready[0] = nil
+		q.overflow = ready[1:]
+		ep.overflowing = false
+		// The endpoint may have dropped below its limit or lost its jobs
+		// since it queued here.
+		if !q.canOverflow(ep) {
+			continue
+		}
+		jobs := ep.jobs[PhaseLatency]
+		j := jobs[0]
+		jobs[0] = pingJob{}
+		ep.jobs[PhaseLatency] = jobs[1:]
+		ep.active++
+		q.markReady(ep, PhaseLatency)
 		return j, ep
 	}
 	return pingJob{}, nil

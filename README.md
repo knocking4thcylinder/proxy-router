@@ -345,7 +345,7 @@ Quitting the tray leaves the service running.
 | `add <link>...` / `add -` | add servers from links (or stdin) |
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
-| `use <server> [-g group]` / `use --fastest [-g group]` | select the server for `proxy`; `--fastest` picks the fastest download and [switches automatically](#auto-switching) |
+| `use <server> [-g group]` / `use --fastest [-g group] [--exhaustive]` | select a server by name or test candidates and enable [auto-switching](#auto-switching) |
 | `ping [server...] [-g group] [-j n] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
@@ -382,12 +382,17 @@ match, so another subscription can't take over the name.
 `ping` prints each result as it finishes, with an animated progress counter
 and elapsed time in a terminal. Latency requests and downloads share 16
 slots by default. Use `-j` to change the total. `ping.download_parallel`
-caps simultaneous downloads at four by default, within the overall limit
-and the `ping.per_endpoint` limit of two active probes per server IP by
-default. The download cap also applies to the panel, `use --fastest`, and
-auto-switch scans. Raise it to shorten scans of independent endpoints on a
-fast link, or lower it to reduce contention when downloads share bandwidth.
-When an IP is busy, other IPs can use the available slots.
+caps simultaneous downloads at four by default, within the overall limit,
+while `ping.per_endpoint` bounds concurrent latency probes and concurrent
+downloads per server IP separately (two of each by default; a download may
+overlap in-flight latency probes, so total per-IP activity can exceed it).
+When every IP with queued work is at its limit, latency probes
+may borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
+downloads never borrow. The download cap also applies to the panel, `use
+--fastest`, and auto-switch scans. Raise it to shorten scans of
+independent endpoints on a fast link, or lower it to reduce contention
+when downloads share bandwidth. When an IP is busy, other IPs can use the
+available slots.
 
 Each reachable server joins the download queue as soon as its latency test
 finishes. A pool joins once all its members have been tested, using the
@@ -409,9 +414,19 @@ means the latency test worked but the separate country lookup did not.
 Pools have a separate `POOL` column showing how many members responded;
 their latency, speed and exit come from the fastest responding member.
 
-`use --fastest` picks the server the download arrived fastest through. It
-picks a pool only if no single server works: a pool's own health check is
-a short request, which can't see a member that connects and then stalls.
+`use --fastest` picks the best measured download speed after about 10
+seconds, or sooner if all tests finish. Results from the last 5 minutes are
+reused without retesting, and the rest are probed previously-fastest first,
+so repeated runs cover more of the list. If nothing is measurable, it gives
+up after about 20 seconds. With downloads disabled, it uses latency. Among
+comparable candidates it prefers a single server to a pool.
+
+Use `proxy-router use --fastest --exhaustive` to wait for every candidate
+instead of giving up. Both modes accept `-g` to limit testing to one group.
+The panel's **Fastest Available** buttons use results from the current scan
+or a recent completed scan. The server list continues filling in after a
+quick pick. To include every server, let the panel scan finish and then
+click **Fastest Available**.
 
 `ping` (and `use --fastest`) always connect to servers directly. In TUN
 mode they go around the TUN, past the kill switch, instead of through the
@@ -456,7 +471,7 @@ connections) doesn't count, and nothing is downloaded while traffic flows
 fine. On trouble, it downloads `ping.download_url` through the server. When
 that fails `auto_switch.failures` (2) times in a row (10 seconds apart),
 because the download stalls or takes longer than `auto_switch.timeout`
-(15s), it tests the other servers like `use --fastest` and switches to the
+(15s), it tests the other eligible servers and switches to the
 fastest working one. With `use --fastest -g group`, it stays within that
 subscription. If the server turns out fine, further trouble is ignored for
 a minute, doubling up to 10 minutes while it keeps turning out fine. A
@@ -803,9 +818,15 @@ when a port is taken and by which process.
   subscription URL.
 - `--system-proxy` is macOS only for now. It restores the previous settings
   on exit.
-- `ping` tests at most `ping.per_endpoint` (default 2) servers per IP at
-  once. Subscriptions often put dozens of "servers" behind one entry
-  point, and testing them all at once makes that entry drop connections.
+- `ping` keeps at most `ping.per_endpoint` (default 2) concurrent latency
+  probes, and separately at most that many concurrent downloads, per IP at
+  once; a download may overlap in-flight latency probes, so total per-IP
+  activity can exceed that. When every IP with queued work is at its limit,
+  latency probes may
+  borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
+  downloads never borrow. Subscriptions often put dozens of "servers"
+  behind one entry point, and testing them all at once makes that entry
+  drop connections.
 - Server names don't always say where traffic exits. `ping --exit` shows
   the real country. Some providers fall back to a Russian exit when their
   foreign link is down, and then sites blocked in Russia fail.
