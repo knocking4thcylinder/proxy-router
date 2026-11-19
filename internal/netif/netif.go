@@ -169,3 +169,26 @@ func Uplink(family, exclude string) (iface, gateway string, err error) {
 	}
 	return r.Iface, r.Addr, nil
 }
+
+// ScopedDefaults lists the gateways of the default routes scoped to iface
+// (macOS "I" flag: they apply only to sockets bound to it). Bound sockets
+// need one with the uplink's current gateway; anything else on the primary
+// interface is a leftover.
+func ScopedDefaults(family, iface string) ([]string, error) {
+	routes, err := familyRoutes(family)
+	if err != nil {
+		return nil, err
+	}
+	return scopedDefaults(routes, iface), nil
+}
+
+// scopedDefaults picks those gateways from already-parsed netstat output.
+func scopedDefaults(routes []Route, iface string) []string {
+	var gateways []string
+	for _, r := range routes {
+		if r.Scoped && r.Iface == iface && r.Addr != "" {
+			gateways = append(gateways, r.Addr)
+		}
+	}
+	return gateways
+}

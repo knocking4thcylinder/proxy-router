@@ -76,9 +76,12 @@ func TestPfRules(t *testing.T) {
 	if !strings.HasPrefix(rs, "pass quick on lo0 all no state\n") {
 		t.Fatalf("loopback must bypass state tracking before filtering:\n%s", rs)
 	}
-	before(t, rs, "100.64.0.0/10", "port { 53, 853 }")
+	before(t, rs, "100.64.0.0/10", "user root")
+	// Root passes before the DNS block (like the mark on Linux): a server
+	// or resolver on port 53/853 must stay reachable for the tunnel
+	// itself. Everyone else's plain DNS is blocked after it.
+	before(t, rs, "user root", "port { 53, 853 }")
 	before(t, rs, "port { 53, 853 }", "192.168.0.0/16")
-	before(t, rs, "port { 53, 853 }", "user root")
 	if !strings.HasSuffix(rs, "block return out quick all\n") {
 		t.Fatalf("doesn't end blocking:\n%s", rs)
 	}

@@ -69,6 +69,22 @@ func TestPickIPv6SplitRoutes(t *testing.T) {
 	}
 }
 
+func TestScopedDefaults(t *testing.T) {
+	out := `default            192.168.31.1       UGScIg                en0
+default            192.168.1.1        UGScg                 en0
+default            fe80::%utun1       UGcIg               utun1
+0/1                utun99             USc                utun99
+`
+	if gws := scopedDefaults(parseNetstat(out), "en0"); len(gws) != 1 || gws[0] != "192.168.31.1" {
+		t.Fatalf("got %v, want [192.168.31.1]", gws)
+	}
+	// It's a lookup, not an ownership claim: system utuns' scoped routes
+	// show up too; the tun package decides which ones to touch.
+	if gws := scopedDefaults(parseNetstat(out), "utun1"); len(gws) != 1 || gws[0] != "fe80::%utun1" {
+		t.Fatalf("utun1's scoped route: got %v, want [fe80::%%utun1]", gws)
+	}
+}
+
 func TestToolUsesSystemDirs(t *testing.T) {
 	dir := t.TempDir()
 	saved := systemDirs
