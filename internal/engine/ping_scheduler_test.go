@@ -23,20 +23,28 @@ func TestPingSkipsBusyEndpoint(t *testing.T) {
 	entries := pingTestEntries(first, second, first, second, other)
 	updates, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 2, PerEndpoint: 1}, false)
 
-	// Keep the first IP occupied until the entry at the tail has answered.
+	// Hold both initial probes until both have arrived, so no global slot
+	// frees early: their order at the proxy is not deterministic, and a
+	// slot freed before the busy IP's probe is held could be borrowed
+	// ahead of time.
+	var releaseOther func()
 	for range 2 {
 		req := awaitPingTest(t, proxies.requests, "a probe on each IP")
 		if req.server == "other" {
-			req.release()
+			releaseOther = req.release
 		}
 	}
+	if releaseOther == nil {
+		t.Fatal("missing the independent IP's probe")
+	}
+	releaseOther()
 	u := awaitPingTest(t, updates, "progress with the first IP still busy")
 	if u.Result.Entry.Index != entries[4].Index || u.Result.Err != nil || !u.EntryDone || u.Phase != PhaseLatency {
 		t.Fatalf("first progress = %+v, want the entry behind the same-IP probes", u)
 	}
 	// With the independent IP's work done, the busy IP has the only backlog
-	// and borrows the idle slot. The independent entry still answered first,
-	// so the busy endpoint did not block it.
+	// and borrows the idle slot. Its first probe is still held, so the
+	// borrow is the endpoint's next queued job.
 	borrowed := awaitPingTest(t, proxies.requests, "a borrowed probe on the busy IP")
 	if borrowed.server != "second" || borrowed.path != "/ping" {
 		t.Fatalf("borrowed request = %s %s, want second /ping", borrowed.server, borrowed.path)
@@ -235,23 +243,28 @@ func TestPingDownloadsWhileEndpointLatencyPending(t *testing.T) {
 	a := proxies.server("127.0.0.1", "a")
 	b := proxies.server("127.0.0.1", "b")
 	entries := pingTestEntries(a, b, b)
-	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 2, PerEndpoint: 2}, true)
+	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 2, PerEndpoint: 1}, true)
 
-	// Fill both endpoint slots with latency, then give a's slot to its
-	// download while b's latency probe is still pending.
-	var releaseA func()
-	for range 2 {
+	// The endpoint's single normal slot runs a's latency probe; the idle
+	// second global slot is borrowed by b's queued latency work.
+	var releaseA, releaseB func()
+	for releaseA == nil || releaseB == nil {
 		req := awaitPingTest(t, proxies.requests, "latency probes on the shared endpoint")
 		if req.path != "/ping" {
 			t.Fatalf("initial request = %s %s, want /ping", req.server, req.path)
 		}
-		if req.server == "a" {
+		switch req.server {
+		case "a":
 			releaseA = req.release
+		case "b":
+			releaseB = req.release
+		default:
+			t.Fatalf("unexpected probe %s on the shared endpoint", req.server)
 		}
 	}
-	if releaseA == nil {
-		t.Fatal("missing the first server's latency probe")
-	}
+	// a's download must start as soon as a's latency finishes, while the
+	// endpoint's borrowed b probe is still in flight: borrowed latency may
+	// not starve a ready download even on a single-slot endpoint.
 	releaseA()
 	expectPingTestRequest(t, proxies, "a", "/down")
 	close(proxies.releaseAll)
@@ -325,24 +338,30 @@ func TestPingKeepsEndpointLimitWhenAnotherEndpointHasWork(t *testing.T) {
 	a2 := proxies.server("127.0.0.1", "a2")
 	a3 := proxies.server("127.0.0.1", "a3")
 	b1 := proxies.server("::1", "b1")
-	entries := pingTestEntries(a1, a2, a3, b1)
+	b2 := proxies.server("::1", "b2")
+	entries := pingTestEntries(a1, a2, a3, b1, b2)
 	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 3, PerEndpoint: 2}, false)
 
-	// Fill the first endpoint's limit, then give the third global slot to the
-	// other IP. The queued a3 job waits even though a slot exists for it.
-	initial := make(map[string]bool)
+	// The first endpoint fills its limit and the global budget; a3 and b2
+	// are both queued, one per endpoint.
+	initial := make(map[string]pingTestRequest)
 	for range 3 {
 		req := awaitPingTest(t, proxies.requests, "latency probes on both IPs")
 		if req.path != "/ping" {
 			t.Fatalf("initial request = %s %s, want /ping", req.server, req.path)
 		}
-		initial[req.server] = true
+		initial[req.server] = req
 	}
 	for _, name := range []string{"a1", "a2", "b1"} {
-		if !initial[name] {
+		if _, ok := initial[name]; !ok {
 			t.Fatalf("missing initial latency request for %s (got %v)", name, initial)
 		}
 	}
+	// Free one global slot. Both b2 (a normal admission for the other
+	// endpoint) and a3 (a borrow for the limited endpoint) want it; the
+	// normal rotation must win.
+	initial["b1"].release()
+	expectPingTestRequest(t, proxies, "b2", "/ping")
 	expectNoPingTestRequest(t, proxies, "a3 to stay queued behind the endpoint limit")
 	close(proxies.releaseAll)
 	checkPingTestResults(t, entries, awaitPingTest(t, finished, "endpoint-limited results"), false)
@@ -449,6 +468,115 @@ func TestPingNeverBorrowsEndpointSlotsForDownloads(t *testing.T) {
 	checkPingTestResults(t, entries, awaitPingTest(t, finished, "serial downloads"), true)
 	if peak := proxies.peaks(); peak.downloads != 1 {
 		t.Errorf("peak simultaneous downloads = %d, want 1", peak.downloads)
+	}
+}
+
+func TestPingRotatesBorrowedSlotsAcrossEndpoints(t *testing.T) {
+	proxies := newPingTestProxies(t)
+	var servers []*share.Server
+	for i := range 4 {
+		servers = append(servers, proxies.server("127.0.0.1", fmt.Sprintf("a%d", i+1)))
+	}
+	for i := range 4 {
+		servers = append(servers, proxies.server("::1", fmt.Sprintf("b%d", i+1)))
+	}
+	entries := pingTestEntries(servers...)
+	_, finished := startTestPing(t, t.Context(), entries, PingOptions{Parallel: 4, PerEndpoint: 1}, false)
+
+	// Both IPs sit at their limit with work queued, so the two spare global
+	// slots are borrowed. The overflow rotation must share them: one
+	// borrowed probe per backlog, not two for whichever queued first.
+	held := make(map[string]pingTestRequest)
+	for range 4 {
+		req := awaitPingTest(t, proxies.requests, "initial and borrowed probes on both IPs")
+		if req.path != "/ping" {
+			t.Fatalf("request = %s %s, want /ping", req.server, req.path)
+		}
+		held[req.server] = req
+	}
+	// Each IP ran its normal probe plus exactly one borrowed probe; a
+	// rotation that favored the first backlog would instead have borrowed
+	// twice from the same IP.
+	for _, name := range []string{"a1", "b1", "a2", "b2"} {
+		if _, ok := held[name]; !ok {
+			t.Fatalf("missing probe %s, want each IP's normal probe plus one borrow (got %v)", name, held)
+		}
+	}
+	// Free one normal slot on each IP. Each borrowed slot must go to the
+	// other backlog's rotation, so both keep making progress.
+	held["a1"].release()
+	held["b1"].release()
+	next := make(map[string]bool)
+	for range 2 {
+		req := awaitPingTest(t, proxies.requests, "the next borrowed probe on each IP")
+		if req.path != "/ping" || req.server != "a3" && req.server != "b3" {
+			t.Fatalf("borrowed request = %s %s, want a3 or b3 /ping", req.server, req.path)
+		}
+		next[req.server] = true
+	}
+	if len(next) != 2 {
+		t.Fatalf("borrowed probes after the releases = %v, want one per IP", next)
+	}
+	close(proxies.releaseAll)
+	checkPingTestResults(t, entries, awaitPingTest(t, finished, "rotated borrow results"), false)
+	if peak := proxies.peaks(); peak.total != 4 || peak.perIP != 2 {
+		t.Errorf("peak requests = %d globally, %d per IP, want 4 globally and 2 per IP", peak.total, peak.perIP)
+	}
+}
+
+func TestPingPerEndpointDisabledUsesWholeBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		perEndpoint int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proxies := newPingTestProxies(t)
+			var servers []*share.Server
+			for i := range 4 {
+				servers = append(servers, proxies.server("127.0.0.1", fmt.Sprintf("s%d", i+1)))
+			}
+			entries := pingTestEntries(servers...)
+			updates, finished := startTestPing(t, t.Context(), entries,
+				PingOptions{Parallel: 4, PerEndpoint: tc.perEndpoint}, true)
+
+			// With no endpoint limit, one IP may use the whole global
+			// budget: endpointLimit equals parallel, so a backlog has
+			// nothing to borrow and never throttles below it. Hold all
+			// four probes so no download can start mid-collection.
+			var pings []pingTestRequest
+			for range 4 {
+				req := awaitPingTest(t, proxies.requests, "all latency probes on one IP")
+				if req.path != "/ping" {
+					t.Fatalf("request = %s %s, want /ping", req.server, req.path)
+				}
+				pings = append(pings, req)
+			}
+			for _, req := range pings {
+				req.release()
+			}
+			for range 4 {
+				if u := awaitPingTest(t, updates, "latency progress"); u.Phase != PhaseLatency || u.Result.Err != nil {
+					t.Fatalf("unexpected progress = %+v", u)
+				}
+			}
+			// The speed gate keeps concurrent downloads within the same
+			// endpointLimit, so all four downloads of this one IP run at
+			// once; a smaller default limit would serialize them.
+			for range 4 {
+				req := awaitPingTest(t, proxies.requests, "all downloads on one IP")
+				if req.path != "/down" {
+					t.Fatalf("request = %s %s, want /down", req.server, req.path)
+				}
+			}
+			close(proxies.releaseAll)
+			checkPingTestResults(t, entries, awaitPingTest(t, finished, "no-limit results"), true)
+			if peak := proxies.peaks(); peak.perIP != 4 || peak.downloads != 4 {
+				t.Errorf("peak = %d per IP, %d downloads, want 4 and 4", peak.perIP, peak.downloads)
+			}
+		})
 	}
 }
 

@@ -383,11 +383,14 @@ match, so another subscription can't take over the name.
 and elapsed time in a terminal. Latency requests and downloads share 16
 slots by default. Use `-j` to change the total. `ping.download_parallel`
 caps simultaneous downloads at four by default, within the overall limit
-and the `ping.per_endpoint` limit of two active probes per server IP by
-default. The download cap also applies to the panel, `use --fastest`, and
-auto-switch scans. Raise it to shorten scans of independent endpoints on a
-fast link, or lower it to reduce contention when downloads share bandwidth.
-When an IP is busy, other IPs can use the available slots.
+and the `ping.per_endpoint` limit (two active probes per server IP by
+default). When every IP with queued work is at its limit, latency probes
+may borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
+downloads never borrow. The download cap also applies to the panel, `use
+--fastest`, and auto-switch scans. Raise it to shorten scans of
+independent endpoints on a fast link, or lower it to reduce contention
+when downloads share bandwidth. When an IP is busy, other IPs can use the
+available slots.
 
 Each reachable server joins the download queue as soon as its latency test
 finishes. A pool joins once all its members have been tested, using the
@@ -812,9 +815,12 @@ when a port is taken and by which process.
   subscription URL.
 - `--system-proxy` is macOS only for now. It restores the previous settings
   on exit.
-- `ping` tests at most `ping.per_endpoint` (default 2) servers per IP at
-  once. Subscriptions often put dozens of "servers" behind one entry
-  point, and testing them all at once makes that entry drop connections.
+- `ping` keeps at most `ping.per_endpoint` (default 2) probes per IP at
+  once. When every IP with queued work is at its limit, latency probes may
+  borrow idle global slots, up to `min(parallel, 4x per_endpoint)`;
+  downloads never borrow. Subscriptions often put dozens of "servers"
+  behind one entry point, and testing them all at once makes that entry
+  drop connections.
 - Server names don't always say where traffic exits. `ping --exit` shows
   the real country. Some providers fall back to a Russian exit when their
   foreign link is down, and then sites blocked in Russia fail.

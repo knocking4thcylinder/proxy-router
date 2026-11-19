@@ -21,10 +21,13 @@ func (discardLog) Handle(xlog.Message) {}
 
 // Ping measures a full HTTP request through each server, including the proxy
 // handshake. Downloads can start as soon as an entry finishes its latency
-// probes, using the fastest responding member for a pool. Both phases share the
-// overall and per-endpoint limits. On cancellation, eligible downloads that
-// have not started are reported with SpeedErr. Ping silences Xray's global
-// logger, so don't use it next to a running proxy.
+// probes, using the fastest responding member for a pool. Both phases share
+// the overall and per-endpoint limits, except that latency probes may borrow
+// idle global slots (up to min(parallel, 4x per-endpoint)) when every
+// endpoint with queued work is at its per-endpoint limit. Downloads never
+// borrow. On cancellation, eligible downloads that have not started are
+// reported with SpeedErr. Ping silences Xray's global logger, so don't use it
+// next to a running proxy.
 func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResult {
 	// Config warnings (e.g. deprecated ciphers) would repeat for every server.
 	xlog.RegisterHandler(discardLog{})
@@ -40,9 +43,14 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	// Endpoint limits keep probes polite and within provider rate limits, but
 	// a long backlog behind one IP would otherwise leave the global budget
 	// idle. Latency probes may borrow up to 4x the limit in that case, so
-	// borrowing stays bounded and only uses slots nobody else wants. Speed
-	// tests never borrow: downloads through one IP share bandwidth and would
-	// corrupt each other's measurement.
+	// borrowing stays bounded and only uses slots nobody else wants. An
+	// endpoint with queued or active downloads stops borrowing, so freed
+	// slots go to those downloads instead of more borrowed probes. Speed
+	// tests never borrow either: downloads through one IP share bandwidth
+	// and would corrupt each other's measurement. A download may overlap
+	// in-flight borrowed probes, so the per-endpoint speed gate bounds
+	// concurrent downloads, not total activity: ep.active can pass the
+	// limit by the size of that overlap until the borrowed probes drain.
 	overflowLimit := min(parallel, 4*min(endpointLimit, parallel))
 	pending := pingQueue{limit: endpointLimit, overflowLimit: overflowLimit}
 	endpoints := make(map[string]*pingEndpoint)
@@ -166,7 +174,9 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 	}
 	// Only called after both normal queues came up empty, so the slot would
 	// otherwise sit idle. Latency only: see overflowLimit for why downloads
-	// must not borrow.
+	// must not borrow. The phase-alternation swap from startProbe is
+	// intentionally skipped: a ready admissible speed job was already offered
+	// the slot and did not take it, so a borrow cannot jump the speed queue.
 	startOverflowProbe := func() bool {
 		job, ep := pending.takeOverflow()
 		if ep == nil {
@@ -371,7 +381,19 @@ func (q *pingQueue) markReady(ep *pingEndpoint, phase PingPhase) {
 }
 
 func (q *pingQueue) canTake(ep *pingEndpoint, phase PingPhase) bool {
-	if len(ep.jobs[phase]) == 0 || ep.active >= q.limit {
+	if len(ep.jobs[phase]) == 0 {
+		return false
+	}
+	if phase == PhaseSpeed {
+		// Borrowed latency can push ep.active past the limit, but only
+		// concurrent downloads contend for the endpoint's bandwidth, so the
+		// speed gate bounds activeSpeed within the same ceiling the
+		// no-borrow code allowed. Gating on ep.active instead would starve
+		// a queued download until the whole borrowed backlog drains.
+		if ep.activeSpeed >= q.limit {
+			return false
+		}
+	} else if ep.active >= q.limit {
 		return false
 	}
 	// With one endpoint slot, let the scheduler alternate phases. With more
@@ -380,8 +402,13 @@ func (q *pingQueue) canTake(ep *pingEndpoint, phase PingPhase) bool {
 }
 
 // canOverflow reports whether an endpoint that already reached its limit has
-// latency work for a borrowed global slot, within the capped burst.
+// latency work for a borrowed global slot, within the capped burst. Endpoints
+// with queued or active downloads never borrow: their freed slots must go to
+// those downloads, which the relaxed speed gate then admits promptly.
 func (q *pingQueue) canOverflow(ep *pingEndpoint) bool {
+	if len(ep.jobs[PhaseSpeed]) > 0 || ep.activeSpeed > 0 {
+		return false
+	}
 	return len(ep.jobs[PhaseLatency]) > 0 && ep.active >= q.limit && ep.active < q.overflowLimit
 }
 
