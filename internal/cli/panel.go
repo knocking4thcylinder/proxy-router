@@ -216,9 +216,9 @@ func (s *panelScan) pick(entries []config.Entry) (best engine.PingResult, ok, co
 			measured = append(measured, r)
 		}
 	}
-	if !covered && !s.finished.IsZero() {
-		return engine.PingResult{}, false, false
-	}
+	// A finished scan can miss entries added or replaced after it started,
+	// but the samples it has are still valid. Pick the best one and let
+	// covered tell the caller whether a fresh scan is needed.
 	if speedTest {
 		if best, ok = pickFastest(measured); ok || s.finished.IsZero() {
 			return best, ok, covered
