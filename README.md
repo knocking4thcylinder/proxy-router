@@ -346,7 +346,7 @@ Quitting the tray leaves the service running.
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
 | `use <server> [-g group]` / `use --fastest [-g group] [--exhaustive]` | select a server by name or test candidates and enable [auto-switching](#auto-switching) |
-| `ping [server...] [-g group] [-j n] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
+| `ping [server...] [-g group] [-j n] [--exit] [-q] [--speed]` | live latency tests through each proxy; `--speed` also measures download speed; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
 | `restart` | restart it (picks up a rebuilt binary) |
@@ -394,20 +394,25 @@ independent endpoints on a fast link, or lower it to reduce contention
 when downloads share bandwidth. When an IP is busy, other IPs can use the
 available slots.
 
-Each reachable server joins the download queue as soon as its latency test
-finishes. A pool joins once all its members have been tested, using the
-member with the lowest successful latency. The speed counter shows completed
-tests out of all entries that qualify so far. Each test downloads
-`ping.download_url` (256 KB from speed.cloudflare.com by default).
+With `ping --speed`, each reachable server joins the download queue as
+soon as its latency test finishes. A pool joins once all its members have
+been tested, using the member with the lowest successful latency. The
+speed counter shows completed tests out of all entries that qualify so
+far. Each test downloads `ping.download_url` (256 KB from
+speed.cloudflare.com by default). Without `--speed` there is no
+download: one request through each proxy, ranked by latency (`--exit`
+adds a second request to ipinfo.io through each server, for the country
+its traffic really leaves from).
 
-A server whose download stalls fails with `download stalled after 16 KB
-(connection cut, likely blocked)`: censors often let a connection to a
-server start and then cut it after ~16 KB, so a short request (and an
-ordinary ping) says the server works while nothing loads through it. The
-final table is sorted by download speed, fastest first; `*` marks the
-selected server. The speed is how fast that short download arrived,
-connection setup included: it ranks servers by how quickly pages load, and
-is lower than a long download through the same server would reach. Live progress goes to stderr, so redirecting
+With `--speed`, a server whose download stalls fails with `download
+stalled after 16 KB (connection cut, likely blocked)`: censors often let
+a connection to a server start and then cut it after ~16 KB, so a short
+request (and an ordinary ping) says the server works while nothing loads
+through it. The final table is then sorted by download speed, fastest
+first; `*` marks the selected server. The speed is how fast that short
+download arrived, connection setup included: it ranks servers by how
+quickly pages load, and is lower than a long download through the same
+server would reach. Live progress goes to stderr, so redirecting
 stdout saves just the final table. Use `--quiet` (`-q`) to skip progress.
 With `--exit`, countries appear as `Finland (FI)`; `unknown (lookup failed)`
 means the latency test worked but the separate country lookup did not.
