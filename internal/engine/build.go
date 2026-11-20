@@ -142,12 +142,18 @@ func Build(p Plan) (map[string]any, []string, error) {
 	freedom := func(tag string) map[string]any {
 		ob := map[string]any{"tag": tag, "protocol": "freedom"}
 		if ds := cfg.PreferredIPStrategy(); ds != "" {
-			ob["settings"] = map[string]any{"domainStrategy": ds}
+			// sockopt, not settings: the newer Xray moved it there.
+			ob["streamSettings"] = map[string]any{"sockopt": map[string]any{"domainStrategy": ds}}
 		}
 		return ob
 	}
 	outbounds = append(outbounds, BindInterface([]map[string]any{freedom("direct")}, p.Interface)...)
-	outbounds = append(outbounds, map[string]any{"tag": "block", "protocol": "blackhole"})
+	// Xray's router drops blackhole for a blocking freedom firewall rule.
+	outbounds = append(outbounds, map[string]any{
+		"tag":      "block",
+		"protocol": "freedom",
+		"settings": map[string]any{"firewall": []any{map[string]any{"action": "block"}}},
+	})
 	// "system" follows the OS routing table: it's how traffic for Tailscale
 	// and other VPNs' own routes reaches them.
 	sysRules, sysNotes := systemRouteRules(cfg.SystemRoute, p.TUNListen != "")
@@ -536,20 +542,27 @@ func xrayRules(r config.Rule, t target) []map[string]any {
 	if len(r.Inbound) > 0 {
 		common["inboundTag"] = []string(r.Inbound)
 	}
-	with := func(k string, v []string) map[string]any {
+	with := func(k string, v []string, suffix string) map[string]any {
 		m := map[string]any{k: v}
 		for ck, cv := range common {
 			m[ck] = cv
+		}
+		// The newer router refuses duplicate tags, and a split makes two
+		// rules: tell them apart.
+		if suffix != "" {
+			if tag, ok := common["ruleTag"].(string); ok && tag != "" {
+				m["ruleTag"] = tag + suffix
+			}
 		}
 		return m
 	}
 	switch {
 	case len(r.Domain) > 0 && len(r.IP) > 0:
-		return []map[string]any{with("domain", r.Domain), with("ip", r.IP)}
+		return []map[string]any{with("domain", r.Domain, " (domains)"), with("ip", r.IP, " (ip)")}
 	case len(r.Domain) > 0:
-		return []map[string]any{with("domain", r.Domain)}
+		return []map[string]any{with("domain", r.Domain, "")}
 	case len(r.IP) > 0:
-		return []map[string]any{with("ip", r.IP)}
+		return []map[string]any{with("ip", r.IP, "")}
 	}
 	return []map[string]any{common}
 }
