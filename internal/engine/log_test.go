@@ -39,15 +39,16 @@ func TestDemoteTunNoise(t *testing.T) {
 		h.Handle(&xlog.GeneralMessage{Severity: xlog.Severity_Error, Content: c})
 	}
 	h.Handle(&xlog.AccessMessage{})
-	for i, m := range got {
-		switch m := m.(type) {
-		case *xlog.GeneralMessage:
-			if m.Severity != xlog.Severity_Error {
-				t.Errorf("message %d demoted: %v", i, m)
-			}
-		case *xlog.AccessMessage:
-		default:
-			t.Errorf("message %d lost: %v", i, m)
-		}
+	if len(got) != 3 {
+		t.Fatalf("forwarded %d messages, want all three: %v", len(got), got)
+	}
+	if m, ok := got[0].(*xlog.GeneralMessage); !ok || m.Content != "failed to dial tcp 1.2.3.4:443" {
+		t.Errorf("first message not the dial error: %v", got[0])
+	}
+	if m, ok := got[1].(*xlog.GeneralMessage); !ok || m.Content != 42 {
+		t.Errorf("second message not the non-string error: %v", got[1])
+	}
+	if _, ok := got[2].(*xlog.AccessMessage); !ok {
+		t.Errorf("third message not the access record: %v", got[2])
 	}
 }

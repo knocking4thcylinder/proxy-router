@@ -149,8 +149,16 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 			wait = ep.spaced(endpointGap, time.Now())
 		}
 		go func() {
-			if wait > 0 && ctx.Err() == nil {
-				time.Sleep(wait)
+			if wait > 0 {
+				// A pacing backlog can outlast the whole scan; let a
+				// cancellation cut through it, and still report the
+				// completion so the scheduler releases the slots.
+				timer := time.NewTimer(wait)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+				}
 			}
 			p := pingCompletion{job: job, endpoint: ep, phase: phase, err: ctx.Err()}
 			if p.err == nil {

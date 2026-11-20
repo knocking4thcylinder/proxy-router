@@ -348,3 +348,57 @@ func TestApplyStaysWhenNothingVerified(t *testing.T) {
 		t.Error("a faded answer's block not remembered")
 	}
 }
+
+// A confirmed failure marks the server and its range before the scan runs,
+// so the scan's answers from that range are demoted behind everything else
+// from the start - not only on the next cycle after apply.
+func TestCheckMarksTheFailedRangeBeforeScanning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := config.Entry{Group: "sub", Server: &share.Server{Name: "old", Address: "188.255.236.18"}}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: []*share.Server{old.Server}}}
+	st.SelectAuto(old, "")
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	sw.failures = 1 // one failure already counted; the next one confirms
+	sw.check(context.Background(), runOptions{}, checkResult{target: old, err: errors.New("timeout")}, 0)
+
+	if _, ok := sw.failed[selectionOf(old)]; !ok {
+		t.Error("the confirmed failure's server wasn't remembered before the scan")
+	}
+	if _, ok := sw.blocked["188.255.236.0/24"]; !ok {
+		t.Error("the confirmed failure's range wasn't remembered before the scan")
+	}
+	select {
+	case <-sw.scanned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the scan never reported")
+	}
+}
+
+// A failure that expired while the scan ran doesn't demote anymore.
+func TestPickCandidatesExpiryIsJudgedAtOrdering(t *testing.T) {
+	entry := func(name, addr string, latency time.Duration) engine.PingResult {
+		return engine.PingResult{
+			Entry:   config.Entry{Server: &share.Server{Name: name, Address: addr}},
+			Latency: latency,
+		}
+	}
+	results := []engine.PingResult{
+		entry("fast-blocked", "188.255.236.19", 10*time.Millisecond),
+		entry("slow-quiet", "213.239.169.237", 400*time.Millisecond),
+	}
+	expired := map[string]time.Time{"188.255.236.0/24": time.Now().Add(-(autoForget + time.Minute))}
+	got := pickCandidates(results, expired)
+	if len(got) != 2 || got[0].Entry.Server.Name != "fast-blocked" {
+		t.Fatalf("picked %v, want the expired range treated as fresh (fast-blocked first)", got)
+	}
+}

@@ -182,13 +182,16 @@ type scanResult struct {
 // pickCandidates lists the servers that answered, best first, with ones in
 // address blocks that stopped working recently moved behind the rest: the
 // next server in such a block is the next to fail, not minutes after it.
+// The snapshot was taken before the scan ran for minutes, so expiry is
+// judged when ordering.
 func pickCandidates(results []engine.PingResult, blocked map[string]time.Time) []engine.PingResult {
+	now := time.Now()
 	var fresh, stale []engine.PingResult
 	for _, r := range results {
 		if r.Err != nil {
 			continue
 		}
-		if _, bad := blocked[rangeOf(r.Entry)]; bad {
+		if at, bad := blocked[rangeOf(r.Entry)]; bad && now.Sub(at) < autoForget {
 			stale = append(stale, r)
 		} else {
 			fresh = append(fresh, r)
@@ -402,6 +405,12 @@ func (sw *switcher) check(ctx context.Context, o runOptions, r checkResult, gen 
 		return
 	}
 	sw.scanning = true
+	// The server that just failed two checks is confirmed: remember it
+	// and its range now, not in apply. Otherwise the scan's top answers
+	// can be its co-blocked neighbours - they answer, then die at the
+	// re-check - and the verification burns its attempts on them while a
+	// healthy range waits behind.
+	sw.markFailed(r.target)
 	// Nothing to look after while the scan's test instances take over
 	// Xray's process-wide state.
 	sw.w.Stop()
