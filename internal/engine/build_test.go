@@ -256,3 +256,46 @@ func TestServerTagsEscaped(t *testing.T) {
 		}
 	}
 }
+
+// Blocked connections close at once, not after the firewall's default
+// 30-90s wait, and the block outbound is the freedom firewall form the
+// newer Xray expects.
+func TestBlockOutboundFailsFast(t *testing.T) {
+	cfg, _ := config.Load(t.TempDir())
+	rules := writeRules(t, "default: proxy\nrules: []\n")
+	xc, _, err := Build(Plan{Config: cfg, Rules: rules, State: testState(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ob := range xc["outbounds"].([]map[string]any) {
+		if ob["tag"] != "block" {
+			continue
+		}
+		if ob["protocol"] != "freedom" {
+			t.Fatalf("block outbound protocol = %v, want freedom (the firewall form)", ob["protocol"])
+		}
+		ss := ob["settings"].(map[string]any)
+		fw := ss["firewall"].([]any)[0].(map[string]any)
+		if fw["action"] != "block" || fw["delay"] != "0" {
+			t.Fatalf("block firewall rule = %v, want action block with delay 0", fw)
+		}
+		return
+	}
+	t.Fatal("no block outbound")
+}
+
+// Whatever names the user picks, the generated tags are unique: the newer
+// Xray router rejects duplicates, and suffixes alone can't promise that.
+func TestDedupeRuleTags(t *testing.T) {
+	tag := func(name string) map[string]any { return map[string]any{"ruleTag": name} }
+	rules := dedupeRuleTags([]map[string]any{
+		tag("office"), tag("office"), tag(""), tag("office (ip)"),
+		tag("office (ip)"), tag("office"), tag("x #2"), tag("x"),
+	})
+	want := []string{"office", "office #2", "", "office (ip)", "office (ip) #2", "office #3", "x #2", "x"}
+	for i, r := range rules {
+		if got, _ := r["ruleTag"].(string); got != want[i] {
+			t.Errorf("rule %d tag = %q, want %q", i, got, want[i])
+		}
+	}
+}

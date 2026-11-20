@@ -149,10 +149,12 @@ func Build(p Plan) (map[string]any, []string, error) {
 	}
 	outbounds = append(outbounds, BindInterface([]map[string]any{freedom("direct")}, p.Interface)...)
 	// Xray's router drops blackhole for a blocking freedom firewall rule.
+	// delay 0 keeps the old behavior: the connection closes at once, not
+	// after the firewall's 30-90s default wait.
 	outbounds = append(outbounds, map[string]any{
 		"tag":      "block",
 		"protocol": "freedom",
-		"settings": map[string]any{"firewall": []any{map[string]any{"action": "block"}}},
+		"settings": map[string]any{"firewall": []any{map[string]any{"action": "block", "delay": "0"}}},
 	})
 	// "system" follows the OS routing table: it's how traffic for Tailscale
 	// and other VPNs' own routes reaches them.
@@ -287,6 +289,7 @@ func Build(p Plan) (map[string]any, []string, error) {
 	}
 	targets[rules.Default].set(catchAll)
 	routingRules = append(routingRules, catchAll)
+	routingRules = dedupeRuleTags(routingRules)
 	outbounds = defaultFirst(outbounds, targets[rules.Default], balancers)
 
 	sniffing := map[string]any{
@@ -513,6 +516,27 @@ func BindInterface(obs []map[string]any, iface string) []map[string]any {
 		}
 	}
 	return obs
+}
+
+// dedupeRuleTags renames repeated non-empty rule tags: the newer Xray
+// router rejects duplicates, and any name can collide - two user rules
+// sharing one, a rule called like another's split half, or like a
+// built-in. The first keeps its name; later ones count up.
+func dedupeRuleTags(rules []map[string]any) []map[string]any {
+	seen := map[string]bool{}
+	for _, r := range rules {
+		name, _ := r["ruleTag"].(string)
+		if name == "" {
+			continue
+		}
+		tag := name
+		for n := 2; seen[tag]; n++ {
+			tag = fmt.Sprintf("%s #%d", name, n)
+		}
+		r["ruleTag"] = tag
+		seen[tag] = true
+	}
+	return rules
 }
 
 // xrayRules converts one rule. Domain and IP lists become separate Xray
