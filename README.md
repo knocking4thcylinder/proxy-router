@@ -399,8 +399,10 @@ soon as its latency test finishes. A pool joins once all its members have
 been tested, using the member with the lowest successful latency. The
 speed counter shows completed tests out of all entries that qualify so
 far. Each test downloads `ping.download_url` (256 KB from
-speed.cloudflare.com by default). Without `--speed` there is no download:
-one request through each proxy, ranked by latency.
+speed.cloudflare.com by default). Without `--speed` there is no
+download: one request through each proxy, ranked by latency (`--exit`
+adds a second request to ipinfo.io through each server, for the country
+its traffic really leaves from).
 
 With `--speed`, a server whose download stalls fails with `download
 stalled after 16 KB (connection cut, likely blocked)`: censors often let
