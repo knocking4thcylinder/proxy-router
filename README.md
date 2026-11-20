@@ -346,7 +346,7 @@ Quitting the tray leaves the service running.
 | `remove <server>` | remove a manually added server |
 | `list [-g group] [-v]` | list servers in subscription sections; `-v` includes warnings |
 | `use <server> [-g group]` / `use --fastest [-g group] [--exhaustive]` | select a server by name or test candidates and enable [auto-switching](#auto-switching) |
-| `ping [server...] [-g group] [-j n] [--exit] [-q]` | live latency and download tests through each proxy; `--exit` checks exit countries; `-q` prints only the final results |
+| `ping [server...] [-g group] [-j n] [--exit] [-q] [--speed]` | live latency tests through each proxy; `--speed` also measures download speed; `--exit` checks exit countries; `-q` prints only the final results |
 | `start [--tun \| --no-tun] [--force] [-v]` | start the background service and enable it at login (boot for TUN) |
 | `stop` | stop the service; it won't start automatically until `start` |
 | `restart` | restart it (picks up a rebuilt binary) |

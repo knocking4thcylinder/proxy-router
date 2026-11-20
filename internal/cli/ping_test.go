@@ -315,11 +315,11 @@ func connectProxy(t *testing.T, serve http.HandlerFunc) string {
 	return strings.TrimPrefix(srv.URL, "http://")
 }
 
-// --no-speed runs the latency request only. A server on a closed loopback
-// port answers the request phase instantly by failing, and the header line
-// says which phases the run had: without the flag both, with it no
-// download at all.
-func TestPingNoSpeedFlag(t *testing.T) {
+// The speed test is opt-in: the default runs the latency request only,
+// --speed adds the download. A server on a closed loopback port answers
+// the request phase instantly by failing, and the header line says which
+// phases the run had.
+func TestPingSpeedFlag(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PROXY_ROUTER_HOME", dir)
 	st, err := config.LoadState(dir)
@@ -348,10 +348,10 @@ func TestPingNoSpeedFlag(t *testing.T) {
 		return out.String() + errOut.String()
 	}
 
-	if got := run(); !strings.Contains(got, "HTTP request and download through each proxy") {
-		t.Errorf("default ping lost its download phase:\n%s", got)
+	if got := run(); !strings.Contains(got, "HTTP request through each proxy") || strings.Contains(got, "download") {
+		t.Errorf("default ping advertised a download phase:\n%s", got)
 	}
-	if got := run("--no-speed"); !strings.Contains(got, "HTTP request through each proxy") || strings.Contains(got, "download") {
-		t.Errorf("--no-speed still advertised a download phase:\n%s", got)
+	if got := run("--speed"); !strings.Contains(got, "HTTP request and download through each proxy") {
+		t.Errorf("--speed lost the download phase:\n%s", got)
 	}
 }
