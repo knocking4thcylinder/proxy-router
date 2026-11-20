@@ -550,6 +550,7 @@ func pingCmd() *cobra.Command {
 		parallel int
 		exit     bool
 		quiet    bool
+		noSpeed  bool
 	)
 	cmd := &cobra.Command{
 		Use:               "ping [server...]",
@@ -581,6 +582,11 @@ func pingCmd() *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
+			if noSpeed {
+				// Happ-style connectivity check: one request through
+				// each proxy, no download to rank it by.
+				opts.DownloadURL = ""
+			}
 			if exit {
 				opts.ExitURL = "https://ipinfo.io/country"
 			}
@@ -602,6 +608,7 @@ func pingCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&parallel, "parallel", "j", 16, "servers to test at once")
 	cmd.Flags().BoolVar(&exit, "exit", false, "also show the country traffic really exits in (via ipinfo.io)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the final sorted results")
+	cmd.Flags().BoolVar(&noSpeed, "no-speed", false, "skip the download test; just the latency request (like Happ's connectivity check)")
 	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
 }

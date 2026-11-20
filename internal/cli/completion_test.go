@@ -75,7 +75,7 @@ func TestCommandFlagCompletions(t *testing.T) {
 		{[]string{"start"}, []string{"--tun", "--no-tun", "--force", "--verbose"}},
 		{[]string{"restart"}, []string{"--tun", "--no-tun", "--force", "--verbose"}},
 		{[]string{"config"}, []string{"--rules", "--server", "--quiet", "--tun"}},
-		{[]string{"ping"}, []string{"--group", "--parallel", "--exit", "--quiet"}},
+		{[]string{"ping"}, []string{"--group", "--parallel", "--exit", "--quiet", "--no-speed"}},
 		{[]string{"use"}, []string{"--fastest", "--exhaustive", "--group"}},
 		{[]string{"list"}, []string{"--group", "--verbose"}},
 		{[]string{"logs"}, []string{"--follow", "--lines"}},
