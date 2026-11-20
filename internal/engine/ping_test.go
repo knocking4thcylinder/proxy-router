@@ -226,3 +226,20 @@ func TestControlSocketsCoversPing(t *testing.T) {
 		t.Errorf("second ControlSockets ran %d times; want 0", n)
 	}
 }
+
+func TestEndpointSpacing(t *testing.T) {
+	ep := &pingEndpoint{}
+	gap := time.Second
+	t0 := time.Now()
+	if w := ep.spaced(gap, t0); w != 0 {
+		t.Fatalf("first test waited %v", w)
+	}
+	if w := ep.spaced(gap, t0.Add(10*time.Millisecond)); w < 900*time.Millisecond {
+		t.Fatalf("second test waited only %v, want ~%v", w, gap-10*time.Millisecond)
+	}
+	// The wait counts from the recorded start (after the wait), so a third
+	// arriving while the second waits is spaced from that start too.
+	if w := ep.spaced(gap, t0.Add(20*time.Millisecond)); w < 1800*time.Millisecond {
+		t.Fatalf("third test waited only %v, want ~2*%v", w, gap)
+	}
+}
