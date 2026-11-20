@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -41,6 +42,11 @@ const (
 	// autoForget is how long a server that stopped working is left out of
 	// scans: it's likely still blocked.
 	autoForget = 15 * time.Minute
+	// scanVerify is how many of a scan's best answers are re-checked, one
+	// request each, before switching: blocks land on servers minutes
+	// after they answer a scan, and a switch to a freshly dead server
+	// costs another full cycle.
+	scanVerify = 3
 )
 
 // autoPick is where auto-switching moved, kept in memory when it can't be
@@ -139,6 +145,7 @@ type switcher struct {
 	quietUntil time.Time
 	// failed holds servers that stopped working, and when.
 	failed  map[config.Selection]time.Time
+	blocked map[string]time.Time // address blocks (see rangeOf) that did
 	checked chan checkResult
 	scanned chan scanResult
 	// due fires when the next check is due: to repeat a failed one
@@ -167,12 +174,47 @@ type scanResult struct {
 	best   engine.PingResult
 	ok     bool
 	tested int
+	// faded answered the scan but not the re-check before switching:
+	// their blocks are remembered, like the old server's.
+	faded []engine.PingResult
+}
+
+// pickCandidates lists the servers that answered, best first, with ones in
+// address blocks that stopped working recently moved behind the rest: the
+// next server in such a block is the next to fail, not minutes after it.
+func pickCandidates(results []engine.PingResult, blocked map[string]time.Time) []engine.PingResult {
+	var fresh, stale []engine.PingResult
+	for _, r := range results {
+		if r.Err != nil {
+			continue
+		}
+		if _, bad := blocked[rangeOf(r.Entry)]; bad {
+			stale = append(stale, r)
+		} else {
+			fresh = append(fresh, r)
+		}
+	}
+	order := func(rs []engine.PingResult) {
+		slices.SortStableFunc(rs, func(a, b engine.PingResult) int {
+			switch {
+			case better(a, b):
+				return -1
+			case better(b, a):
+				return 1
+			}
+			return 0
+		})
+	}
+	order(fresh)
+	order(stale)
+	return append(fresh, stale...)
 }
 
 func newSwitcher(w *engine.Watcher) *switcher {
 	return &switcher{
 		w:       w,
 		failed:  map[config.Selection]time.Time{},
+		blocked: map[string]time.Time{},
 		checked: make(chan checkResult, 1),
 		scanned: make(chan scanResult, 1),
 		due:     make(chan struct{}, 1),
@@ -365,7 +407,7 @@ func (sw *switcher) check(ctx context.Context, o runOptions, r checkResult, gen 
 	sw.w.Stop()
 	sw.looking = nil
 	sw.reset()
-	go func() { sw.scanned <- scan(ctx, e, o, r.target, sw.avoid()) }()
+	go func() { sw.scanned <- scan(ctx, e, o, r.target, sw.avoid(), sw.avoidRanges()) }()
 }
 
 // avoid lists servers that failed recently.
@@ -381,10 +423,54 @@ func (sw *switcher) avoid() []config.Selection {
 	return out
 }
 
-// scan tests the servers auto-switching may move to and picks the fastest.
-// It runs Xray instances in this process, which take over Xray's globals
-// from the running one, so the caller must restart that afterwards.
-func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []config.Selection) scanResult {
+// avoidRanges snapshots the address blocks that stopped working recently.
+// Censors block blocks, not servers: the next server in a range that just
+// failed is the next one to fail, so scans only fall back into one when
+// nothing else answered.
+func (sw *switcher) avoidRanges() map[string]time.Time {
+	out := map[string]time.Time{}
+	for r, at := range sw.blocked {
+		if time.Since(at) < autoForget {
+			out[r] = at
+		} else {
+			delete(sw.blocked, r)
+		}
+	}
+	return out
+}
+
+// markFailed remembers a server that stopped working, and the address
+// block it lives in.
+func (sw *switcher) markFailed(e config.Entry) {
+	sw.failed[selectionOf(e)] = time.Now()
+	if r := rangeOf(e); r != "" {
+		sw.blocked[r] = time.Now()
+	}
+}
+
+// rangeOf is the address block a server lives in: /24 for IPv4, /48 for
+// IPv6, "" for a name (no block to blame or avoid).
+func rangeOf(e config.Entry) string {
+	a, err := netip.ParseAddr(e.Server.Address)
+	if err != nil {
+		return ""
+	}
+	bits := 48
+	if a.Is4() {
+		bits = 24
+	}
+	p, err := a.Prefix(bits)
+	if err != nil {
+		return ""
+	}
+	return p.String()
+}
+
+// scan tests the servers auto-switching may move to, re-checks its best
+// answers, and picks the fastest that still answers. It runs Xray
+// instances in this process, which take over Xray's globals from the
+// running one, so the caller must restart that afterwards.
+func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []config.Selection, blocked map[string]time.Time) scanResult {
 	sel := *e.state.Selected
 	r := scanResult{from: from, base: sel}
 	entries, err := e.state.GroupEntries(sel.AutoGroup)
@@ -409,7 +495,23 @@ func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []
 	opts.DownloadParallel = e.cfg.Ping.DownloadParallel
 	opts.DownloadURL = e.cfg.Ping.DownloadURL
 	fmt.Printf("%s auto-switch: testing %d other servers...\n", now(), len(entries))
-	r.best, r.ok = pickFastest(engine.Ping(ctx, entries, opts))
+	candidates := pickCandidates(engine.Ping(ctx, entries, opts), blocked)
+	// A scan of hundreds of servers takes minutes, and blocks land on its
+	// winners within them. One request through each of the top candidates
+	// - bound to the same interface, resolved the same way, exactly how
+	// the tunnel would use them - tells the still-alive from the
+	// about-to-die before the switch commits.
+	verify := opts
+	verify.DownloadURL, verify.Parallel, verify.PerEndpoint = "", 1, 1
+	for len(candidates) > 0 && len(r.faded) < scanVerify {
+		c := candidates[0]
+		candidates = candidates[1:]
+		if res := engine.Ping(ctx, []config.Entry{c.Entry}, verify); len(res) == 1 && res[0].Err == nil {
+			r.best, r.ok = c, true
+			break
+		}
+		r.faded = append(r.faded, c)
+	}
 	return r
 }
 
@@ -417,7 +519,14 @@ func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []
 // can't be written, returned as the pick to keep (cur if nothing changes).
 func (sw *switcher) apply(r scanResult, cur *autoPick) *autoPick {
 	sw.scanning, sw.failures = false, 0
-	sw.failed[selectionOf(r.from)] = time.Now()
+	sw.markFailed(r.from)
+	for _, f := range r.faded {
+		sw.markFailed(f.Entry)
+	}
+	if len(r.faded) > 0 {
+		fmt.Printf("%s auto-switch: %d answered the scan but not the re-check; their address blocks are avoided for %s\n",
+			now(), len(r.faded), autoForget)
+	}
 	if !r.ok {
 		sw.quietUntil = time.Now().Add(autoQuiet)
 		fmt.Printf("%s auto-switch: none of %d other servers works; staying on %s, ignoring trouble for %s\n",
