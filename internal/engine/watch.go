@@ -222,9 +222,9 @@ func (d *watchDialer) Dial(ctx context.Context, src xnet.Address, dest xnet.Dest
 	}
 	// UDP: QUIC transports take only Xray's own wrapper, around the
 	// socket itself (see watchedPacketConn).
-	if pw, ok := conn.(*internet.PacketConnWrapper); ok {
+	if pw, ok := conn.(*xnet.PacketConnWrapper); ok {
 		if udp, ok := pw.PacketConn.(*net.UDPConn); ok {
-			return &internet.PacketConnWrapper{PacketConn: newWatchedPacketConn(udp, stall, report), Dest: pw.Dest}, nil
+			return &xnet.PacketConnWrapper{PacketConn: newWatchedPacketConn(udp, stall, report), Dest: pw.Dest}, nil
 		}
 	}
 	return conn, nil
