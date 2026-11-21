@@ -45,7 +45,8 @@ const (
 	// scanVerify is how many of a scan's best answers are re-checked, one
 	// request each, before switching: blocks land on servers minutes
 	// after they answer a scan, and a switch to a freshly dead server
-	// costs another full cycle.
+	// costs another full cycle. It bounds the probes, not the outcome:
+	// pools are taken on the scan's word, even past the cap.
 	scanVerify = 3
 )
 
@@ -541,15 +542,24 @@ func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []
 // every member and time them out one after another, while the scan has
 // already measured them all, and in a running instance the pool's own
 // balancer re-picks among members by its health check: the freshness the
-// re-check gives a single is the balancer's job for a pool.
+// re-check gives a single is the balancer's job for a pool. The cap
+// bounds probes, not candidates: once it is reached, further singles are
+// skipped - not probed, not remembered as failed - but a pool is still
+// accepted, so the fallback survives the cap.
 func verifyCandidates(ctx context.Context, candidates []engine.PingResult, opts engine.PingOptions, max int, ping func(context.Context, config.Entry, engine.PingOptions) error) (best engine.PingResult, ok bool, faded []engine.PingResult) {
-	for len(candidates) > 0 && len(faded) < max {
-		c := candidates[0]
-		candidates = candidates[1:]
-		if c.Entry.Server.Pool != nil || ping(ctx, c.Entry, opts) == nil {
-			return c, true, faded
+	probes := 0
+	for _, c := range candidates {
+		if c.Entry.Server.Pool == nil {
+			if probes >= max {
+				continue
+			}
+			probes++
+			if ping(ctx, c.Entry, opts) != nil {
+				faded = append(faded, c)
+				continue
+			}
 		}
-		faded = append(faded, c)
+		return c, true, faded
 	}
 	return engine.PingResult{}, false, faded
 }

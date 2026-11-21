@@ -472,6 +472,16 @@ func TestVerifyCandidatesBounded(t *testing.T) {
 	if !ok || best.Entry.Server.Name != "a" || len(faded) != 0 {
 		t.Fatalf("pass: ok=%v best=%v", ok, best.Entry)
 	}
+	// The cap spent on failing singles doesn't strand a pool behind them:
+	// further singles are skipped - not probed, not remembered as failed -
+	// but a scan-answered pool is still accepted, so the fallback survives
+	// the cap instead of leaving auto-switch stuck for the quiet spell.
+	called = nil
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), single("b"), single("c"), pool("p")}, engine.PingOptions{}, 2, ping)
+	if !ok || best.Entry.Server.Name != "p" || len(faded) != 2 || len(called) != 2 {
+		t.Fatalf("cap fallback: ok=%v best=%v faded=%v called=%v", ok, best.Entry, faded, called)
+	}
 }
 
 // IPv4-mapped IPv6 spellings and the plain IPv4 map to the same block;
