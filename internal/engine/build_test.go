@@ -299,35 +299,3 @@ func TestDedupeRuleTags(t *testing.T) {
 		}
 	}
 }
-
-// The TUN front forwards sniffed names, not the netstack's raw IPs: panel
-// servers drop TLS to IP targets (verified live), and the front is the only
-// place the name can be recovered for TUN traffic. The main instance's own
-// sniffing stays routeOnly so IP rules keep matching its direct clients.
-func TestTUNFrontForwardsSniffedNames(t *testing.T) {
-	fc, err := BuildTUNFront("utun99", 1500, "127.0.0.1:10807", Account{User: "u", Pass: "p"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := fc["inbounds"].([]any)[0].(map[string]any)
-	sn := in["sniffing"].(map[string]any)
-	if sn["routeOnly"] != false {
-		t.Errorf("front sniffing routeOnly = %v, want false: the front has no rules to protect", sn["routeOnly"])
-	}
-	if fmt.Sprint(sn["destOverride"]) != "[http tls quic]" {
-		t.Errorf("front destOverride = %v", sn["destOverride"])
-	}
-	// The main instance's sniffing must not have been flipped with it.
-	cfg, _ := config.Load(t.TempDir())
-	rules := writeRules(t, "default: proxy\nrules: []\n")
-	xc, _, err := Build(Plan{Config: cfg, Rules: rules, State: testState(t)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, in := range xc["inbounds"].([]map[string]any) {
-		sn := in["sniffing"].(map[string]any)
-		if sn["routeOnly"] != true {
-			t.Errorf("main inbound %v sniffing routeOnly = %v, want true: IP rules must keep matching", in["tag"], sn["routeOnly"])
-		}
-	}
-}

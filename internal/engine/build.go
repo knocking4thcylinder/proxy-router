@@ -435,21 +435,6 @@ func BuildTUNFront(name string, mtu int, mainAddr string, login Account) (map[st
 		"inbounds": []any{map[string]any{
 			"tag": "tun-device", "protocol": "tun", "port": 0,
 			"settings": map[string]any{"name": name, "MTU": mtu},
-			// The netstack knows destinations only as IPs, but panel
-			// servers route domain-targeted requests and silently drop
-			// TLS to raw IPs (verified live: a VLESS server answered
-			// domain targets 204 and discarded IP targets, same second).
-			// The front has no routing rules of its own, so replacing
-			// the destination with the sniffed name here is free: the
-			// SOCKS dial to the main carries the domain, the main's
-			// rules see the name (and still see IPs for its own
-			// clients, whose sniffing stays routeOnly), and the server
-			// accepts the request.
-			"sniffing": map[string]any{
-				"enabled":      true,
-				"destOverride": []string{"http", "tls", "quic"},
-				"routeOnly":    false,
-			},
 		}},
 		"outbounds": []any{map[string]any{
 			"tag": "main", "protocol": "socks",
