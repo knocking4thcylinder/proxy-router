@@ -1,10 +1,43 @@
 package tun
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestSyncSupplementalDNS(t *testing.T) {
+	shown := "<dictionary> {\n  ServerAddresses : <array> {\n    0 : 198.18.0.53\n  }\n  SupplementalMatchDomains : <array> {\n    0 : \n  }\n  SupplementalMatchOrders : <array> {\n    0 : 1\n  }\n}\n"
+	for _, tc := range []struct {
+		name, current string
+		wantWrite     bool
+	}{
+		{"missing", "  No such key\n", true},
+		{"current", shown, false},
+		{"wrong match order", strings.Replace(shown, "0 : 1\n", "0 : 200000\n", 1), true},
+		{"ignored service order", strings.Replace(shown, "SupplementalMatchOrders : <array> {\n    0 : 1\n  }", "SearchOrder : 1", 1), true},
+		{"domain restricted", strings.Replace(shown, "0 : \n", "0 : example.com\n", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrote := false
+			fakeTools(t, func(cmd string) (string, error) {
+				switch cmd {
+				case "scutil <<show " + tunDNSKey + "\n":
+					return tc.current, nil
+				case "scutil <<d.init\nd.add ServerAddresses * 198.18.0.53\nd.add SupplementalMatchDomains * \"\"\nd.add SupplementalMatchOrders * # 1\nset " + tunDNSKey + "\n":
+					wrote = true
+					return "", nil
+				default:
+					return "", errors.New("unexpected command: " + cmd)
+				}
+			})
+			if err := syncSupplementalDNS(); err != nil || wrote != tc.wantWrite {
+				t.Fatalf("write=%v, err=%v", wrote, err)
+			}
+		})
+	}
+}
 
 func TestParseScutil(t *testing.T) {
 	out := `<dictionary> {

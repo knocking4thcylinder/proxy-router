@@ -550,10 +550,11 @@ func pingCmd() *cobra.Command {
 		parallel int
 		exit     bool
 		quiet    bool
+		speed    bool
 	)
 	cmd := &cobra.Command{
 		Use:               "ping [server...]",
-		Short:             "Measure real latency and download speed through servers; all by default",
+		Short:             "Measure latency through each server; --speed adds a download test; all by default",
 		ValidArgsFunction: completeServers,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := load()
@@ -581,6 +582,12 @@ func pingCmd() *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(os.Stderr, note)
 			}
+			// Happ-style by default: the connectivity check is one
+			// request through each proxy; the speed test is its own
+			// action, asked for with --speed.
+			if !speed {
+				opts.DownloadURL = ""
+			}
 			if exit {
 				opts.ExitURL = "https://ipinfo.io/country"
 			}
@@ -602,6 +609,7 @@ func pingCmd() *cobra.Command {
 	cmd.Flags().IntVarP(&parallel, "parallel", "j", 16, "servers to test at once")
 	cmd.Flags().BoolVar(&exit, "exit", false, "also show the country traffic really exits in (via ipinfo.io)")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "only print the final sorted results")
+	cmd.Flags().BoolVar(&speed, "speed", false, "also measure download speed (the default is the latency request only)")
 	_ = cmd.RegisterFlagCompletionFunc("group", completeGroups)
 	return cmd
 }

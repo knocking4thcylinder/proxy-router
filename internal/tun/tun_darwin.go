@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -256,10 +257,6 @@ func syncScoped(name string) error {
 	return nil
 }
 
-func scutil(script string) (string, error) {
-	return runTool(script, "scutil")
-}
-
 func primaryService() string {
 	out, _ := scutil("show State:/Network/Global/IPv4\n")
 	d, _ := parseScutil(out)
@@ -274,9 +271,13 @@ func readBackup() (dnsBackup, bool) {
 	return parseBackup(out)
 }
 
-// syncDNS points the primary service's DNS at DNSServer, following changes
-// of the primary service, and saves what it replaces.
 func syncDNS() error {
+	return errors.Join(syncPrimaryDNS(), syncSupplementalDNS())
+}
+
+// syncPrimaryDNS points the primary service's DNS at DNSServer, following changes
+// of the primary service, and saves what it replaces.
+func syncPrimaryDNS() error {
 	primary := primaryService()
 	b, saved := readBackup()
 	if saved && b.Service != primary {
@@ -302,6 +303,11 @@ func syncDNS() error {
 }
 
 func restoreDNS() {
+	if out, err := scutil("remove " + tunDNSKey + "\n"); err != nil {
+		warn("can't remove the TUN resolver: %v", err)
+	} else if msg := strings.TrimSpace(out); msg != "" && !strings.Contains(msg, "No such key") {
+		warn("can't remove the TUN resolver: %s", msg)
+	}
 	if b, ok := readBackup(); ok {
 		if _, err := scutil(restoreDNSScript(b)); err != nil {
 			warn("can't restore DNS settings: %v", err)

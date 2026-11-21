@@ -882,6 +882,19 @@ func geoCmd() *cobra.Command {
 	return cmd
 }
 
+// silenceValidate returns a copy of the Xray config with its logger
+// turned off: the newer Xray's instance startup writes info lines to
+// stdout, and the config command's stdout is the JSON it prints.
+// Logging changes nothing about validity.
+func silenceValidate(xc map[string]any) map[string]any {
+	out := make(map[string]any, len(xc))
+	for k, v := range xc {
+		out[k] = v
+	}
+	out["log"] = map[string]any{"loglevel": "none", "access": "none"}
+	return out
+}
+
 func configCmd() *cobra.Command {
 	var o runOptions
 	var quiet bool
@@ -905,7 +918,7 @@ func configCmd() *cobra.Command {
 			for _, n := range notes {
 				fmt.Fprintln(os.Stderr, "note:", n)
 			}
-			if err := engine.Validate(xc); err != nil {
+			if err := engine.Validate(silenceValidate(xc)); err != nil {
 				return err
 			}
 			if quiet {

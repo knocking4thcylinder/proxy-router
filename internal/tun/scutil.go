@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -15,6 +16,42 @@ import (
 // put it back.
 
 const dnsBackupKey = "State:/Network/io.github.knocking4thcylinder.proxy-router/DNS"
+
+// This DNS-only service is ours. Unlike the primary service, it can compete
+// with VPNs that register their own supplemental default resolver.
+const tunDNSKey = "State:/Network/Service/io.github.knocking4thcylinder.proxy-router/DNS"
+
+func scutil(script string) (string, error) {
+	return runTool(script, "scutil")
+}
+
+// An empty match domain is a catch-all. configd strips SearchOrder from
+// DNS-only services, but honors a numeric order paired with each match
+// domain. More specific zones (including MagicDNS) still win first.
+const tunDNSScript = "d.init\n" +
+	"d.add ServerAddresses * " + DNSServer + "\n" +
+	"d.add SupplementalMatchDomains * \"\"\n" +
+	"d.add SupplementalMatchOrders * # 1\n" +
+	"set " + tunDNSKey + "\n"
+
+func syncSupplementalDNS() error {
+	out, err := scutil("show " + tunDNSKey + "\n")
+	if err != nil {
+		return err
+	}
+	d, _ := parseScutil(out)
+	if slices.Equal(d["ServerAddresses"], []string{DNSServer}) &&
+		slices.Equal(d["SupplementalMatchDomains"], []string{""}) &&
+		slices.Equal(d["SupplementalMatchOrders"], []string{"1"}) {
+		return nil
+	}
+	out, err = scutil(tunDNSScript)
+	if err == nil && strings.TrimSpace(out) != "" {
+		// Interactive scutil commands can report a failure with exit code 0.
+		return fmt.Errorf("setting TUN resolver: %s", strings.TrimSpace(out))
+	}
+	return err
+}
 
 var serviceID = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
@@ -50,7 +87,9 @@ func parseScutil(out string) (dict map[string][]string, ok bool) {
 			depth = 1
 			continue
 		}
-		k, v, found := strings.Cut(line, " : ")
+		// scutil prints an empty string as "0 : " inside an array.
+		k, v, found := strings.Cut(line, " :")
+		v = strings.TrimPrefix(v, " ")
 		if !found {
 			continue
 		}
