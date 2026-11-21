@@ -25,12 +25,13 @@ func scutil(script string) (string, error) {
 	return runTool(script, "scutil")
 }
 
-// An empty match domain is a catch-all. SearchOrder breaks ties between
-// catch-alls; a more specific domain (including a MagicDNS zone) wins first.
+// An empty match domain is a catch-all. configd strips SearchOrder from
+// DNS-only services, but honors a numeric order paired with each match
+// domain. More specific zones (including MagicDNS) still win first.
 const tunDNSScript = "d.init\n" +
 	"d.add ServerAddresses * " + DNSServer + "\n" +
 	"d.add SupplementalMatchDomains * \"\"\n" +
-	"d.add SearchOrder # 1\n" +
+	"d.add SupplementalMatchOrders * # 1\n" +
 	"set " + tunDNSKey + "\n"
 
 func syncSupplementalDNS() error {
@@ -41,7 +42,7 @@ func syncSupplementalDNS() error {
 	d, _ := parseScutil(out)
 	if slices.Equal(d["ServerAddresses"], []string{DNSServer}) &&
 		slices.Equal(d["SupplementalMatchDomains"], []string{""}) &&
-		slices.Equal(d["SearchOrder"], []string{"1"}) {
+		slices.Equal(d["SupplementalMatchOrders"], []string{"1"}) {
 		return nil
 	}
 	out, err = scutil(tunDNSScript)
