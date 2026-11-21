@@ -212,3 +212,289 @@ func TestSwitcherFollowsWhatItCanWatch(t *testing.T) {
 		}
 	}
 }
+
+func TestRangeOf(t *testing.T) {
+	for _, c := range []struct {
+		addr, want string
+	}{
+		{"1.2.3.4", "1.2.3.0/24"},
+		{"10.0.0.1", "10.0.0.0/24"},
+		{"2001:db8:1:2:3:4:5:6", "2001:db8:1::/48"},
+		{"example.com", ""},
+		{"", ""},
+	} {
+		e := config.Entry{Server: &share.Server{Address: c.addr}}
+		if got := rangeOf(e); got != c.want {
+			t.Errorf("rangeOf(%q) = %q, want %q", c.addr, got, c.want)
+		}
+	}
+}
+
+func TestPickCandidatesPrefersQuietBlocks(t *testing.T) {
+	entry := func(name, addr string, latency time.Duration) engine.PingResult {
+		return engine.PingResult{
+			Entry:   config.Entry{Server: &share.Server{Name: name, Address: addr}},
+			Latency: latency,
+		}
+	}
+	blocked := map[string]time.Time{"188.255.236.0/24": time.Now()}
+	results := []engine.PingResult{
+		entry("fast-blocked", "188.255.236.19", 10*time.Millisecond),
+		entry("slow-quiet", "213.239.169.237", 400*time.Millisecond),
+		entry("dead", "1.1.1.1", 0), // Err set below
+	}
+	results[2].Err = errors.New("timeout")
+
+	got := pickCandidates(results, blocked)
+	if len(got) != 2 || got[0].Entry.Server.Name != "slow-quiet" || got[1].Entry.Server.Name != "fast-blocked" {
+		names := make([]string, len(got))
+		for i, r := range got {
+			names[i] = r.Entry.Server.Name
+		}
+		t.Fatalf("picked %v, want [slow-quiet fast-blocked]", names)
+	}
+	// Nothing quiet answered: a flagged block still beats staying put.
+	got = pickCandidates(results[:1], blocked)
+	if len(got) != 1 || got[0].Entry.Server.Name != "fast-blocked" {
+		t.Fatalf("picked %v, want the flagged one as the only answer", got)
+	}
+}
+
+func TestApplyRemembersBlocksAndFaded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := func(name, addr string) config.Entry {
+		return config.Entry{Group: "sub", Server: &share.Server{Name: name, Address: addr}}
+	}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: []*share.Server{
+		entry("old", "188.255.236.18").Server,
+		entry("next", "213.239.169.237").Server,
+		entry("faded", "66.201.6.46").Server,
+	}}}
+	st.SelectAuto(st.Entries()[0], "")
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	best := engine.PingResult{Entry: entry("next", "213.239.169.237"), Latency: time.Second}
+	faded := engine.PingResult{Entry: entry("faded", "66.201.6.46"), Latency: 2 * time.Second}
+	r := scanResult{from: entry("old", "188.255.236.18"), base: *st.Selected, best: best, ok: true, faded: []engine.PingResult{faded}}
+
+	if pick := sw.apply(r, nil); pick != nil {
+		t.Fatalf("pick = %v, want the selection saved to state", pick)
+	}
+	for _, c := range []struct {
+		sel   string
+		block string
+	}{
+		{"old", "188.255.236.0/24"},
+		{"faded", "66.201.6.0/24"},
+	} {
+		if _, ok := sw.failed[config.Selection{Group: "sub", Name: c.sel}]; !ok {
+			t.Errorf("%s not remembered as failed", c.sel)
+		}
+		if _, ok := sw.blocked[c.block]; !ok {
+			t.Errorf("block %s not remembered (%s's)", c.block, c.sel)
+		}
+	}
+	if got := sw.avoidRanges(); len(got) != 2 {
+		t.Fatalf("avoidRanges = %v, want the two blocks", got)
+	}
+
+	// The switch itself saved to state.json, as apply does outside the
+	// confined service.
+	next, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel := next.Selected; sel == nil || sel.Name != "next" || !sel.Auto {
+		t.Fatalf("selected %+v, want the auto-switch to next", sel)
+	}
+}
+
+func TestApplyStaysWhenNothingVerified(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := config.Entry{Server: &share.Server{Name: "old", Address: "188.255.236.18"}}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: []*share.Server{old.Server}}}
+	st.SelectAuto(st.Entries()[0], "")
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	cur := &autoPick{base: *st.Selected, to: config.Selection{Group: "sub", Name: "old"}}
+	faded := []engine.PingResult{{Entry: config.Entry{Server: &share.Server{Name: "gone", Address: "66.201.6.46"}}}}
+	r := scanResult{from: old, base: *st.Selected, ok: false, tested: 7, faded: faded}
+
+	if pick := sw.apply(r, cur); pick != cur {
+		t.Fatalf("pick = %v, want to stay on cur", pick)
+	}
+	if sw.quietUntil.IsZero() {
+		t.Error("nothing verified but trouble isn't calmed")
+	}
+	if _, ok := sw.blocked["66.201.6.0/24"]; !ok {
+		t.Error("a faded answer's block not remembered")
+	}
+}
+
+// A confirmed failure marks the server and its range before the scan runs,
+// so the scan's answers from that range are demoted behind everything else
+// from the start - not only on the next cycle after apply.
+func TestCheckMarksTheFailedRangeBeforeScanning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PROXY_ROUTER_HOME", dir)
+	st, err := config.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := config.Entry{Group: "sub", Server: &share.Server{Name: "old", Address: "188.255.236.18"}}
+	st.Subscriptions = []*config.Subscription{{Name: "sub", Servers: []*share.Server{old.Server}}}
+	st.SelectAuto(old, "")
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := newSwitcher(engine.WatchOutbound("proxy"))
+	defer sw.reset()
+	sw.failures = 1 // one failure already counted; the next one confirms
+	sw.check(context.Background(), runOptions{}, checkResult{target: old, err: errors.New("timeout")}, 0)
+
+	if _, ok := sw.failed[selectionOf(old)]; !ok {
+		t.Error("the confirmed failure's server wasn't remembered before the scan")
+	}
+	if _, ok := sw.blocked["188.255.236.0/24"]; !ok {
+		t.Error("the confirmed failure's range wasn't remembered before the scan")
+	}
+	select {
+	case <-sw.scanned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the scan never reported")
+	}
+}
+
+// A failure that expired while the scan ran doesn't demote anymore.
+func TestPickCandidatesExpiryIsJudgedAtOrdering(t *testing.T) {
+	entry := func(name, addr string, latency time.Duration) engine.PingResult {
+		return engine.PingResult{
+			Entry:   config.Entry{Server: &share.Server{Name: name, Address: addr}},
+			Latency: latency,
+		}
+	}
+	results := []engine.PingResult{
+		entry("fast-blocked", "188.255.236.19", 10*time.Millisecond),
+		entry("slow-quiet", "213.239.169.237", 400*time.Millisecond),
+	}
+	expired := map[string]time.Time{"188.255.236.0/24": time.Now().Add(-(autoForget + time.Minute))}
+	got := pickCandidates(results, expired)
+	if len(got) != 2 || got[0].Entry.Server.Name != "fast-blocked" {
+		t.Fatalf("picked %v, want the expired range treated as fresh (fast-blocked first)", got)
+	}
+}
+
+// A working single beats a pool even when the single's range failed
+// recently; range preference applies within a class, never across it.
+func TestPickCandidatesSinglesFirst(t *testing.T) {
+	entry := func(name, addr string, pool bool, latency time.Duration) engine.PingResult {
+		s := &share.Server{Name: name, Address: addr}
+		if pool {
+			s.Pool = &share.Pool{}
+		}
+		return engine.PingResult{Entry: config.Entry{Server: s}, Latency: latency}
+	}
+	blocked := map[string]time.Time{"188.255.236.0/24": time.Now()}
+	results := []engine.PingResult{
+		entry("pool-fresh", "213.239.169.237", true, 10*time.Millisecond),      // unflagged pool
+		entry("single-flagged", "188.255.236.19", false, 300*time.Millisecond), // flagged single
+		entry("single-fresh", "213.239.172.42", false, 400*time.Millisecond),   // unflagged single
+	}
+	got := pickCandidates(results, blocked)
+	want := []string{"single-fresh", "single-flagged", "pool-fresh"}
+	for i, r := range got {
+		if r.Entry.Server.Name != want[i] {
+			t.Fatalf("order[%d] = %s, want %s (full order: %v)", i, r.Entry.Server.Name, want[i], names(got))
+		}
+	}
+}
+
+func names(rs []engine.PingResult) []string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.Entry.Server.Name)
+	}
+	return out
+}
+
+// Pools pass verification without a re-check (a member-by-member probe
+// would expand to every member); singles cost exactly one bounded request
+// each, and the loop stops at the first pass.
+func TestVerifyCandidatesBounded(t *testing.T) {
+	single := func(name string) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name}}}
+	}
+	pool := func(name string) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name, Pool: &share.Pool{}}}}
+	}
+	var called []string
+	ping := func(ctx context.Context, e config.Entry, o engine.PingOptions) error {
+		called = append(called, e.Server.Name)
+		return errors.New("no answer")
+	}
+	// A pool first: passes untouched, no ping at all.
+	best, ok, faded := verifyCandidates(context.Background(),
+		[]engine.PingResult{pool("p")}, engine.PingOptions{}, 3, ping)
+	if !ok || best.Entry.Server.Name != "p" || len(faded) != 0 || len(called) != 0 {
+		t.Fatalf("pool verify: ok=%v best=%v faded=%v called=%v", ok, best.Entry, faded, called)
+	}
+	// Failing singles fade one request each; the loop caps at max.
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), single("b"), single("c"), single("d")}, engine.PingOptions{}, 2, ping)
+	if ok || len(faded) != 2 || len(called) != 2 {
+		t.Fatalf("cap: ok=%v faded=%d called=%d", ok, len(faded), len(called))
+	}
+	// A passing single ends it; the pool fallback behind it is untouched.
+	pass := func(ctx context.Context, e config.Entry, o engine.PingOptions) error {
+		return nil
+	}
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), pool("p")}, engine.PingOptions{}, 3, pass)
+	if !ok || best.Entry.Server.Name != "a" || len(faded) != 0 {
+		t.Fatalf("pass: ok=%v best=%v", ok, best.Entry)
+	}
+	// The cap spent on failing singles doesn't strand a pool behind them:
+	// further singles are skipped - not probed, not remembered as failed -
+	// but a scan-answered pool is still accepted, so the fallback survives
+	// the cap instead of leaving auto-switch stuck for the quiet spell.
+	called = nil
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), single("b"), single("c"), pool("p")}, engine.PingOptions{}, 2, ping)
+	if !ok || best.Entry.Server.Name != "p" || len(faded) != 2 || len(called) != 2 {
+		t.Fatalf("cap fallback: ok=%v best=%v faded=%v called=%v", ok, best.Entry, faded, called)
+	}
+}
+
+// IPv4-mapped IPv6 spellings and the plain IPv4 map to the same block;
+// unrelated /24s stay distinct.
+func TestRangeOfMapped(t *testing.T) {
+	e := func(addr string) config.Entry { return config.Entry{Server: &share.Server{Address: addr}} }
+	if got := rangeOf(e("::ffff:66.201.6.46")); got != "66.201.6.0/24" {
+		t.Errorf("rangeOf(::ffff:66.201.6.46) = %q, want 66.201.6.0/24", got)
+	}
+	if rangeOf(e("66.201.6.46")) != rangeOf(e("::ffff:66.201.6.46")) {
+		t.Error("plain and mapped spellings disagree on the block")
+	}
+	if rangeOf(e("::ffff:66.201.6.47")) == rangeOf(e("::ffff:66.201.7.1")) {
+		t.Error("unrelated /24s collapsed")
+	}
+}

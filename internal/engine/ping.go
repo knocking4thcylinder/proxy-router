@@ -140,7 +140,26 @@ func Ping(ctx context.Context, entries []config.Entry, o PingOptions) []PingResu
 		if pin := pins[job.server.Address]; pin != nil {
 			opts.Resolve = pin
 		}
+		// Space starts on one endpoint: a scan firing at one address in
+		// quick succession is itself a pattern worth not sending, and the
+		// pacing costs seconds. Per-endpoint pacing needs endpoints that
+		// mean an address; without PerEndpoint every job shares one.
+		wait := time.Duration(0)
+		if o.PerEndpoint > 0 {
+			wait = ep.spaced(endpointGap, time.Now())
+		}
 		go func() {
+			if wait > 0 {
+				// A pacing backlog can outlast the whole scan; let a
+				// cancellation cut through it, and still report the
+				// completion so the scheduler releases the slots.
+				timer := time.NewTimer(wait)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+				}
+			}
 			p := pingCompletion{job: job, endpoint: ep, phase: phase, err: ctx.Err()}
 			if p.err == nil {
 				if phase == PhaseLatency {
@@ -354,6 +373,23 @@ type pingEndpoint struct {
 	jobs                [2][]pingJob
 	queued              [2]bool
 	overflowing         bool
+	lastStart           time.Time
+}
+
+// endpointGap is the least time Ping puts between two starts on one
+// endpoint. Censors watch for bursts; the pacing costs a scan seconds.
+var endpointGap = 200 * time.Millisecond
+
+// spaced records a test starting at now, after waiting out the returned
+// delay, and returns how long it must wait to keep gap since the previous
+// start. The scheduler loop is single-threaded; no lock is needed.
+func (ep *pingEndpoint) spaced(gap time.Duration, now time.Time) time.Duration {
+	wait := gap - now.Sub(ep.lastStart)
+	if wait < 0 {
+		wait = 0
+	}
+	ep.lastStart = now.Add(wait)
+	return wait
 }
 
 // pingQueue rotates through endpoints with available slots, so a large
