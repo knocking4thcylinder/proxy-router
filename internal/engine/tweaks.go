@@ -167,11 +167,17 @@ func systemRouteRules(entries []string, tun bool) ([]map[string]any, []string) {
 		if len(values) == 0 {
 			return
 		}
+		// The newer router refuses duplicate tags, so each split rule
+		// says which list it matches.
+		suffix := " (ip)"
+		if key == "domain" {
+			suffix = " (names)"
+		}
 		if tun {
 			rules = append(rules, map[string]any{key: values, "inboundTag": []string{"tun"},
-				"outboundTag": "block", "ruleTag": "system_route_via_tun"})
+				"outboundTag": "block", "ruleTag": "system_route_via_tun" + suffix})
 		}
-		rules = append(rules, map[string]any{key: values, "outboundTag": "system", "ruleTag": "system_route"})
+		rules = append(rules, map[string]any{key: values, "outboundTag": "system", "ruleTag": "system_route" + suffix})
 	}
 	add("ip", ips)
 	if len(ips) == 0 && len(domains) > 0 {

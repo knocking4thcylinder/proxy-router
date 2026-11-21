@@ -680,9 +680,11 @@ System DNS is pointed into the TUN, where proxy-router answers it:
 - **Linux without it** (a static `/etc/resolv.conf`): the kill switch
   redirects DNS bound for a local resolver into the TUN. With the kill
   switch off, proxy-router warns that those queries leak.
-- **macOS:** the primary network service's DNS servers are overridden in
-  the dynamic store (not saved to disk), kept in place when DHCP or the
-  network changes, and restored on exit.
+- **macOS:** proxy-router sets the primary service's DNS and registers a
+  catch-all resolver for public names in the dynamic store. More specific
+  DNS zones, including Tailscale MagicDNS, keep their own resolvers and
+  search domains. On exit, proxy-router removes its resolver and restores
+  the primary service's DNS.
 
 The resolver address is `198.18.0.53`, which only exists inside the TUN.
 
