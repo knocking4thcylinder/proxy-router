@@ -292,10 +292,16 @@ func Build(p Plan) (map[string]any, []string, error) {
 	routingRules = dedupeRuleTags(routingRules)
 	outbounds = defaultFirst(outbounds, targets[rules.Default], balancers)
 
+	// destOverride replaces the outbound's destination with the name
+	// sniffed from the traffic. Many panel servers route domain-targeted
+	// requests properly and drop TLS to raw IPs (verified live: a VLESS
+	// server answered domain targets and silently discarded IP targets),
+	// and TUN mode can only ever offer IPs - without this, every TLS flow
+	// through the tunnel would die at the server.
 	sniffing := map[string]any{
 		"enabled":      true,
 		"destOverride": []string{"http", "tls", "quic"},
-		"routeOnly":    true,
+		"routeOnly":    false,
 	}
 	if (cfg.Listen.User == "") != (cfg.Listen.Password == "") {
 		return nil, nil, fmt.Errorf("config.yaml: set both listen.user and listen.password, or neither")
