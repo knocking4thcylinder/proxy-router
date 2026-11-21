@@ -402,3 +402,89 @@ func TestPickCandidatesExpiryIsJudgedAtOrdering(t *testing.T) {
 		t.Fatalf("picked %v, want the expired range treated as fresh (fast-blocked first)", got)
 	}
 }
+
+// A working single beats a pool even when the single's range failed
+// recently; range preference applies within a class, never across it.
+func TestPickCandidatesSinglesFirst(t *testing.T) {
+	entry := func(name, addr string, pool bool, latency time.Duration) engine.PingResult {
+		s := &share.Server{Name: name, Address: addr}
+		if pool {
+			s.Pool = &share.Pool{}
+		}
+		return engine.PingResult{Entry: config.Entry{Server: s}, Latency: latency}
+	}
+	blocked := map[string]time.Time{"188.255.236.0/24": time.Now()}
+	results := []engine.PingResult{
+		entry("pool-fresh", "213.239.169.237", true, 10*time.Millisecond),      // unflagged pool
+		entry("single-flagged", "188.255.236.19", false, 300*time.Millisecond), // flagged single
+		entry("single-fresh", "213.239.172.42", false, 400*time.Millisecond),   // unflagged single
+	}
+	got := pickCandidates(results, blocked)
+	want := []string{"single-fresh", "single-flagged", "pool-fresh"}
+	for i, r := range got {
+		if r.Entry.Server.Name != want[i] {
+			t.Fatalf("order[%d] = %s, want %s (full order: %v)", i, r.Entry.Server.Name, want[i], names(got))
+		}
+	}
+}
+
+func names(rs []engine.PingResult) []string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.Entry.Server.Name)
+	}
+	return out
+}
+
+// Pools pass verification without a re-check (a member-by-member probe
+// would expand to every member); singles cost exactly one bounded request
+// each, and the loop stops at the first pass.
+func TestVerifyCandidatesBounded(t *testing.T) {
+	single := func(name string) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name}}}
+	}
+	pool := func(name string) engine.PingResult {
+		return engine.PingResult{Entry: config.Entry{Server: &share.Server{Name: name, Pool: &share.Pool{}}}}
+	}
+	var called []string
+	ping := func(ctx context.Context, e config.Entry, o engine.PingOptions) error {
+		called = append(called, e.Server.Name)
+		return errors.New("no answer")
+	}
+	// A pool first: passes untouched, no ping at all.
+	best, ok, faded := verifyCandidates(context.Background(),
+		[]engine.PingResult{pool("p")}, engine.PingOptions{}, 3, ping)
+	if !ok || best.Entry.Server.Name != "p" || len(faded) != 0 || len(called) != 0 {
+		t.Fatalf("pool verify: ok=%v best=%v faded=%v called=%v", ok, best.Entry, faded, called)
+	}
+	// Failing singles fade one request each; the loop caps at max.
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), single("b"), single("c"), single("d")}, engine.PingOptions{}, 2, ping)
+	if ok || len(faded) != 2 || len(called) != 2 {
+		t.Fatalf("cap: ok=%v faded=%d called=%d", ok, len(faded), len(called))
+	}
+	// A passing single ends it; the pool fallback behind it is untouched.
+	pass := func(ctx context.Context, e config.Entry, o engine.PingOptions) error {
+		return nil
+	}
+	best, ok, faded = verifyCandidates(context.Background(),
+		[]engine.PingResult{single("a"), pool("p")}, engine.PingOptions{}, 3, pass)
+	if !ok || best.Entry.Server.Name != "a" || len(faded) != 0 {
+		t.Fatalf("pass: ok=%v best=%v", ok, best.Entry)
+	}
+}
+
+// IPv4-mapped IPv6 spellings and the plain IPv4 map to the same block;
+// unrelated /24s stay distinct.
+func TestRangeOfMapped(t *testing.T) {
+	e := func(addr string) config.Entry { return config.Entry{Server: &share.Server{Address: addr}} }
+	if got := rangeOf(e("::ffff:66.201.6.46")); got != "66.201.6.0/24" {
+		t.Errorf("rangeOf(::ffff:66.201.6.46) = %q, want 66.201.6.0/24", got)
+	}
+	if rangeOf(e("66.201.6.46")) != rangeOf(e("::ffff:66.201.6.46")) {
+		t.Error("plain and mapped spellings disagree on the block")
+	}
+	if rangeOf(e("::ffff:66.201.6.47")) == rangeOf(e("::ffff:66.201.7.1")) {
+		t.Error("unrelated /24s collapsed")
+	}
+}

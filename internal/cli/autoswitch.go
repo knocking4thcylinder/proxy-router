@@ -179,38 +179,49 @@ type scanResult struct {
 	faded []engine.PingResult
 }
 
-// pickCandidates lists the servers that answered, best first, with ones in
-// address blocks that stopped working recently moved behind the rest: the
-// next server in such a block is the next to fail, not minutes after it.
-// The snapshot was taken before the scan ran for minutes, so expiry is
-// judged when ordering.
+// pickCandidates lists the servers that answered in the order a switch
+// should try them: singles first (a working single beats a pool, even one
+// in a range that failed recently - the pool fallback policy), and within
+// each class, ones in blocks that stopped working recently move behind the
+// rest: their next failure is the scan's away, not minutes after it. A
+// range failure never changes the class order, only the order inside it.
 func pickCandidates(results []engine.PingResult, blocked map[string]time.Time) []engine.PingResult {
-	now := time.Now()
-	var fresh, stale []engine.PingResult
+	class := func(rs []engine.PingResult) []engine.PingResult {
+		var fresh, stale []engine.PingResult
+		for _, r := range rs {
+			if at, bad := blocked[rangeOf(r.Entry)]; bad && time.Since(at) < autoForget {
+				stale = append(stale, r)
+			} else {
+				fresh = append(fresh, r)
+			}
+		}
+		order := func(rs []engine.PingResult) {
+			slices.SortStableFunc(rs, func(a, b engine.PingResult) int {
+				switch {
+				case better(a, b):
+					return -1
+				case better(b, a):
+					return 1
+				}
+				return 0
+			})
+		}
+		order(fresh)
+		order(stale)
+		return append(fresh, stale...)
+	}
+	var singles, pools []engine.PingResult
 	for _, r := range results {
 		if r.Err != nil {
 			continue
 		}
-		if at, bad := blocked[rangeOf(r.Entry)]; bad && now.Sub(at) < autoForget {
-			stale = append(stale, r)
+		if r.Entry.Server.Pool != nil {
+			pools = append(pools, r)
 		} else {
-			fresh = append(fresh, r)
+			singles = append(singles, r)
 		}
 	}
-	order := func(rs []engine.PingResult) {
-		slices.SortStableFunc(rs, func(a, b engine.PingResult) int {
-			switch {
-			case better(a, b):
-				return -1
-			case better(b, a):
-				return 1
-			}
-			return 0
-		})
-	}
-	order(fresh)
-	order(stale)
-	return append(fresh, stale...)
+	return append(class(singles), class(pools)...)
 }
 
 func newSwitcher(w *engine.Watcher) *switcher {
@@ -458,12 +469,15 @@ func (sw *switcher) markFailed(e config.Entry) {
 }
 
 // rangeOf is the address block a server lives in: /24 for IPv4, /48 for
-// IPv6, "" for a name (no block to blame or avoid).
+// IPv6, "" for a name (no block to blame or avoid). IPv4-mapped IPv6
+// spellings are normalized first, so ::ffff:1.2.3.4 and 1.2.3.4 map to
+// the same block and unrelated /24s stay distinct.
 func rangeOf(e config.Entry) string {
 	a, err := netip.ParseAddr(e.Server.Address)
 	if err != nil {
 		return ""
 	}
+	a = a.Unmap()
 	bits := 48
 	if a.Is4() {
 		bits = 24
@@ -506,22 +520,38 @@ func scan(ctx context.Context, e *env, o runOptions, from config.Entry, avoid []
 	fmt.Printf("%s auto-switch: testing %d other servers...\n", now(), len(entries))
 	candidates := pickCandidates(engine.Ping(ctx, entries, opts), blocked)
 	// A scan of hundreds of servers takes minutes, and blocks land on its
-	// winners within them. One request through each of the top candidates
-	// - bound to the same interface, resolved the same way, exactly how
-	// the tunnel would use them - tells the still-alive from the
-	// about-to-die before the switch commits.
+	// winners within them. The top answers are re-checked, one bounded
+	// request each, before the switch commits.
 	verify := opts
 	verify.DownloadURL, verify.Parallel, verify.PerEndpoint = "", 1, 1
-	for len(candidates) > 0 && len(r.faded) < scanVerify {
+	r.best, r.ok, r.faded = verifyCandidates(ctx, candidates, verify, scanVerify,
+		func(ctx context.Context, e config.Entry, o engine.PingOptions) error {
+			res := engine.Ping(ctx, []config.Entry{e}, o)
+			if len(res) == 1 && res[0].Err == nil {
+				return nil
+			}
+			return errors.New("no answer")
+		})
+	return r
+}
+
+// verifyCandidates re-checks candidates in order until one passes: each
+// re-check is one bounded request, so the work is independent of pool
+// size. Pools are not re-checked - engine.Ping would expand a pool to
+// every member and time them out one after another, while the scan has
+// already measured them all, and in a running instance the pool's own
+// balancer re-picks among members by its health check: the freshness the
+// re-check gives a single is the balancer's job for a pool.
+func verifyCandidates(ctx context.Context, candidates []engine.PingResult, opts engine.PingOptions, max int, ping func(context.Context, config.Entry, engine.PingOptions) error) (best engine.PingResult, ok bool, faded []engine.PingResult) {
+	for len(candidates) > 0 && len(faded) < max {
 		c := candidates[0]
 		candidates = candidates[1:]
-		if res := engine.Ping(ctx, []config.Entry{c.Entry}, verify); len(res) == 1 && res[0].Err == nil {
-			r.best, r.ok = c, true
-			break
+		if c.Entry.Server.Pool != nil || ping(ctx, c.Entry, opts) == nil {
+			return c, true, faded
 		}
-		r.faded = append(r.faded, c)
+		faded = append(faded, c)
 	}
-	return r
+	return engine.PingResult{}, false, faded
 }
 
 // apply moves to what a scan found: saved to state.json, or, where that

@@ -78,7 +78,6 @@ func Start(cfg map[string]any) (inst *core.Instance, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("xray: %w", err)
 	}
-	demoteNoise(inst)
 	return inst, nil
 }
 
