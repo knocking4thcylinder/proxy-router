@@ -729,12 +729,15 @@ Verify it against the poison: `dig @127.0.0.1 <blocked name>` returns real
 answers while `dig @1.1.1.1 <blocked name>` still returns the fake
 NXDOMAIN.
 
-This composes with TUN mode: while the tunnel is up its resolver takes
-over and the forwarder is bypassed; when the tunnel stops, the primary
-service's DNS — `127.0.0.1` — is restored, so the system never falls
-back to poisoned resolvers. Tailscale's MagicDNS benefits too: its
-"system default" upstream becomes the local forwarder instead of the
-plain-IP resolvers the ISP can forge.
+This composes with TUN mode, with one ordering rule: set the service's
+DNS to `127.0.0.1` **before** starting the tunnel. The tunnel saves
+the service's resolvers when it takes over and restores that same
+snapshot when it stops, so a change made while the tunnel is up can be
+lost if it stops before the next periodic sync - the startup resolvers
+come back instead. Set beforehand, the restore puts `127.0.0.1` back,
+and the system never falls back to poisoned resolvers. Tailscale's
+MagicDNS benefits too: its "system default" upstream becomes the local
+forwarder instead of the plain-IP resolvers the ISP can forge.
 
 Keep the poisoned resolvers out of the list: a fallback resolver that
 lies is worse than none — a dead forwarder fails loudly, a poisoned one
