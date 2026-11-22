@@ -696,8 +696,12 @@ rest resolve, so it looks intermittent rather than broken. Real resolvers
 never answer authoritatively for someone else's zone; that signature is
 the tell. Apps quietly cache the lies, which is worse than an outage.
 
-TUN mode is immune: proxy-router's own DNS is DNS-over-HTTPS, encrypted
-inside port 443 where a DNS appliance can neither read nor forge it.
+In TUN mode, proxy-router's own DNS is DNS-over-HTTPS by default,
+encrypted inside port 443 where a DNS appliance can neither read nor
+forge it. A `dns:` section in the rules file replaces that default. This
+protection covers only queries routed into the TUN. With a static local
+resolver and the kill switch off, those queries leave the tunnel and can
+receive forged answers.
 
 Off the tunnel, the system's plain resolvers are exposed. The fix is an
 encrypted resolver on the machine itself, so plain DNS never leaves it.
@@ -711,7 +715,8 @@ The essentials of its config (`listen_addresses`, DoH `server_names`,
 `require_dnssec`) and then the system DNS pointed at `127.0.0.1`:
 
 ```sh
-brew services start dnscrypt-proxy    # as a daemon if port 53 needs root
+sudo brew services start dnscrypt-proxy   # root: only root may bind port 53
+dig +short @127.0.0.1 example.com         # the forwarder must answer first
 sudo networksetup -setdnsservers Wi-Fi 127.0.0.1
 ```
 
