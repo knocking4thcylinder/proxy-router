@@ -715,10 +715,15 @@ The essentials of its config (`listen_addresses`, DoH `server_names`,
 `require_dnssec`) and then the system DNS pointed at `127.0.0.1`:
 
 ```sh
-sudo brew services start dnscrypt-proxy   # root: only root may bind port 53
-dig +short @127.0.0.1 example.com         # the forwarder must answer first
-sudo networksetup -setdnsservers Wi-Fi 127.0.0.1
+sudo brew services start dnscrypt-proxy       # root: only root may bind port 53
+dig +short @127.0.0.1 example.com             # the forwarder must answer first
+networksetup -listallnetworkservices         # find the service(s) you connect through
+sudo networksetup -setdnsservers "<service>" 127.0.0.1
 ```
+
+Configure every service you actually connect through, not just the
+obvious one: a service left on ISP DNS keeps resolving - wrongly -
+whenever it is the active one, and nothing else warns you.
 
 Verify it against the poison: `dig @127.0.0.1 <blocked name>` returns real
 answers while `dig @1.1.1.1 <blocked name>` still returns the fake
