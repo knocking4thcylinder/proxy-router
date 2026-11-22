@@ -688,6 +688,61 @@ System DNS is pointed into the TUN, where proxy-router answers it:
 
 The resolver address is `198.18.0.53`, which only exists inside the TUN.
 
+### If your ISP poisons plain DNS
+
+Some ISPs hijack every port-53 query to a public resolver and answer
+authoritatively themselves — a fake NXDOMAIN for blocked names, while the
+rest resolve, so it looks intermittent rather than broken. Real resolvers
+never answer authoritatively for someone else's zone; that signature is
+the tell. Apps quietly cache the lies, which is worse than an outage.
+
+In TUN mode, proxy-router's own DNS is DNS-over-HTTPS by default,
+encrypted inside port 443 where a DNS appliance can neither read nor
+forge it. A `dns:` section in the rules file replaces that default. This
+protection covers only queries routed into the TUN. With a static local
+resolver and the kill switch off, those queries leave the tunnel and can
+receive forged answers.
+
+Off the tunnel, the system's plain resolvers are exposed. The fix is an
+encrypted resolver on the machine itself, so plain DNS never leaves it.
+`dnscrypt-proxy` does this; any local DoH forwarder works:
+
+```sh
+brew install dnscrypt-proxy          # or your platform's package
+```
+
+The essentials of its config (`listen_addresses`, DoH `server_names`,
+`require_dnssec`) and then the system DNS pointed at `127.0.0.1`:
+
+```sh
+sudo brew services start dnscrypt-proxy       # root: only root may bind port 53
+dig +short @127.0.0.1 example.com             # the forwarder must answer first
+networksetup -listallnetworkservices         # find the service(s) you connect through
+sudo networksetup -setdnsservers "<service>" 127.0.0.1
+```
+
+Configure every service you actually connect through, not just the
+obvious one: a service left on ISP DNS keeps resolving - wrongly -
+whenever it is the active one, and nothing else warns you.
+
+Verify it against the poison: `dig @127.0.0.1 <blocked name>` returns real
+answers while `dig @1.1.1.1 <blocked name>` still returns the fake
+NXDOMAIN.
+
+This composes with TUN mode, with one ordering rule: set the service's
+DNS to `127.0.0.1` **before** starting the tunnel. The tunnel saves
+the service's resolvers when it takes over and restores that same
+snapshot when it stops, so a change made while the tunnel is up can be
+lost if it stops before the next periodic sync - the startup resolvers
+come back instead. Set beforehand, the restore puts `127.0.0.1` back,
+and the system never falls back to poisoned resolvers. Tailscale's
+MagicDNS benefits too: its "system default" upstream becomes the local
+forwarder instead of the plain-IP resolvers the ISP can forge.
+
+Keep the poisoned resolvers out of the list: a fallback resolver that
+lies is worse than none — a dead forwarder fails loudly, a poisoned one
+doesn't.
+
 ### Kill switch
 
 `tun.kill_switch` (on by default) is a firewall policy that blocks traffic
