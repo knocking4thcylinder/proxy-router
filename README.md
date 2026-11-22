@@ -688,6 +688,48 @@ System DNS is pointed into the TUN, where proxy-router answers it:
 
 The resolver address is `198.18.0.53`, which only exists inside the TUN.
 
+### If your ISP poisons plain DNS
+
+Some ISPs hijack every port-53 query to a public resolver and answer
+authoritatively themselves — a fake NXDOMAIN for blocked names, while the
+rest resolve, so it looks intermittent rather than broken. Real resolvers
+never answer authoritatively for someone else's zone; that signature is
+the tell. Apps quietly cache the lies, which is worse than an outage.
+
+TUN mode is immune: proxy-router's own DNS is DNS-over-HTTPS, encrypted
+inside port 443 where a DNS appliance can neither read nor forge it.
+
+Off the tunnel, the system's plain resolvers are exposed. The fix is an
+encrypted resolver on the machine itself, so plain DNS never leaves it.
+`dnscrypt-proxy` does this; any local DoH forwarder works:
+
+```sh
+brew install dnscrypt-proxy          # or your platform's package
+```
+
+The essentials of its config (`listen_addresses`, DoH `server_names`,
+`require_dnssec`) and then the system DNS pointed at `127.0.0.1`:
+
+```sh
+brew services start dnscrypt-proxy    # as a daemon if port 53 needs root
+sudo networksetup -setdnsservers Wi-Fi 127.0.0.1
+```
+
+Verify it against the poison: `dig @127.0.0.1 <blocked name>` returns real
+answers while `dig @1.1.1.1 <blocked name>` still returns the fake
+NXDOMAIN.
+
+This composes with TUN mode: while the tunnel is up its resolver takes
+over and the forwarder is bypassed; when the tunnel stops, the primary
+service's DNS — `127.0.0.1` — is restored, so the system never falls
+back to poisoned resolvers. Tailscale's MagicDNS benefits too: its
+"system default" upstream becomes the local forwarder instead of the
+plain-IP resolvers the ISP can forge.
+
+Keep the poisoned resolvers out of the list: a fallback resolver that
+lies is worse than none — a dead forwarder fails loudly, a poisoned one
+doesn't.
+
 ### Kill switch
 
 `tun.kill_switch` (on by default) is a firewall policy that blocks traffic
