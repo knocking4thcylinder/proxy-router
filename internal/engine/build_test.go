@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,41 @@ import (
 	"github.com/knocking4thcylinder/proxy-router/internal/share"
 	"github.com/knocking4thcylinder/proxy-router/internal/subscription"
 )
+
+// Xray's dispatcher sniffs bittorrent on every connection: the sniffer is
+// hardcoded in its chain, and the conf layer rejects "bittorrent" as a
+// destOverride entry ("unknown protocol") exactly because it needs no
+// opt-in. A protocol: bittorrent rule therefore works with plain sniffing
+// and must not grow a destOverride entry; this pins that.
+func TestBittorrentRuleNeedsNoDestOverride(t *testing.T) {
+	cfg, _ := config.Load(t.TempDir())
+	rules := writeRules(t, `
+default: proxy
+rules:
+  - name: torrents direct
+    outbound: direct
+    protocol: bittorrent
+`)
+	xc, _, err := Build(Plan{Config: cfg, Rules: rules, State: testState(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range xc["inbounds"].([]map[string]any) {
+		sn := in["sniffing"].(map[string]any)
+		if slices.Contains(sn["destOverride"].([]string), "bittorrent") {
+			t.Errorf("destOverride gained bittorrent: %v", sn["destOverride"])
+		}
+	}
+	found := false
+	for _, r := range xc["routing"].(map[string]any)["rules"].([]map[string]any) {
+		if p, ok := r["protocol"].([]string); ok && slices.Contains(p, "bittorrent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("bittorrent rule not emitted")
+	}
+}
 
 func testState(t *testing.T) *config.State {
 	t.Helper()
